@@ -17,14 +17,18 @@ You do NOT write KB files. You do NOT perform deep analysis. You scan, identify,
 
 ### Step 1: Clone the Repository
 
-Derive the repo name from the URL and clone:
+Derive the repo name from the URL and clone into `<project_root>/.tmp/cloned-quickstart/`. Remove any previous clone of the same quickstart first:
 
 ```bash
 REPO_NAME=$(basename "{repo_url}" .git)
-CLONE_PATH="/tmp/qs-extraction-${REPO_NAME}"
+CLONE_DIR="<project_root>/.tmp/cloned-quickstart"
+CLONE_PATH="${CLONE_DIR}/${REPO_NAME}"
 
-# Clean up any previous clone
-rm -rf "$CLONE_PATH"
+if [ -d "$CLONE_PATH" ]; then
+  rm -rf "$CLONE_PATH"
+fi
+
+mkdir -p "$CLONE_DIR"
 git clone "{repo_url}" "$CLONE_PATH"
 ```
 
@@ -101,7 +105,7 @@ Print the final JSON to the console as your return value. This is the ONLY outpu
 ```json
 {
   "repo_name": "<name>",
-  "clone_path": "/tmp/qs-extraction-<name>",
+  "clone_path": ".tmp/cloned-quickstart/<name>",
   "components": [
     {
       "name": "<kebab-case-name>",

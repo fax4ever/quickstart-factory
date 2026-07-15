@@ -33,5 +33,6 @@ __pycache__/
 data/
 
 # Temporary files
+.tmp/
 brain.ai
 brain.code-workspace

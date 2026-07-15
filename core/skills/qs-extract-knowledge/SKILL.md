@@ -70,7 +70,7 @@ repo_url: <github-url>
 ```json
 {
   "repo_name": "RAG",
-  "clone_path": "/tmp/qs-extraction-RAG",
+  "clone_path": ".tmp/cloned-quickstart/RAG",
   "components": [
     {"name": "fastapi-backend", "type": "backend", "path": "app/", "tech": "FastAPI"},
     {"name": "react-frontend", "type": "frontend", "path": "frontend/", "tech": "React/PatternFly"}
@@ -216,7 +216,13 @@ kb_file_path: <SKILL_DIR>/knowledge-base/<file>
 - Failed: N files (list)
 ```
 
-11. Do NOT delete the cloned repo — the user may want to inspect it.
+### Phase 5: Cleanup
+
+11. Remove the cloned repository using `clone_path` from the scout's JSON output:
+
+```bash
+rm -rf <scout.clone_path>
+```
 
 ## Guidelines
 
@@ -231,8 +237,7 @@ kb_file_path: <SKILL_DIR>/knowledge-base/<file>
 - Don't read subagent prompt files (`subagents/*.md`) yourself
 - Don't perform the research work inline — delegate to subagents
 - Don't delete or overwrite existing KB files without merging
-- Don't skip Phase 3 (summary generation)
-- Don't delete the cloned repository
+- Don't skip any phase — follow all phases in order
 
 ## Error Handling
 
@@ -240,6 +245,7 @@ kb_file_path: <SKILL_DIR>/knowledge-base/<file>
 - If a researcher subagent fails: log the failure, continue with other subagents, report in Phase 4
 - If a summary subagent fails: retry once, then report failure in Phase 4
 - Partial extraction is acceptable — document gaps in the report
+- Always run Phase 5 cleanup, even if earlier phases had failures
 
 ## Subagent Boundaries
 

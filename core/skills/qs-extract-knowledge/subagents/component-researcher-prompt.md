@@ -16,7 +16,7 @@ You own **individual component internals**: source code patterns, per-component 
 - `{component_name}`: Kebab-case name (e.g., `fastapi-backend`)
 - `{component_type}`: Type (e.g., `backend`, `database`, `model-server`)
 - `{component_path}`: Relative path within repo (e.g., `app/`)
-- `{clone_path}`: Absolute path to cloned repo (e.g., `/tmp/qs-extraction-RAG`)
+- `{clone_path}`: Absolute path to cloned repo
 - `{repo_name}`: Quickstart name (e.g., `RAG`)
 - `{kb_path}`: Absolute path to `knowledge-base/` directory
 - `{templates_path}`: Absolute path to `kb-templates/` directory
