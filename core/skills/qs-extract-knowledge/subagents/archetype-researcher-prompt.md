@@ -110,3 +110,4 @@ Return this JSON as your final output:
 - Focus on the RHOAI usage pattern, not the tech stack
 - Decision criteria should help an engineer pick the right archetype before choosing components
 - Stick to facts from the repo — don't imagine capabilities
+- Every claim, pattern, gotcha, and code snippet you write must be traceable to a specific file, line, comment, doc, or commit message in the source repo. Do not add recommendations, warnings, or best practices from your own knowledge — if it's not in the repo, it doesn't go in the KB.

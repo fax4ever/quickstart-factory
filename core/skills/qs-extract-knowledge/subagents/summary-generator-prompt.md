@@ -33,7 +33,7 @@ Write a draft summary covering all key points. This draft may be verbose — tha
 - All approaches if multiple exist
 
 **Iteration 2: Compress and densify**
-Identify 3-5 important entities (technologies, patterns, decisions) that are missing from iteration 1. Rewrite the summary to include them while:
+Identify 3-5 important entities (technologies, patterns, decisions) that are missing from iteration 1. "Missing" means entities present in the KB file body that were not captured in the previous summary iteration. Do not add entities from your own knowledge that are absent from the KB file. Rewrite the summary to include them while:
 - Removing redundancy
 - Compressing prose
 - Using same or fewer words but more information
@@ -108,5 +108,6 @@ If generation or update fails:
 - MUST perform all 3 Chain of Density iterations — do not skip to the final summary
 - If the file has multiple approaches, the summary MUST cover ALL of them
 - The summary replaces any existing summary entirely — it's regenerated from the full file content
+- Do not add claims, technologies, or recommendations that are not present in the KB file you are summarizing. Your job is to summarize, not to enrich.
 - Use Edit tool to modify only the summary line — do not rewrite the entire file
 - Escape double quotes in the summary with backslash: `\"`

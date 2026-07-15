@@ -57,7 +57,7 @@ Focus on:
 - **Tech stack**: Framework, language version, key libraries
 - **Key patterns**: How the component is structured, important design decisions
 - **Configuration**: Environment variables, config files, Helm values
-- **Gotchas**: Non-obvious issues, workarounds, common mistakes
+- **Gotchas**: Non-obvious issues and workarounds found in the actual source code, comments, or commit history — not general knowledge about the technology
 - **Dependencies**: What this component requires to run
 - **Short code/YAML snippets**: Show the pattern, not the whole file (5-15 lines each)
 
@@ -124,5 +124,6 @@ If the research fails:
 - Include actual snippets from the repo, NOT reconstructed or imagined code
 - Keep snippets short (5-15 lines) — show the pattern, not the whole file
 - Stick to facts found in the repo — don't imagine ideal patterns
+- Every claim, pattern, gotcha, and code snippet you write must be traceable to a specific file, line, comment, doc, or commit message in the source repo. Do not add recommendations, warnings, or best practices from your own knowledge — if it's not in the repo, it doesn't go in the KB.
 - Check for sensitive data (API keys, tokens) before including snippets
 - The `summary` field should be empty string `""` — the summary-generator fills it later

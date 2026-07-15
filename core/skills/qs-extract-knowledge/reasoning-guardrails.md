@@ -101,6 +101,7 @@ As you reason about extraction results:
 - Did I verify this pattern exists in the repo, or am I inferring it?
 - Are the code snippets copied from actual files, or reconstructed from memory?
 - Do the described gotchas come from real issues in the repo?
+- Could I point to a specific file, line, comment, doc, or commit message in the repo that supports this claim? If not, I must remove it.
 
 **Where to look:**
 - The cloned repo itself — verify claims by reading actual files

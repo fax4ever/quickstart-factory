@@ -226,6 +226,10 @@ rm -rf <scout.clone_path>
 
 ## Guidelines
 
+### Source-Grounding Rule
+
+Every claim, pattern, gotcha, and code snippet in a KB file must be traceable to the source repo. Agents must not add recommendations, best practices, or warnings from their own knowledge.
+
 ### DO
 - Pass subagent prompts by file path — never read them into your own context
 - Spawn all Phase 2 subagents in a single parallel batch

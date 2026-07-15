@@ -132,3 +132,4 @@ Return this JSON as your final output:
 - Document the data flow end-to-end — a reader should understand how a request becomes a response
 - If multiple AI patterns are combined (e.g., RAG + guardrails), create separate files and cross-reference
 - Stick to facts from the repo — describe the wiring that exists, don't design ideal architectures
+- Every claim, pattern, gotcha, and code snippet you write must be traceable to a specific file, line, comment, doc, or commit message in the source repo. Do not add recommendations, warnings, or best practices from your own knowledge — if it's not in the repo, it doesn't go in the KB.

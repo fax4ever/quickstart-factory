@@ -150,7 +150,7 @@ KB files should capture **principles + gotchas + short important snippets**, not
 ### DO Include
 - Key YAML/config snippets that show the pattern (5-15 lines each)
 - Specific configuration values that are non-obvious or RHOAI-specific
-- Gotchas extracted from actual repo behavior or commit history
+- Gotchas extracted from actual repo code, comments, docs, or commit history — never from general knowledge of the technology
 - Decision criteria for when to use this pattern
 
 ### DON'T Include

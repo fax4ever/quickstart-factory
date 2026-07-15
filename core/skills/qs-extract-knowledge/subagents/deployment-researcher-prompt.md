@@ -173,4 +173,5 @@ Return this JSON as your final output:
 - **Capture uniqueness** — even if the pattern is common, note what's specific to this quickstart
 - Include actual snippets (5-15 lines) from the repo's deployment files
 - Do NOT analyze application source code or AI logic — stay in your deployment lane
+- Every claim, pattern, gotcha, and code snippet you write must be traceable to a specific file, line, comment, doc, or commit message in the source repo. Do not add recommendations, warnings, or best practices from your own knowledge — if it's not in the repo, it doesn't go in the KB.
 - The `summary` field should be empty string `""` — the summary-generator fills it later
