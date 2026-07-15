@@ -2,7 +2,7 @@
 name: qs-extract-knowledge
 description: Extract reusable knowledge from an existing AI Quickstart repo and produce structured KB files
 argument-hint: --repo <github-url>
-allowed-tools: Bash, Read, Write, Edit, Agent
+allowed-tools: Bash, Read, Write(core/skills/qs-extract-knowledge/knowledge-base/**), Write(.claude/skills/qs-extract-knowledge/knowledge-base/**), Edit(core/skills/qs-extract-knowledge/knowledge-base/**), Edit(.claude/skills/qs-extract-knowledge/knowledge-base/**), Agent
 ---
 
 # Quickstart Knowledge Extraction Skill
@@ -50,7 +50,7 @@ The user provides a GitHub repository URL:
 
 1. Parse `--repo <github-url>` from user input.
 2. Derive repo name from URL (e.g., `RAG` from `https://github.com/rh-ai-quickstart/RAG`).
-3. Set `SKILL_DIR` to the directory containing this SKILL.md file.
+3. Set `SKILL_DIR` to the **real (non-symlink) path** of the directory containing this SKILL.md file. Run `readlink -f` on this file's path and take its parent directory. This ensures subagents write to `core/skills/...` rather than `.claude/skills/...`.
 4. Spawn the **scout subagent**:
 
 ```
