@@ -104,15 +104,25 @@ grep -r "pytest\|unittest\|jest\|mocha" . --include="*.toml" --include="*.json" 
 
 ### Step 4: Identify Distinct Deployment Concerns
 
-From your analysis, identify SEPARATE concerns. Each becomes its own KB file. Examples:
-- `helm-subchart-wiring.md` — how the Helm chart uses dependencies/subcharts
-- `makefile-targets.md` — Makefile structure and key targets
-- `github-actions-ci.md` — CI/CD pipeline configuration
-- `container-build-pattern.md` — Dockerfile patterns and multi-stage builds
-- `docker-compose-dev.md` — Local development with docker-compose
-- `security-contexts.md` — OpenShift security context constraints
-- `helm-values-structure.md` — How values.yaml is organized
-- `ai-architecture-charts-usage.md` — Usage of the shared subchart library
+From your analysis, identify SEPARATE concerns. Each becomes its own KB file.
+
+**Naming rule:** File names must capture what's unique about the pattern, not just the generic technique. The name should be specific enough that a different quickstart using the same technique differently would naturally get its own file.
+
+Good names (specific — describe what's unique):
+- `container-build-ubi-uv.md` — UBI base image with uv tooling
+- `helm-init-job-pattern.md` — specific ordering mechanism
+- `helm-inline-third-party-values.md` — inlining Loki/Grafana/Alloy config
+- `helm-umbrella-mixed-remote-local-deps.md` — mixing remote ai-architecture-charts with local subcharts
+- `docker-compose-hybrid-loki-stack.md` — local dev with full Loki observability stack
+- `github-actions-path-filtered-matrix.md` — path-filtered matrix builds to Quay
+- `openshift-scc-helm-extraobjects.md` — SCC grants via Helm extraObjects
+
+Bad names (too generic — every quickstart could match):
+- `helm-subchart-wiring.md`
+- `container-build-pattern.md`
+- `docker-compose-dev.md`
+- `makefile-targets.md`
+- `helm-umbrella-chart.md`
 
 **Splitting heuristic:** If two concerns could be useful independently to an engineer building a new quickstart, they should be separate files.
 
