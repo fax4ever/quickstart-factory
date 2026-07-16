@@ -25,8 +25,6 @@ The user provides a GitHub repository URL:
 | File | When |
 |------|------|
 | This file (`SKILL.md`) | Always |
-| `reasoning-guardrails.md` | During Phase 2 dispatch decisions |
-| `kb-templates/kb-schema.md` | When validating subagent output |
 
 **Only subagents read (passed by file path):**
 
@@ -162,7 +160,16 @@ templates_path: <SKILL_DIR>/kb-templates
 )
 ```
 
-6. Collect all subagent return values. Each returns JSON with a `files` array listing what it created/updated.
+6. Collect all subagent return values. Each returns JSON indicating success/failure:
+
+```json
+{
+  "files": [{"file": "components/<name>.md", "action": "created|updated"}],
+  "success": true
+}
+```
+
+On failure a subagent returns `{"files": [], "success": false, "error": "..."}`. Track every subagent result (success or failure) for the Phase 4 report.
 
 ### Phase 3: Summary Generation
 
@@ -181,7 +188,7 @@ kb_file_path: <SKILL_DIR>/knowledge-base/<file>
 )
 ```
 
-9. Collect results. Log any failures but do not block the report.
+9. Collect results. Each returns `{"file": "...", "success": true|false, "error?": "..."}`. Log any failures but do not block the report.
 
 ### Phase 4: Console Report
 
@@ -208,12 +215,9 @@ kb_file_path: <SKILL_DIR>/knowledge-base/<file>
 - Deployment: <deployment_methods>
 - Model Serving: <model_serving>
 
-## Manual Review Items
-- <any files where subagents flagged uncertainty>
-
-## Summary Generation
-- Succeeded: N files
-- Failed: N files (list)
+## Subagent Results
+- Succeeded: N subagents
+- Failed: N subagents (list with error messages)
 ```
 
 ### Phase 5: Cleanup
