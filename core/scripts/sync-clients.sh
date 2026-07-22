@@ -28,7 +28,7 @@ for client in "${CLIENTS[@]}"; do
   for skill_dir in "$SKILLS_DIR"/*/; do
     [ -f "$skill_dir/SKILL.md" ] || continue
     name="$(basename "$skill_dir")"
-    ln -s "$skill_dir" "$target/$name"
+    ln -sr "$skill_dir" "$target/$name"
     echo "  ✓ $client/skills/$name"
   done
 done
@@ -46,7 +46,7 @@ for client in "${POLICY_GATE_SUPPORTED_CLIENTS[@]}"; do
   # Link each hook file
   for file in "${POLICY_GATE_HOOK_FILES[@]}"; do
     [ -f "$POLICY_GATE_DIR/$file" ] || continue
-    ln -s "$POLICY_GATE_DIR/$file" "$hooks_target/$file"
+    ln -sr "$POLICY_GATE_DIR/$file" "$hooks_target/$file"
     echo "  ✓ $client/hooks/$file"
   done
 
@@ -57,7 +57,7 @@ for client in "${POLICY_GATE_SUPPORTED_CLIENTS[@]}"; do
     if [ -e "$settings_target" ]; then
       echo "  ⚠ $client/settings.json already exists — merge settings manually from $POLICY_GATE_DIR/$settings_src"
     else
-      ln -s "$POLICY_GATE_DIR/$settings_src" "$settings_target"
+      ln -sr "$POLICY_GATE_DIR/$settings_src" "$settings_target"
       echo "  ✓ $client/settings.json"
     fi
   fi
