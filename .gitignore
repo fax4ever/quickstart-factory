@@ -16,12 +16,18 @@ __pycache__/
 *.key
 *.pem
 
-# Local AI client runtime/config
-.claude/
-.codex/
+# Client-specific tracked files (currently only claude supports the policy hook)
+.claude/*
+!.claude/skills/
+!.claude/hooks/
+!.claude/settings.json
+.codex/*
+!.codex/skills/
 .cursor/*
 !.cursor/rules/
-.gemini/
+!.cursor/skills/
+.gemini/*
+!.gemini/skills/
 
 # Generated output (blog drafts, reports, etc.)
 data/

@@ -14,7 +14,7 @@ Open `quickstart-factory` in Cursor (or any supported AI client) and launch the 
 
 ## 2. Claude reads the governance
 
-Claude automatically reads `AGENTS.md` and loads the project rules, skills, and session start protocol.
+Claude automatically reads `AGENTS.md` and loads the project rules and skills.
 
 ![Claude welcome](02-claude-welcome.png)
 
@@ -24,15 +24,15 @@ Claude automatically reads `AGENTS.md` and loads the project rules, skills, and 
 
 ## 3. Say hello
 
-Type **"hello"** to trigger the session start protocol. Claude syncs skills and fetches the live backlog from GitHub.
+Say **"hello"** or run `/rh-qs-session-start` to trigger the session start skill. Claude fetches the live backlog from GitHub.
 
 ![Say hello](04-say-hello.png)
 
 ---
 
-## 4. Skills auto-sync
+## 4. Skills ready
 
-On first run, skills are automatically synced as symlinks to the AI client directory. This happens silently — no manual setup needed.
+Skills are included as relative symlinks in the repo — no sync step needed after clone.
 
 ![Auto sync](05-auto-sync.png)
 

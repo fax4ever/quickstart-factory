@@ -14,7 +14,7 @@ Quickstart Factory connects your AI coding assistant (Claude, Cursor, Gemini, or
 
 ## How it works
 
-Open the project in your AI client and say **"hello"**. The assistant automatically syncs skills, fetches the live backlog from GitHub, and presents a dashboard:
+Open the project in your AI client and say **"hello"** or run `/rh-qs-session-start`. The assistant fetches the live backlog from GitHub and presents a dashboard:
 
 ![Dashboard](screenshots/06-dashboard.png)
 
@@ -48,7 +48,7 @@ claude                       # Claude Code
 cursor quickstart-factory/   # Cursor IDE
 ```
 
-The assistant will automatically sync skills on first run — no manual setup needed.
+Skills are included as symlinks in the repo — no manual setup needed.
 
 ## Skills
 
@@ -98,7 +98,7 @@ python3 core/skills/gh-issue-creator/scripts/create_issues.py \
 
 ```
 AGENTS.md               ← AI agent guidelines (read by all clients)
-CLAUDE.md               ← Symlink → AGENTS.md (for Claude Code)
+CLAUDE.md               ← Imports AGENTS.md (for Claude Code)
 GEMINI.md               ← Symlink → AGENTS.md (for Gemini)
 core/
   skills/
@@ -125,7 +125,7 @@ The same skills work across Claude, Cursor, Gemini, and Codex. Each client reads
 | Codex | `AGENTS.md` directly |
 | Cursor | `.cursor/rules/agents.md` → `AGENTS.md` |
 
-Skills are synced as symlinks to each client's directory via `bash core/scripts/sync-clients.sh`.
+Skills are committed as relative symlinks in each client's directory. Run `bash core/scripts/sync-clients.sh` to regenerate after adding new skills.
 
 ## License
 
