@@ -32,14 +32,15 @@ concurrency:
 
 jobs:
   validate-skills:
+    name: "validate-skills (advisory — does not block merge)"
     runs-on: ubuntu-latest
-    # Non-blocking for now — acts as advisory second reviewer.
-    # Will enforce after repo-wide upgrade resolves existing issues.
-    continue-on-error: true
     permissions:
       contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -53,7 +54,43 @@ jobs:
           skill-validator --version
 
       - name: Validate changed skills
-        run: bash .github/scripts/validate-skills.sh "${{ github.base_ref }}" core/skills
+        id: validate
+        # Non-blocking for now — acts as advisory second reviewer.
+        # Will enforce after repo-wide upgrade resolves existing issues.
+        continue-on-error: true
+        run: |
+          set +e
+          OUTPUT=$(bash .github/scripts/validate-skills.sh "${{ github.base_ref }}" core/skills 2>&1)
+          RESULT=$?
+          set -e
+          echo "$OUTPUT"
+          ERRORS=$(echo "$OUTPUT" | grep '^::error' | sed 's/^::error[^:]*::/- /')
+          WARNINGS=$(echo "$OUTPUT" | grep '^::warning' | sed 's/^::warning[^:]*::/- /')
+          ISSUES=""
+          if [ -n "$ERRORS" ]; then
+            ISSUES="❌ **Errors**"$'\n'"$ERRORS"
+          fi
+          if [ -n "$WARNINGS" ]; then
+            [ -n "$ISSUES" ] && ISSUES="$ISSUES"$'\n\n'
+            ISSUES="${ISSUES}⚠️ **Warnings**"$'\n'"$WARNINGS"
+          fi
+          {
+            echo 'issues<<GHEOF'
+            echo "$ISSUES"
+            echo 'GHEOF'
+          } >> "$GITHUB_OUTPUT"
+          echo "result: $RESULT"
+          exit $RESULT
+
+      - name: Comment validation results on PR
+        if: github.event_name == 'pull_request' && steps.validate.outcome == 'failure' && steps.validate.outputs.issues != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUES: ${{ steps.validate.outputs.issues }}
+        run: |
+          REPORT="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          printf '### 🔍 Skill Validation (Advisory — does not block merge)\n\n%s\n\n📋 [Full report](%s)\n' \
+            "$ISSUES" "$REPORT" | gh pr comment "${{ github.event.pull_request.number }}" --body-file -
 
   validate-symlinks:
     runs-on: ubuntu-latest
