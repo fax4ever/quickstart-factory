@@ -1,0 +1,32 @@
+# Post PR comments from harness-gate validation.
+# Separate workflow so comments work on fork PRs (gitbub security limits).
+name: Harness Gate — PR Comment
+
+on:
+  workflow_run:
+    workflows: ["Harness Gate"]
+    types: [completed]
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pr-comment
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+        id: download
+        continue-on-error: true
+
+      - name: Post comment
+        if: steps.download.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "$(cat pr-number.txt)" \
+            --repo "${{ github.repository }}" \
+            --body-file pr-comment.txt

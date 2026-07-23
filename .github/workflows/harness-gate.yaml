@@ -36,7 +36,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -82,15 +81,24 @@ jobs:
           echo "result: $RESULT"
           exit $RESULT
 
-      - name: Comment validation results on PR
+      - name: Prepare PR comment
         if: github.event_name == 'pull_request' && steps.validate.outcome == 'failure' && steps.validate.outputs.issues != ''
         env:
-          GH_TOKEN: ${{ github.token }}
           ISSUES: ${{ steps.validate.outputs.issues }}
         run: |
+          echo "${{ github.event.pull_request.number }}" > pr-number.txt
           REPORT="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           printf '### 🔍 Skill Validation (Advisory — does not block merge)\n\n%s\n\n📋 [Full report](%s)\n' \
-            "$ISSUES" "$REPORT" | gh pr comment "${{ github.event.pull_request.number }}" --body-file -
+            "$ISSUES" "$REPORT" > pr-comment.txt
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request' && steps.validate.outcome == 'failure' && steps.validate.outputs.issues != ''
+        with:
+          name: pr-comment
+          path: |
+            pr-number.txt
+            pr-comment.txt
+          retention-days: 1
 
   validate-symlinks:
     runs-on: ubuntu-latest
