@@ -1,10 +1,10 @@
-# Post PR comments from harness-gate validation.
-# Separate workflow so comments work on fork PRs (gitbub security limits).
-name: Harness Gate — PR Comment
+# Post PR comments from skill-gate results.
+# Separate workflow so comments work on fork PRs (github security limits).
+name: Skill Gate — PR Comment
 
 on:
   workflow_run:
-    workflows: ["Harness Gate"]
+    workflows: ["Skill Gate"]
     types: [completed]
 
 jobs:
@@ -12,6 +12,7 @@ jobs:
     if: github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       pull-requests: write
     steps:
       - uses: actions/download-artifact@v4

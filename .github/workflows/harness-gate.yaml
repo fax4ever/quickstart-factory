@@ -1,4 +1,4 @@
-# CI gate: validate skills, symlinks, hooks, and client sync.
+# CI gate: runs on any core/ or client-config change — validates symlinks, hooks, and client sync.
 name: Harness Gate
 
 on:
@@ -31,75 +31,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate-skills:
-    name: "validate-skills (advisory — does not block merge)"
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-          cache: false
-
-      - name: Install skill-validator
-        run: |
-          go install github.com/agent-ecosystem/skill-validator/cmd/skill-validator@v1.5.6
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          skill-validator --version
-
-      - name: Validate changed skills
-        id: validate
-        # Non-blocking for now — acts as advisory second reviewer.
-        # Will enforce after repo-wide upgrade resolves existing issues.
-        continue-on-error: true
-        run: |
-          set +e
-          OUTPUT=$(bash .github/scripts/validate-skills.sh "${{ github.base_ref }}" core/skills 2>&1)
-          RESULT=$?
-          set -e
-          echo "$OUTPUT"
-          ERRORS=$(echo "$OUTPUT" | grep '^::error' | sed 's/^::error[^:]*::/- /')
-          WARNINGS=$(echo "$OUTPUT" | grep '^::warning' | sed 's/^::warning[^:]*::/- /')
-          ISSUES=""
-          if [ -n "$ERRORS" ]; then
-            ISSUES="❌ **Errors**"$'\n'"$ERRORS"
-          fi
-          if [ -n "$WARNINGS" ]; then
-            [ -n "$ISSUES" ] && ISSUES="$ISSUES"$'\n\n'
-            ISSUES="${ISSUES}⚠️ **Warnings**"$'\n'"$WARNINGS"
-          fi
-          {
-            echo 'issues<<GHEOF'
-            echo "$ISSUES"
-            echo 'GHEOF'
-          } >> "$GITHUB_OUTPUT"
-          echo "result: $RESULT"
-          exit $RESULT
-
-      - name: Prepare PR comment
-        if: github.event_name == 'pull_request' && steps.validate.outcome == 'failure' && steps.validate.outputs.issues != ''
-        env:
-          ISSUES: ${{ steps.validate.outputs.issues }}
-        run: |
-          echo "${{ github.event.pull_request.number }}" > pr-number.txt
-          REPORT="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          printf '### 🔍 Skill Validation (Advisory — does not block merge)\n\n%s\n\n📋 [Full report](%s)\n' \
-            "$ISSUES" "$REPORT" > pr-comment.txt
-
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'pull_request' && steps.validate.outcome == 'failure' && steps.validate.outputs.issues != ''
-        with:
-          name: pr-comment
-          path: |
-            pr-number.txt
-            pr-comment.txt
-          retention-days: 1
-
   validate-symlinks:
     runs-on: ubuntu-latest
     permissions:
@@ -117,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           bash core/scripts/sync-clients.sh
-          if ! git diff --exit-code -- .claude/skills .claude/hooks .codex .cursor .gemini; then
+          if ! git diff --exit-code -- .claude .codex .cursor .gemini; then
             echo "::error::Symlinks are out of sync. Run 'bash core/scripts/sync-clients.sh' and commit the result."
             exit 1
           fi
