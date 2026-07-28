@@ -4,14 +4,14 @@ description: Template for discovery specification YAML file structure
 
 # Discovery Specification Template
 
-This template defines the structure of `.rhoai-qs/pipeline/discovery-spec.yaml` — the interview plan and PRD tracking document that serves as the contract between initial input analysis and PRD generation.
+This template defines the structure of `.rhoai-qs/<slug>/pipeline/discovery-spec.yaml` — the interview plan and PRD tracking document that serves as the contract between initial input analysis and PRD generation.
 
 Discovery is the first skill in the pipeline, so this spec has no upstream dependencies. It tracks what information has been gathered, what questions remain, and whether the idea is unique in the backlog.
 
 ## File Location
 
 ```
-.rhoai-qs/pipeline/discovery-spec.yaml
+.rhoai-qs/<slug>/pipeline/discovery-spec.yaml
 ```
 
 See [pipeline-convention.md](../../docs/foundation/pipeline-convention.md) for directory scoping rules.
@@ -283,7 +283,7 @@ dependencies: []
 
 ### For Main Agent (Phase 4)
 
-Read this template, then generate `.rhoai-qs/pipeline/discovery-spec.yaml` based on the user's initial input and the backlog check results. The spec serves as the interview plan — it tracks which sections are covered and which questions remain.
+Read this template, then generate `.rhoai-qs/<slug>/pipeline/discovery-spec.yaml` based on the user's initial input and the backlog check results. The spec serves as the interview plan — it tracks which sections are covered and which questions remain.
 
 Update the spec as the interview progresses: move items from `remaining_questions` to `completed_sections` as answers come in.
 
