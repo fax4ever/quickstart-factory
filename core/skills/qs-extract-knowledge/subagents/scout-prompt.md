@@ -105,7 +105,7 @@ Print the final JSON to the console as your return value. This is the ONLY outpu
 ```json
 {
   "repo_name": "<name>",
-  "clone_path": ".tmp/cloned-quickstart/<name>",
+  "clone_path": "<project_root>/.tmp/cloned-quickstart/<name>",
   "components": [
     {
       "name": "<kebab-case-name>",
