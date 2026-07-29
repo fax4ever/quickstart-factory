@@ -160,6 +160,8 @@ This is safe — it only removes pipeline artifacts, not other `.rhoai-qs/` cont
 
 Different quickstarts are different repos, so they each have their own `.rhoai-qs/pipeline/`. Running skills for two quickstarts simultaneously is always safe.
 
+**Exception — `rh-qs-discovery`:** Discovery runs in the factory repo before a quickstart repo exists, so multiple ideas may coexist in the same workspace. To avoid collisions, discovery namespaces its spec by slug: `.rhoai-qs/<slug>/pipeline/discovery-spec.yaml`. All other skills run inside the quickstart's own repo and use the flat `.rhoai-qs/pipeline/` path.
+
 ### Same quickstart
 
 Running the same quickstart concurrently (e.g., two agents both running `rh-qs-deploy` for `spending-transaction-monitor`) is NOT safe. Both would write to the same `.rhoai-qs/pipeline/deploy-spec.yaml`, causing race conditions.
