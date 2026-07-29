@@ -45,7 +45,7 @@ As you reason about the quickstart idea and draft the PRD:
 - Assuming a UI is needed when API-only would work
 - Choosing Llama Stack or specific frameworks before understanding the use case
 - Recommending technologies because they're familiar, not because they fit
-- Assuming on-cluster model serving when a remote endpoint would work
+- Deciding between on-cluster model serving and a remote endpoint without asking what the user has available or wants to showcase
 
 **Key questions:**
 - Am I recommending this technology because it fits the problem, or because it's what I know?
@@ -65,15 +65,15 @@ As you reason about the quickstart idea and draft the PRD:
 **What to consider:**
 - Not every quickstart needs GPU — many AI tasks run fine on CPU
 - Small models (7B, 8B) can run on a single GPU or even CPU for demos
-- Inference can be remote (API endpoint) rather than on-cluster
-- The user may not have GPU access or budget
+- Inference can be on-cluster (showcasing RHOAI model serving) or remote (API endpoint) — the right choice depends on the user's resources and goals, not a default assumption either way
+- The user may not have GPU access or budget — but they may also want to showcase on-cluster GPU serving even when a remote endpoint would technically suffice
 - Batch processing may not need dedicated GPU resources
 
 **Key questions:**
 - Does the AI capability actually require on-cluster GPU?
-- Could a smaller model or remote endpoint work for this use case?
+- Has the user been asked whether they want to showcase on-cluster GPU serving, or would a smaller model or remote endpoint better fit their resources?
 - Has the user mentioned GPU availability or constraints?
-- Am I assuming GPU because "it's an AI quickstart" rather than because the use case demands it?
+- Am I assuming GPU because "it's an AI quickstart" rather than because the use case demands it — and equally, am I steering away from on-cluster GPU without checking whether the user wants to demonstrate it?
 
 **Where to look:**
 - AI touchpoints section — what models and capabilities are specified?
