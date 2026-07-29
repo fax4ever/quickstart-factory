@@ -1,0 +1,56 @@
+# CI gate: runs on any core/ or client-config change — validates symlinks, hooks, and client sync.
+name: Harness Gate
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'core/**'
+      - '.claude/**'
+      - '.codex/**'
+      - '.cursor/**'
+      - '.gemini/**'
+      - '.github/workflows/harness-gate.yaml'
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'core/**'
+      - '.claude/**'
+      - '.codex/**'
+      - '.cursor/**'
+      - '.gemini/**'
+      - '.github/workflows/harness-gate.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: sync-skills-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-symlinks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate skill symlinks
+        run: bash .github/scripts/validate-symlinks.sh
+
+      - name: Validate OC-policy gate symlinks
+        run: bash .github/scripts/validate-oc-policy-gate.sh
+
+      - name: Detect sync drift
+        run: |
+          set -euo pipefail
+          bash core/scripts/sync-clients.sh
+          if ! git diff --exit-code -- .claude .codex .cursor .gemini; then
+            echo "::error::Symlinks are out of sync. Run 'bash core/scripts/sync-clients.sh' and commit the result."
+            exit 1
+          fi
+          echo "✅ No drift detected."
+
