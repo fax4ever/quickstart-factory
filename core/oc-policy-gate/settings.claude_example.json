@@ -7,6 +7,9 @@
       "Read(./core/oc-policy-gate/**)",
       "Edit(./core/oc-policy-gate/**)",
       "Write(./core/oc-policy-gate/**)"
+    ], 
+    "allow": [
+      "Bash(python3 core/flow/pipeline-checkpoint.py*)"
     ]
   },
   "hooks": {

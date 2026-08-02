@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 10 800 120" width="800" height="120">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="800" y2="140" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1a1a1a"/>
+      <stop offset="100%" stop-color="#252525"/>
+    </linearGradient>
+    <linearGradient id="redBar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FF3030"/>
+      <stop offset="100%" stop-color="#CC0000"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <circle cx="20" cy="20" r="0.7" fill="white" opacity="0.05"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="140" rx="8" fill="url(#bg)"/>
+  <rect width="800" height="140" rx="8" fill="url(#grid)"/>
+
+  <!-- Left accent bar -->
+  <rect width="5" height="140" fill="url(#redBar)"/>
+
+  <!-- Large Red Hat fedora (official 2019 side-view) — right side decorative -->
+  <g transform="translate(620,5) scale(0.9)" opacity="0.30">
+    <!-- Crown -->
+    <path fill="#EE0000"
+          d="M127.47 83.49c12.51 0 30.61-2.58 30.61-17.46a14 14 0 0 0-.31-3.42l-7.45-32.36c-1.72-7.12-3.23-10.35-15.73-16.6C124.89 8.69 103.76.5 97.51.5 91.69.5 90 8 83.06 8c-6.68 0-11.64-5.6-17.89-5.6-6 0-9.91 4.09-12.93 12.5 0 0-8.41 23.72-9.49 27.16a6.43 6.43 0 0 0-.22 1.94c0 9.22 36.3 39.45 84.94 39.45"/>
+    <!-- Brim -->
+    <path fill="#EE0000"
+          d="M160 72.07c1.73 8.19 1.73 9.05 1.73 10.13 0 14-15.74 21.77-36.43 21.77-46.76.03-87.72-27.37-87.72-45.48a18.45 18.45 0 0 1 1.51-7.33C22.27 52 .5 55 .5 74.22c0 31.48 74.59 70.28 133.65 70.28 45.28 0 56.7-20.48 56.7-36.65 0-12.72-11-27.16-30.83-35.78"/>
+    <!-- Band/shadow -->
+    <path fill="#1a1a1a"
+          d="M160 72.07c1.73 8.19 1.73 9.05 1.73 10.13 0 14-15.74 21.77-36.43 21.77-46.76.03-87.72-27.37-87.72-45.48a18.45 18.45 0 0 1 1.51-7.33l3.66-9.06a6.43 6.43 0 0 0-.22 1.9c0 9.22 36.3 39.45 84.94 39.45 12.51 0 30.61-2.58 30.61-17.46a14 14 0 0 0-.31-3.42l2.23 9.5z"/>
+  </g>
+
+  <!-- Circuit traces feeding into the fedora -->
+  <g stroke="#EE0000" stroke-width="1.2" fill="none" opacity="0.18" stroke-linecap="round">
+    <path d="M580,30 H640"/>
+    <path d="M600,60 H630"/>
+    <path d="M570,90 H625"/>
+    <path d="M590,115 H620"/>
+  </g>
+  <g fill="#EE0000">
+    <circle cx="580" cy="30" r="2.5" opacity="0.3"/>
+    <circle cx="640" cy="30" r="2" opacity="0.2"/>
+    <circle cx="600" cy="60" r="2.5" opacity="0.3"/>
+    <circle cx="630" cy="60" r="2" opacity="0.2"/>
+    <circle cx="570" cy="90" r="2.5" opacity="0.3"/>
+    <circle cx="625" cy="90" r="2" opacity="0.2"/>
+    <circle cx="590" cy="115" r="2.5" opacity="0.3"/>
+    <circle cx="620" cy="115" r="2" opacity="0.2"/>
+  </g>
+
+  <!-- Large gear -->
+  <g transform="translate(52,78)">
+    <g fill="#EE0000" opacity="0.28">
+      <rect x="-4.5" y="-24" width="9" height="11" rx="1.5"/>
+      <rect x="-4.5" y="-24" width="9" height="11" rx="1.5" transform="rotate(45)"/>
+      <rect x="-4.5" y="-24" width="9" height="11" rx="1.5" transform="rotate(90)"/>
+      <rect x="-4.5" y="-24" width="9" height="11" rx="1.5" transform="rotate(135)"/>
+      <rect x="-4.5" y="-24" width="9" height="11" rx="1.5" transform="rotate(180)"/>
+      <rect x="-4.5" y="-24" width="9" height="11" rx="1.5" transform="rotate(225)"/>
+      <rect x="-4.5" y="-24" width="9" height="11" rx="1.5" transform="rotate(270)"/>
+      <rect x="-4.5" y="-24" width="9" height="11" rx="1.5" transform="rotate(315)"/>
+    </g>
+    <circle r="15" fill="#222" stroke="#EE0000" stroke-width="1.5" opacity="0.45"/>
+    <circle r="5.5" fill="#1a1a1a" stroke="#EE0000" stroke-width="0.8" opacity="0.3"/>
+  </g>
+
+  <!-- Small gear -->
+  <g transform="translate(82,49)">
+    <g fill="#EE0000" opacity="0.2">
+      <rect x="-3" y="-17" width="6" height="8" rx="1" transform="rotate(22.5)"/>
+      <rect x="-3" y="-17" width="6" height="8" rx="1" transform="rotate(67.5)"/>
+      <rect x="-3" y="-17" width="6" height="8" rx="1" transform="rotate(112.5)"/>
+      <rect x="-3" y="-17" width="6" height="8" rx="1" transform="rotate(157.5)"/>
+      <rect x="-3" y="-17" width="6" height="8" rx="1" transform="rotate(202.5)"/>
+      <rect x="-3" y="-17" width="6" height="8" rx="1" transform="rotate(247.5)"/>
+      <rect x="-3" y="-17" width="6" height="8" rx="1" transform="rotate(292.5)"/>
+      <rect x="-3" y="-17" width="6" height="8" rx="1" transform="rotate(337.5)"/>
+    </g>
+    <circle r="10" fill="#222" stroke="#EE0000" stroke-width="1" opacity="0.3"/>
+    <circle r="3.5" fill="#1a1a1a" stroke="#EE0000" stroke-width="0.5" opacity="0.25"/>
+  </g>
+
+  <!-- Subtitle -->
+  <text x="118" y="45" font-family="'Segoe UI', Arial, Helvetica, sans-serif" font-size="13" fill="#EE0000" font-weight="600" letter-spacing="3">RED HAT OPENSHIFT AI</text>
+
+  <!-- Separator -->
+  <line x1="118" y1="55" x2="358" y2="55" stroke="#EE0000" stroke-width="1.5" opacity="0.3"/>
+
+  <!-- Main title -->
+  <text x="118" y="89" font-family="'Segoe UI', Arial, Helvetica, sans-serif" font-size="34" fill="#FFFFFF" font-weight="bold" letter-spacing="2">QUICKSTART FACTORY</text>
+
+  <!-- Tagline -->
+  <text x="118" y="114" font-family="'Segoe UI', Arial, Helvetica, sans-serif" font-size="11" fill="#777" letter-spacing="2">AI-POWERED QUICKSTART BUILDER</text>
+</svg>

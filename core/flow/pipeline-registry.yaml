@@ -1,0 +1,49 @@
+# expected_outputs.path supports glob patterns (e.g. data/*.json, core/out-*)
+pipeline:
+  name: greenfield
+  description: End-to-end new AI Quickstart pipeline
+
+skills:
+  - id: skill-1
+    order: 1
+    description: "Placeholder — first pipeline step"
+    expected_inputs:
+      - name: qs-name
+        description: "Quickstart slug"
+    expected_outputs:
+      - path: ".rhoai-qs/{qs-name}/flow/output-1.md"
+        description: "First step output"
+    review_guidance: |
+      - Check that the output file exists and has meaningful content
+      - Verify all sections are populated
+    next_skill: skill-2
+
+  - id: skill-2
+    order: 2
+    description: "Placeholder — second pipeline step"
+    expected_inputs:
+      - name: qs-name
+        description: "Quickstart slug"
+    expected_outputs:
+      - path: ".rhoai-qs/{qs-name}/flow/output-2.md"
+        description: "Second step output"
+    review_guidance: |
+      - Check that the output file exists and has meaningful content
+      - Verify all sections are populated
+    next_skill: skill-3
+
+  - id: skill-3
+    order: 3
+    description: "Placeholder — third pipeline step"
+    expected_inputs:
+      - name: qs-name
+        description: "Quickstart slug"
+      - name: file-name
+        description: "File name to create"
+    expected_outputs:
+      - path: ".rhoai-qs/{qs-name}/flow/output-3.md"
+        description: "Third step output"
+    review_guidance: |
+      - Check that the output file exists and has meaningful content
+      - Verify all sections are populated
+    next_skill: null
