@@ -13,10 +13,13 @@ import fcntl
 import glob
 import logging
 import os
-import sys
 import time
 
-import yaml
+_import_error = None
+try:
+    import yaml
+except Exception as e:
+    _import_error = e
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +36,28 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Error reporting (stdlib-only so it works even when external imports fail)
+# ---------------------------------------------------------------------------
+
+def _append_error_to_dashboard(qs_name: str, skill_name: str, error: Exception):
+    """Append a red error banner to the dashboard markdown."""
+    try:
+        dashboard_path = Path(f".rhoai-qs/{qs_name}/flow/dashboard.md")
+        dashboard_path.parent.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        error_block = (
+            f"\n\n---\n\n"
+            f"## ❌ Pipeline Checkpoint Error — {skill_name}\n\n"
+            f"**{type(error).__name__}**: `{error}`\n\n"
+            f"> {timestamp} UTC\n"
+        )
+        with open(dashboard_path, "a") as f:
+            f.write(error_block)
+    except Exception:
+        log.exception("Failed to append error to dashboard")
 
 
 # ---------------------------------------------------------------------------
@@ -282,25 +307,33 @@ def main():
     skill_name = args.skill_name
     qs_name = args.qs_name
 
-    log.info("Checkpoint called: skill=%s qs=%s", skill_name, qs_name)
+    try:
+        if _import_error:
+            raise _import_error
 
-    if not REGISTRY_PATH.exists():
-        log.error("Registry not found: %s", REGISTRY_PATH)
-        sys.exit(1)
+        log.info("Checkpoint called: skill=%s qs=%s", skill_name, qs_name)
 
-    registry = load_registry(REGISTRY_PATH)
-    skills = registry.get("skills", [])
+        if not REGISTRY_PATH.exists():
+            raise FileNotFoundError(f"Registry not found: {REGISTRY_PATH}")
 
-    skill_entry = next((s for s in skills if s.get("id") == skill_name), None)
-    if skill_entry is None:
-        log.info("Skill %s not in pipeline, exiting", skill_name)
-        return
+        registry = load_registry(REGISTRY_PATH)
+        skills = registry.get("skills", [])
 
-    outputs_verified = validate_outputs(skill_entry, qs_name)
-    log.info("Outputs verified: %s", outputs_verified)
+        skill_entry = next((s for s in skills if s.get("id") == skill_name), None)
+        if skill_entry is None:
+            log.info("Skill %s not in pipeline, exiting", skill_name)
+            return
 
-    dashboard_path = update_dashboard(qs_name, skill_name, skills, outputs_verified)
-    log.info("Dashboard updated: %s", dashboard_path)
+        outputs_verified = validate_outputs(skill_entry, qs_name)
+        log.info("Outputs verified: %s", outputs_verified)
+
+        dashboard_path = update_dashboard(qs_name, skill_name, skills, outputs_verified)
+        log.info("Dashboard updated: %s", dashboard_path)
+
+    except Exception as e:
+        log.exception("Checkpoint failed")
+        _append_error_to_dashboard(qs_name, skill_name, e)
+        raise
 
 
 if __name__ == "__main__":

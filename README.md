@@ -127,6 +127,8 @@ The same skills work across Claude, Cursor, Gemini, and Codex. Each client reads
 
 Skills are committed as relative symlinks in each client's directory. Run `bash core/scripts/sync-clients.sh` to regenerate after adding new skills.
 
+Skills update a per-quickstart progress dashboard at `.rhoai-qs/<qs-name>/flow/dashboard.md` via `core/flow/pipeline-checkpoint.py`. Claude pre-allows that command in `.claude/settings.json`; Cursor intentionally does not ship a repo `permissions.json` (default Auto-review + sandbox is enough).
+
 ## License
 
 Licensed under Apache License 2.0. See [`LICENSE`](./LICENSE).
