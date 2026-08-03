@@ -284,7 +284,7 @@ PHASE 7 — EVALUATION & FINALIZATION
 | 12-02 | Create pr-body-generator-prompt.md | Write the subagent prompt that generates a PR description from all temp manifests and the security report. |
 | 12-03 | Create blog-writer-prompt.md | Write the subagent prompt that generates a blog post draft from the PRD, architecture, and README. |
 | 12-04 | Create reasoning-guardrails.md | Define concern areas: PR description accuracy, blog post tone (technical but accessible), no credentials in PR body, backlog issue cross-reference. |
-| 12-05 | Restructure SKILL.md as orchestrator | Rewrite SKILL.md to create PR → wait for CI → if CI fails, diagnose + fix → re-push (max 3 iterations). Generate blog draft at `data/blog-drafts/<slug>-<date>.md`. Update backlog issue. |
+| 12-05 | Restructure SKILL.md as orchestrator | Rewrite SKILL.md to create PR → wait for CI → if CI fails, diagnose + fix → re-push (max 3 iterations). Generate blog draft at `.rhoai-qs/<slug>/blog-drafts/<date>.md`. Update backlog issue. |
 | 12-06 | Validate with skill-validator | Run `skill-validator --strict` against the updated SKILL.md. |
 
 ---

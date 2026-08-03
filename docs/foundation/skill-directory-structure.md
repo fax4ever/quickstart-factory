@@ -11,8 +11,9 @@ rh-qs-<name>/
 ├── spec-template.md            # YAML spec structure definition
 ├── output-templates.md         # Output format definitions (or output-templates/ directory)
 ├── subagents/
-│   ├── README.md               # Subagent index: roles, inputs, outputs
-│   └── <role>-prompt.md        # One self-contained prompt per subagent
+│   ├── README.md                    # Subagent index: roles, inputs, outputs
+│   ├── validation-skill-prompt.md   # Required — Phase 0 quickstart slug resolution
+│   └── <role>-prompt.md             # One self-contained prompt per subagent
 ├── knowledge-base/             # Optional — scored pattern retrieval
 │   ├── README.md
 │   └── <category>/
@@ -72,7 +73,11 @@ Both variants serve the same purpose: subagents and the main agent read the rele
 
 ### subagents/ (required)
 
-Contains the prompts that drive delegated work. Every skill with subagents must have this directory.
+Contains the prompts that drive delegated work. Every skill has this directory, at minimum for `validation-skill-prompt.md`.
+
+#### subagents/validation-skill-prompt.md (required, every skill)
+
+Resolves which quickstart (by slug) the current session applies to, as **Phase 0** before any other work. Required because `.rhoai-qs/` now holds pipeline state for every quickstart ever worked on, namespaced by slug — no skill can safely assume "the quickstart" without checking first. See [validation-skill-template.md](validation-skill-template.md) for the full resolution logic and required inputs/outputs.
 
 #### subagents/README.md (required)
 
@@ -193,7 +198,7 @@ core/skills/implementation/rh-qs-implement/
 │   # error handling, async consistency, security basics
 │
 ├── spec-template.md
-│   # Defines /tmp/qs-<slug>/implementation-spec.yaml:
+│   # Defines .rhoai-qs/<slug>/pipeline/implementation-spec.yaml:
 │   #   endpoints, schemas, services, DB models, UI routes
 │
 ├── output-templates.md
@@ -202,7 +207,10 @@ core/skills/implementation/rh-qs-implement/
 │
 ├── subagents/
 │   ├── README.md
-│   │   # Index of 4 subagents with roles, I/O, phases
+│   │   # Index of 5 subagents with roles, I/O, phases
+│   │
+│   ├── validation-skill-prompt.md
+│   │   # Phase 0 — resolves which quickstart slug this session is for
 │   │
 │   ├── test-writer-prompt.md
 │   │   # Generates tests from PRD + architecture + scaffold manifest
@@ -229,13 +237,14 @@ core/skills/implementation/rh-qs-implement/
 **Workflow summary for this skill:**
 
 ```
-Phase 1: Read scaffold-manifest.yaml + architecture-spec.yaml from /tmp/qs-<slug>/
+Phase 0: Resolve quickstart slug (validation-skill)
+Phase 1: Read scaffold-manifest.yaml + architecture-spec.yaml from .rhoai-qs/<slug>/pipeline/
 Phase 2: Generate implementation-spec.yaml → user approval
 Phase 3: Spawn db-schema subagent (dependency)
 Phase 4: Spawn backend-implementer + frontend-implementer in parallel
 Phase 5: Spawn test-writer → generates tests
 Phase 6: Run `make test` → route failures → fix loop (max 3)
-Phase 7: Write implementation-manifest.yaml to /tmp/qs-<slug>/
+Phase 7: Write implementation-manifest.yaml to .rhoai-qs/<slug>/pipeline/
 ```
 
 ## Minimal Example: rh-qs-discovery
@@ -250,6 +259,7 @@ core/skills/inception/rh-qs-discovery/
 ├── output-templates.md
 ├── subagents/
 │   ├── README.md
+│   ├── validation-skill-prompt.md
 │   ├── prd-structurer-prompt.md
 │   └── backlog-matcher-prompt.md
 └── references/
@@ -278,10 +288,17 @@ Current skills are flat `SKILL.md` files with optional `references/` and `script
 
 1. Keep `SKILL.md` but rewrite it as an orchestrator
 2. Add `reasoning-guardrails.md` with skill-specific concern areas
-3. Add `spec-template.md` defining the skill's spec YAML
+3. Add `spec-template.md` defining the skill's spec YAML, using `.rhoai-qs/<slug>/pipeline/` paths per [pipeline-convention.md](pipeline-convention.md)
 4. Add `output-templates.md` defining output formats
-5. Create `subagents/` with `README.md` and one `<role>-prompt.md` per delegated task
+5. Create `subagents/` with `README.md`, `validation-skill-prompt.md` (Phase 0 slug resolution, see [validation-skill-template.md](validation-skill-template.md)), and one `<role>-prompt.md` per delegated task
 6. Move heavy logic from `SKILL.md` into subagent prompts
 7. Add `knowledge-base/` only if the skill needs scored retrieval
 8. Preserve existing `references/` and `scripts/` directories
 9. Run `skill-validator --strict` to verify compliance
+
+## Relationship to Other Foundation Docs
+
+- **[pipeline-convention.md](pipeline-convention.md)** — defines the `.rhoai-qs/<slug>/` directory that `spec-template.md` and `output-templates.md` write into
+- **[validation-skill-template.md](validation-skill-template.md)** — the required `subagents/validation-skill-prompt.md` every skill must have
+- **[reasoning-guardrails-template.md](reasoning-guardrails-template.md)** — template for `reasoning-guardrails.md`
+- **[spec-as-contract.md](spec-as-contract.md)** — the spec → validate → implement workflow that `spec-template.md` feeds into

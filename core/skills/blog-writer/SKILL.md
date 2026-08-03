@@ -7,7 +7,7 @@ description: Generate blog post drafts for completed AI Quickstarts. Use when an
 
 ## Purpose
 
-Generate blog post drafts for completed AI Quickstarts. Outputs to `data/blog-drafts/`. Drafts require review before publication.
+Generate blog post drafts for completed AI Quickstarts. Outputs to `.rhoai-qs/<slug>/blog-drafts/` (or `.rhoai-qs/_shared/blog-drafts/` if the quickstart's own slug folder doesn't exist, e.g. for older quickstarts predating this convention). Drafts require review before publication.
 
 ## Workflow
 
@@ -34,8 +34,8 @@ Include in every blog post:
 
 ## Output
 
-- **Directory:** `data/blog-drafts/`
-- **Naming:** `{quickstart-slug}-YYYY-MM-DD.md` (e.g. `vllm-cpu-2025-03-11.md`)
+- **If the quickstart's slug folder exists:** `.rhoai-qs/<slug>/blog-drafts/YYYY-MM-DD.md` — no slug in the filename, the folder already disambiguates (e.g. `.rhoai-qs/vllm-cpu/blog-drafts/2025-03-11.md`)
+- **Fallback (no slug folder, e.g. an older quickstart predating this convention):** `.rhoai-qs/_shared/blog-drafts/{quickstart-slug}-YYYY-MM-DD.md` — the slug **is** needed here since `_shared/` mixes drafts for every quickstart (e.g. `vllm-cpu-2025-03-11.md`)
 
 ## References
 

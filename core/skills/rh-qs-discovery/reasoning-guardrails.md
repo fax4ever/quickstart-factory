@@ -184,7 +184,7 @@ Once you've reasoned about all applicable concerns:
 
 ## Self-Check Before Generating PRD
 
-Before writing the final PRD to `data/prds/<slug>.md`, quickly verify:
+Before writing the final PRD to `.rhoai-qs/<slug>/prds/prd.md`, quickly verify:
 - [ ] All relevant guardrails considered
 - [ ] PRD content traces to user input (not invented)
 - [ ] Ambiguities listed as open questions, not silently resolved

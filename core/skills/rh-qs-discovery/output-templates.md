@@ -10,7 +10,7 @@ For the gap analysis report format, see [references/gap-analysis-template.md](./
 
 ## PRD Template
 
-**Location:** `data/prds/<slug>.md`
+**Location:** `.rhoai-qs/<slug>/prds/prd.md`
 
 **Slug convention:** lowercase, hyphenated (e.g., `mortgage-application-processor`, `supply-chain-anomaly-detector`).
 

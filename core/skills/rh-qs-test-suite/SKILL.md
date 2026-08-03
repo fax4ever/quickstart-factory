@@ -14,7 +14,7 @@ description: |
 ## Trigger
 
 - Helm chart and Makefile deploy targets exist from **`rh-qs-deploy`** if not create it.
-- Design doc **`data/designs/<slug>.md`** defines testing strategy (unit / integration / E2E / evals)
+- Design doc **`../.rhoai-qs/<slug>/designs/design.md`** defines testing strategy (unit / integration / E2E / evals) — this skill runs inside the scaffolded quickstart repo, so the design doc is one level up in the parent `quickstart-factory/.rhoai-qs/<slug>/`
 - Optional: replace or extend minimal workflows from **`rh-qs-scaffold`**
 
 ## What it does
@@ -151,7 +151,7 @@ For repos using **dev → main**: require `Validate PR comes from dev branch` on
 | **Agent + evals** | Standard + `pr-evaluation-check.yml` + eval artifact upload |
 | **Release train** | Full + `pr-branch-check.yml` + `build-and-push.yaml` + `create-dev-to-main-pr.yaml` + nightlies |
 
-Match profile to the **Testing strategy** section in `data/designs/<slug>.md`.
+Match profile to the **Testing strategy** section in `../.rhoai-qs/<slug>/designs/design.md`.
 
 ## Verification
 

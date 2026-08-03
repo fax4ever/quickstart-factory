@@ -10,7 +10,7 @@ description: Scaffold a new AI Quickstart GitHub repository with CI/CD, linting,
 
 ## Trigger
 
-Design document approved from `rh-qs-architect` at `data/designs/<slug>.md`
+Design document approved from `rh-qs-architect` at `.rhoai-qs/<slug>/designs/design.md`
 
 ## What it does
 
@@ -27,6 +27,29 @@ Design document approved from `rh-qs-architect` at `data/designs/<slug>.md`
 
 ## Workflow
 
+### Phase 0: Resolve Quickstart Context
+
+Before doing anything, resolve which quickstart this session is for. Run `ls .rhoai-qs/ 2>/dev/null` (excluding `_shared`) and spawn the **validation-skill subagent**:
+
+```python
+Agent(
+    description="Resolve which quickstart this scaffold session is for",
+    prompt=f"""
+Read and follow instructions from:
+core/skills/rh-qs-scaffold/subagents/validation-skill-prompt.md
+
+User message: {user_message}
+Existing slugs: {existing_slugs}
+Is entry point: false
+Calling skill: rh-qs-scaffold
+"""
+)
+```
+
+Handle the result per [validation-skill-template.md](../../../docs/foundation/validation-skill-template.md#main-agent-handling). If `resolution: error` (no slugs exist), tell the user to run `rh-qs-discovery` and `rh-qs-architect` first and stop.
+
+### Remaining phases
+
 ```
 - [ ] 1. Create GitHub repo
 - [ ] 2. Configure branch protection
@@ -40,9 +63,24 @@ Design document approved from `rh-qs-architect` at `data/designs/<slug>.md`
 
 ### Create repository
 
+The scaffolded repo is cloned as a sibling folder at the `quickstart-factory` root — **not** inside `.rhoai-qs/`. This requires two steps in order:
+
 ```bash
+# 1. Ensure we're at the quickstart-factory root, so --clone lands the new
+#    repo as a direct child folder, not inside whatever subfolder we were in.
+cd "$(git rev-parse --show-toplevel)"
+
+# 2. Create and clone the repo
 gh repo create rh-ai-quickstart/<slug> --public --description "<from PRD>" --clone
 ```
+
+Then immediately add a gitignore entry so `quickstart-factory`'s own git never tries to track the nested repo's contents:
+
+```bash
+echo "/<slug>/" >> .gitignore
+```
+
+See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nested-quickstart-repos) for why this repo lives here instead of somewhere else.
 
 Start from [ai-quickstart-template](https://github.com/rh-ai-quickstart/ai-quickstart-template) when possible. Remove packages not in the design matrix.
 
@@ -167,4 +205,5 @@ When scaffold is pushed and CI is green → **`rh-qs-implement`**
 
 - [ai-quickstart-template](https://github.com/rh-ai-quickstart/ai-quickstart-template)
 - [it-self-service-agent CI patterns](../rh-qs-test-suite/SKILL.md) — production workflow split (post-deploy)
-- Design doc: `data/designs/<slug>.md`
+- Design doc: `.rhoai-qs/<slug>/designs/design.md`
+- [subagents/validation-skill-prompt.md](./subagents/validation-skill-prompt.md) — pass by file path only, do NOT read directly

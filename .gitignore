@@ -32,6 +32,17 @@ __pycache__/
 # Generated output (blog drafts, reports, etc.)
 data/
 
+# Per-quickstart pipeline state, specs, PRDs, designs, blog drafts, reports.
+# Namespaced by slug: .rhoai-qs/<slug>/{pipeline,prds,designs,blog-drafts,reports}/
+# plus .rhoai-qs/_shared/ for cross-cutting reports (grooming, gap analysis).
+.rhoai-qs/
+
+# Quickstart repos nested at the factory root (each is its own separate git
+# repo/remote, e.g. rh-ai-quickstart/<slug>, cloned here by rh-qs-scaffold).
+# rh-qs-scaffold adds one explicit "/<slug>/" line below per quickstart it
+# creates, so the factory repo never tries to track their contents.
+# Example: /mortgage-processor/
+
 # Temporary files
 .tmp/
 brain.ai
