@@ -148,6 +148,7 @@ def render_dashboard(qs_name: str, skills: list[dict], state: dict) -> str:
     if last_done_skill:
         guidance = last_done_skill.get("review_guidance", "").strip()
         if guidance:
+            guidance = guidance.replace("{qs-name}", qs_name)
             review_section = f"\n---\n\n## ⚠️ Review Before Continuing — {last_done_skill['id']}\n\n{guidance}\n"
 
     # Next step
@@ -160,10 +161,14 @@ def render_dashboard(qs_name: str, skills: list[dict], state: dict) -> str:
         for inp in inputs:
             if isinstance(inp, dict):
                 name = inp.get("name", "")
+                required = inp.get("required", True)
                 if name == "qs-name":
-                    cmd_args.append(f"qs-name={qs_name}")
+                    arg = f"qs-name={qs_name}"
                 else:
-                    cmd_args.append(f"{name}=<{name}>")
+                    arg = f"{name}=<{name}>"
+                if not required:
+                    arg = f"[{arg}]"
+                cmd_args.append(arg)
         cmd = f"/{next_id} " + " ".join(cmd_args) if cmd_args else f"/{next_id}"
         next_section = f"\n---\n\n## ▶️ Next Step\n\n**{next_id}** — {next_desc}\n\n```\n{cmd}\n```\n"
 
