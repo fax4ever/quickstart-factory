@@ -11,6 +11,10 @@ description: Implement a working AI Quickstart vertical slice from an approved d
 
 Scaffold exists from `rh-qs-scaffold`
 
+## Where This Runs
+
+This skill works inside `.rhoai-qs/<slug>/` — the scaffolded quickstart's own repo, since that's where the application code lives. The PRD, design doc, and pipeline specs/manifests sit right alongside the code in this same folder — reference them as plain relative paths (`prds/prd.md`, `designs/design.md`, `pipeline/...`), no `../` needed. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#where-skills-run-and-why-it-matters-for-paths).
+
 ## What it does
 
 Builds the **minimal vertical slice** that proves the use case end-to-end:
@@ -26,6 +30,29 @@ Builds the **minimal vertical slice** that proves the use case end-to-end:
 **Conventions:** No feature creep beyond PRD scope. No tutorial comments in code. Run `make lint && make test` before declaring done.
 
 ## Workflow
+
+### Phase 0: Resolve Quickstart Context
+
+Before reading any files, resolve which quickstart this session is for. Run `ls ../ 2>/dev/null` (excluding `reports` and `blog-drafts`) and spawn the **validation-skill subagent**:
+
+```python
+Agent(
+    description="Resolve which quickstart this implementation session is for",
+    prompt=f"""
+Read and follow instructions from:
+core/skills/rh-qs-implement/subagents/validation-skill-prompt.md
+
+User message: {user_message}
+Existing slugs: {existing_slugs}
+Is entry point: false
+Calling skill: rh-qs-implement
+"""
+)
+```
+
+Handle the result per [validation-skill-template.md](../../../docs/foundation/validation-skill-template.md#main-agent-handling). If `resolution: error`, tell the user the scaffold step must run first and stop.
+
+### Remaining phases
 
 ```
 - [ ] 1. Read PRD + design doc
@@ -106,5 +133,6 @@ When vertical slice works locally → **`rh-qs-verify-build`**
 
 - [Monorepo layout](./references/template-layout.md)
 - [Design checklist](./references/design-checklist.md)
-- PRD: `data/prds/<slug>.md`
-- Design: `data/designs/<slug>.md`
+- PRD: `prds/prd.md`
+- Design: `designs/design.md`
+- [subagents/validation-skill-prompt.md](./subagents/validation-skill-prompt.md) — pass by file path only, do NOT read directly

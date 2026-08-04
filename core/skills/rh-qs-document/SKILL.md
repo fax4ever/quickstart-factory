@@ -9,9 +9,13 @@ description: Generate README and catalog documentation for AI Quickstarts from v
 
 ## Trigger
 
-**`rh-qs-verify-deploy`** report is green (`data/reports/verify-deploy-<slug>-*.md`); CI workflows from `rh-qs-test-suite` are in place when the design requires them
+**`rh-qs-verify-deploy`** report is green (`reports/verify-deploy-*.md`); CI workflows from `rh-qs-test-suite` are in place when the design requires them
 
 Documentation runs **after** verification — not before. Every deploy command in the README must match what verify-deploy actually ran.
+
+## Where This Runs
+
+This skill works inside `.rhoai-qs/<slug>/` — the scaffolded quickstart's own repo, since `README.md` lives at that repo's root. Pipeline files, design doc, and reports sit right alongside the code in this same folder — reference them as plain relative paths, no `../` needed. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#where-skills-run-and-why-it-matters-for-paths).
 
 ## What it does
 
@@ -23,6 +27,29 @@ Documentation runs **after** verification — not before. Every deploy command i
 6. Optionally generates a **demo script outline** for video/presentation
 
 ## Workflow
+
+### Phase 0: Resolve Quickstart Context
+
+Before doing anything, resolve which quickstart this session is for. Run `ls ../ 2>/dev/null` (excluding `reports` and `blog-drafts`) and spawn the **validation-skill subagent**:
+
+```python
+Agent(
+    description="Resolve which quickstart this documentation session is for",
+    prompt=f"""
+Read and follow instructions from:
+core/skills/rh-qs-document/subagents/validation-skill-prompt.md
+
+User message: {user_message}
+Existing slugs: {existing_slugs}
+Is entry point: false
+Calling skill: rh-qs-document
+"""
+)
+```
+
+Handle the result per [validation-skill-template.md](../../../docs/foundation/validation-skill-template.md#main-agent-handling).
+
+### Remaining phases
 
 ```
 - [ ] 1. Read verify-deploy report — use verified commands, flags, and namespace
@@ -79,4 +106,5 @@ When README is complete → **`rh-qs-ship`**
 ## References
 
 - [README structure](./references/ReadmeStructure.md)
-- Design doc: `data/designs/<slug>.md`
+- Design doc: `designs/design.md`
+- [subagents/validation-skill-prompt.md](./subagents/validation-skill-prompt.md) — pass by file path only, do NOT read directly

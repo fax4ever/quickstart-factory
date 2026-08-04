@@ -65,7 +65,7 @@ PHASE 7 — EVALUATION & FINALIZATION
 | 01-01 | Define skill directory structure standard | Document the canonical directory layout for upgraded skills (`SKILL.md`, `reasoning-guardrails.md`, `spec-template.md`, `output-templates.md`, `subagents/`, `knowledge-base/`, `references/`). Create a reference example that all skill EPICs follow. |
 | 01-02 | Create spec-template convention doc | Define the YAML spec-as-contract format: required fields, acceptance criteria section, validation rules. This template is used by all skills that generate specs. |
 | 01-03 | Create reasoning guardrails template | Define the standard format for `reasoning-guardrails.md` files — concern areas structure, self-check prompts, scope-specific sections. Provide an example that skill EPICs adapt. |
-| 01-04 | Define temp-file namespace scoping convention | Document the `/tmp/qs-<slug>/` scoping convention. Create a helper reference that skills use to construct scoped temp paths. Define cleanup policy. |
+| 01-04 | Define temp-file namespace scoping convention | Document the `.rhoai-qs/<slug>/pipeline/` scoping convention. Create a helper reference that skills use to construct scoped temp paths. Define cleanup policy. |
 | 01-05 | Define temp-file contract formats | Specify the YAML schema for each inter-skill handoff file (architecture-spec, scaffold-manifest, implementation-manifest, deploy-manifest, security-report, deploy-state, doc-manifest). These contracts must be defined before skills are implemented. |
 | 01-06 | Define user-approved acceptance criteria pattern | Document how specs include acceptance criteria, when user approval is required, and how acceptance criteria are validated post-implementation. |
 
@@ -117,7 +117,7 @@ PHASE 7 — EVALUATION & FINALIZATION
 | 04-01 | Create discovery directory structure | Set up `core/skills/inception/rh-qs-discovery/` with `subagents/`, `references/` directories and `subagents/README.md`. |
 | 04-02 | Create prd-structurer-prompt.md | Write the subagent prompt that converts unstructured notes/docs into structured PRD sections (JSON). Handles uploaded documents, conversation notes, and raw ideas. |
 | 04-03 | Create backlog-matcher-prompt.md | Write the subagent prompt that checks if the user's idea duplicates or overlaps with existing backlog issues. Takes idea summary + backlog data, produces match report (duplicate/similar/unique). |
-| 04-04 | Create spec-template.md | Define the discovery spec format (`/tmp/discovery-spec.yaml`) — interview plan structure based on initial input. |
+| 04-04 | Create spec-template.md | Define the discovery spec format (`.rhoai-qs/<slug>/pipeline/discovery-spec.yaml`) — interview plan structure based on initial input. |
 | 04-05 | Create reasoning-guardrails.md | Define concern areas: scope creep (don't invent requirements), technology bias (don't pre-decide stack), GPU assumptions, completeness without over-specification. |
 | 04-06 | Restructure SKILL.md as orchestrator | Rewrite SKILL.md to orchestrate the two subagents, generate the spec, validate PRD completeness (problem statement, target persona, success metrics, scope boundaries, technology constraints), and present drafts to the user for refinement with no cap on rounds. |
 | 04-07 | Validate with skill-validator | Run `skill-validator --strict --allow-extra-frontmatter` against the updated SKILL.md. Fix any compliance issues. |
@@ -137,7 +137,7 @@ PHASE 7 — EVALUATION & FINALIZATION
 | 05-02 | Create architecture-analyzer-prompt.md | Write the subagent prompt that parses a PRD into a feature vector (AI capabilities, data needs, UI/API requirements, scale). Adapt from blueprint kit's equivalent. |
 | 05-03 | Create chart-selector-prompt.md | Write the subagent prompt that matches feature vectors to ai-architecture-charts (llama-stack, llm-service, pgvector, minio, mcp-servers, ingestion-pipeline). Produces component bill of materials with rationale. Adapt from blueprint kit's equivalent. |
 | 05-04 | Create diagram-generator-prompt.md | Write the subagent prompt that generates a Mermaid architecture diagram from the component bill of materials. |
-| 05-05 | Create spec-template.md | Define the architecture spec format (`/tmp/architecture-spec.yaml`) — components, chart versions, deployment mode, feature-to-component mapping. |
+| 05-05 | Create spec-template.md | Define the architecture spec format (`.rhoai-qs/<slug>/pipeline/architecture-spec.yaml`) — components, chart versions, deployment mode, feature-to-component mapping. |
 | 05-06 | Create reasoning-guardrails.md | Define concern areas: model sizing, GPU dependency, data residency, chart compatibility, scope creep, over-engineering. |
 | 05-07 | Restructure SKILL.md as orchestrator | Rewrite SKILL.md to orchestrate the 4 subagents (analyzer, chart-selector, diagram-generator, knowledge-scorer), run KB scoring, validate chart existence (helm search, ArtifactHub), and present the bill of materials for user approval. Max 2 validation iterations. |
 | 05-08 | Validate with skill-validator | Run `skill-validator --strict` against the updated SKILL.md. |
@@ -157,7 +157,7 @@ PHASE 7 — EVALUATION & FINALIZATION
 | 06-02 | Create structure-generator-prompt.md | Write the subagent prompt that generates the directory tree and file skeletons from the architecture spec. Must enforce standards from `core/knowledge-base/standards/`. |
 | 06-03 | Create ci-generator-prompt.md | Write the subagent prompt that generates GitHub Actions workflows (ci.yaml, integration.yaml, deploy.yaml) from the component list. |
 | 06-04 | Create scaffold-validator-prompt.md | Write the subagent prompt that validates the generated scaffold: files are parseable, paths are consistent, no placeholder strings remain, required Makefile targets exist, CI workflows are valid YAML. |
-| 06-05 | Create spec-template.md | Define the scaffold spec format (`/tmp/scaffold-spec.yaml`) — repo name, packages to create, CI jobs, linting config. |
+| 06-05 | Create spec-template.md | Define the scaffold spec format (`.rhoai-qs/<slug>/pipeline/scaffold-spec.yaml`) — repo name, packages to create, CI jobs, linting config. |
 | 06-06 | Create reasoning-guardrails.md | Define concern areas: over-scaffolding, missing CI coverage, placeholder pollution, standards compliance. |
 | 06-07 | Restructure SKILL.md as orchestrator | Rewrite SKILL.md to orchestrate the 3 subagents, generate then validate the scaffold with max 2 fix iterations, and produce the scaffold manifest. |
 | 06-08 | Validate with skill-validator | Run `skill-validator --strict` against the updated SKILL.md. |
@@ -178,7 +178,7 @@ PHASE 7 — EVALUATION & FINALIZATION
 | 07-03 | Create backend-implementer-prompt.md | Write the subagent prompt that implements the FastAPI backend from the implementation spec. Must be able to receive test failure context and fix its own code with full understanding of the backend architecture. |
 | 07-04 | Create frontend-implementer-prompt.md | Write the subagent prompt that implements the React frontend from the implementation spec. Must be able to receive test failure context and fix its own code. Runs in parallel with backend-implementer. |
 | 07-05 | Create db-schema-prompt.md | Write the subagent prompt that generates SQLAlchemy models and Alembic migrations from the implementation spec. Runs before backend/frontend (dependency). |
-| 07-06 | Create spec-template.md | Define the implementation spec format (`/tmp/implementation-spec.yaml`) — endpoints, schemas, services, DB models, UI routes. |
+| 07-06 | Create spec-template.md | Define the implementation spec format (`.rhoai-qs/<slug>/pipeline/implementation-spec.yaml`) — endpoints, schemas, services, DB models, UI routes. |
 | 07-07 | Create reasoning-guardrails.md | Define concern areas: vertical slice (thinnest path), hardcoded values allowed for MVP, error handling, async consistency, security basics. |
 | 07-08 | Restructure SKILL.md as orchestrator | Rewrite SKILL.md to orchestrate the test loop: test-writer generates tests → main agent runs `make test` → routes failures to relevant implementer subagent → implementer fixes → re-run tests → if still failing, resume test-writer to review. Max 3 full loops. Main agent NEVER fixes code directly. |
 | 07-09 | Create review sub-agent | Write the review sub-agent prompt that reviews implementation against the spec and code quality best practices, and runs formatting checks (`ruff` for Python, `prettier` for TypeScript). All checks run once after implementation edits are complete, not per-edit. _(Formatting was originally a per-edit hook in EPIC-02. Moved here because a per-edit hook disrupts implementation sub-agent continuity by triggering repeated failures on each edit. Running it once during review is both more reliable and more token-efficient.)_ |
@@ -200,7 +200,7 @@ PHASE 7 — EVALUATION & FINALIZATION
 | 08-03 | Create compose-generator-prompt.md | Write the subagent prompt that generates/updates compose.yml from the deploy spec for local development. |
 | 08-04 | Create containerfile-generator-prompt.md | Write the subagent prompt that generates multi-stage Containerfiles per package. Must support arbitrary UID (OpenShift's arbitrary UID model). |
 | 08-05 | Create deploy-reviewer-prompt.md | Write the subagent prompt that validates all deployment artifacts: Chart.yaml deps valid, values.yaml consistent, compose.yml matches Helm, Containerfiles build, helm lint passes, helm template renders. Produces validation report (READY/BLOCKED/PARTIAL). |
-| 08-06 | Create spec-template.md | Define the deploy spec format (`/tmp/deploy-spec.yaml`) — chart dependencies, values overrides, compose services, Containerfile specs. |
+| 08-06 | Create spec-template.md | Define the deploy spec format (`.rhoai-qs/<slug>/pipeline/deploy-spec.yaml`) — chart dependencies, values overrides, compose services, Containerfile specs. |
 | 08-07 | Create reasoning-guardrails.md | Define concern areas: chart version compatibility, secret exposure, GPU resource configuration, image registry accessibility. |
 | 08-08 | Restructure SKILL.md as orchestrator | Rewrite SKILL.md to orchestrate artifact generation and the deploy review loop. On BLOCKED: route failures to the relevant subagent (deploy-reviewer for Helm/compose, containerfile-generator for Containerfiles). Max 3 iterations. |
 | 08-09 | Validate with skill-validator | Run `skill-validator --strict` against the updated SKILL.md. |
@@ -217,11 +217,11 @@ PHASE 7 — EVALUATION & FINALIZATION
 | ID | Task | Description |
 |----|------|-------------|
 | 09-01 | Create security skill directory structure | Create `core/skills/security/rh-qs-security/` with full directory layout: SKILL.md, subagents/, reasoning-guardrails.md, spec-template.md. |
-| 09-02 | Create code-security-scanner-prompt.md | Write the subagent prompt that scans source code for hardcoded secrets, injection vulnerabilities, and insecure patterns. Outputs findings to `/tmp/qs-security-code.yaml`. |
-| 09-03 | Create container-security-reviewer-prompt.md | Write the subagent prompt that verifies Containerfiles: arbitrary UID support (not hardcoded USER), minimal base images (UBI/slim), no secrets baked in. Outputs to `/tmp/qs-security-containers.yaml`. |
-| 09-04 | Create helm-security-reviewer-prompt.md | Write the subagent prompt that verifies Helm charts: RBAC, NetworkPolicies, SCCs (prefer restricted-v2), secret management via Kubernetes Secrets. Outputs to `/tmp/qs-security-helm.yaml`. |
-| 09-05 | Create dependency-scanner-prompt.md | Write the subagent prompt that checks Python (pyproject.toml) and Node (package.json) dependencies for known CVEs. Outputs to `/tmp/qs-security-deps.yaml`. |
-| 09-06 | Create spec-template.md | Define the security spec format and the security report output format (`/tmp/qs-security-report.yaml`) — severity categories (CRITICAL/HIGH/MEDIUM/LOW), finding details, fix status. |
+| 09-02 | Create code-security-scanner-prompt.md | Write the subagent prompt that scans source code for hardcoded secrets, injection vulnerabilities, and insecure patterns. Outputs findings to `.rhoai-qs/<slug>/pipeline/qs-security-code.yaml`. |
+| 09-03 | Create container-security-reviewer-prompt.md | Write the subagent prompt that verifies Containerfiles: arbitrary UID support (not hardcoded USER), minimal base images (UBI/slim), no secrets baked in. Outputs to `.rhoai-qs/<slug>/pipeline/qs-security-containers.yaml`. |
+| 09-04 | Create helm-security-reviewer-prompt.md | Write the subagent prompt that verifies Helm charts: RBAC, NetworkPolicies, SCCs (prefer restricted-v2), secret management via Kubernetes Secrets. Outputs to `.rhoai-qs/<slug>/pipeline/qs-security-helm.yaml`. |
+| 09-05 | Create dependency-scanner-prompt.md | Write the subagent prompt that checks Python (pyproject.toml) and Node (package.json) dependencies for known CVEs. Outputs to `.rhoai-qs/<slug>/pipeline/qs-security-deps.yaml`. |
+| 09-06 | Create spec-template.md | Define the security spec format and the security report output format (`.rhoai-qs/<slug>/pipeline/security-report.yaml`) — severity categories (CRITICAL/HIGH/MEDIUM/LOW), finding details, fix status. |
 | 09-07 | Create reasoning-guardrails.md | Define concern areas: false positive filtering (demos may have acceptable warnings), compliance context (HIPAA/PCI if PRD specifies), GPU security contexts (elevated permissions may be justified). |
 | 09-08 | Write SKILL.md orchestrator | Write SKILL.md that runs all 4 scanners in parallel, aggregates findings by severity, runs a fix loop for CRITICAL+HIGH (max 3 iterations), blocks ship if CRITICAL remains, and generates the persistent security report. |
 | 09-09 | Validate with skill-validator | Run `skill-validator --strict` against SKILL.md. |
@@ -241,12 +241,12 @@ PHASE 7 — EVALUATION & FINALIZATION
 | 10-01 | Create debug-and-deploy skill directory structure | Create `core/skills/deployment/rh-qs-debug-and-deploy/` with full directory layout. |
 | 10-02 | Adapt bp-deploy-and-debug from blueprint kit | Fork the blueprint kit's `bp-deploy-and-debug` skill as the starting point. Identify and document the adjustments needed for quickstart-specific context (ai-architecture-charts, namespace conventions, TEST-PLAN.md format). |
 | 10-03 | Create cluster-access-validator-prompt.md | Write the subagent prompt that validates cluster login, namespace existence, and RBAC permissions before any deployment. |
-| 10-04 | Create project-analyzer-prompt.md | Write the subagent prompt that discovers deploy commands and dependency order from the project structure. Outputs to `/tmp/qs-deploy-analysis.yaml`. |
+| 10-04 | Create project-analyzer-prompt.md | Write the subagent prompt that discovers deploy commands and dependency order from the project structure. Outputs to `.rhoai-qs/<slug>/pipeline/qs-deploy-analysis.yaml`. |
 | 10-05 | Create health-scanner-prompt.md | Write the subagent prompt that scans all namespace resources and produces a health snapshot. Used in initial scan (Phase 3) and re-scans during debug loop (Phase 4c). |
 | 10-06 | Create resource-debugger-prompt.md | Write the subagent prompt that performs root-cause analysis per failing resource. Reviews previous attempts before proposing fixes to avoid repeating failed approaches. |
 | 10-07 | Create fix-applier-prompt.md | Write the subagent prompt that validates proposed fixes against Red Hat best practices and applies them. Enforces fix boundary rules: auto-apply config/infra changes, ask user for application logic changes. |
 | 10-08 | Create e2e-tester-prompt.md | Write the subagent prompt that runs TEST-PLAN.md end-to-end verification against the deployed namespace. |
-| 10-09 | Create spec-template.md | Define the deploy state format (`/tmp/qs-deploy-state.yaml`) — resource health states, debug attempt history, E2E results. |
+| 10-09 | Create spec-template.md | Define the deploy state format (`.rhoai-qs/<slug>/pipeline/deploy-state.yaml`) — resource health states, debug attempt history, E2E results. |
 | 10-10 | Create reasoning-guardrails.md | Define concern areas: namespace isolation (every command uses `-n <namespace>`), don't change application intent, dependency-order debugging, max 3 attempts per resource. |
 | 10-11 | Write SKILL.md orchestrator | Write SKILL.md that orchestrates the full workflow: access validation → project analysis → deploy → health scan → debug loop (per resource, max 3 attempts) → E2E test → final report. Copy persistent report to `{project}/.rhoai-qs/deploy-report.yaml`. |
 | 10-12 | Validate with skill-validator | Run `skill-validator --strict` against SKILL.md. |
@@ -284,7 +284,7 @@ PHASE 7 — EVALUATION & FINALIZATION
 | 12-02 | Create pr-body-generator-prompt.md | Write the subagent prompt that generates a PR description from all temp manifests and the security report. |
 | 12-03 | Create blog-writer-prompt.md | Write the subagent prompt that generates a blog post draft from the PRD, architecture, and README. |
 | 12-04 | Create reasoning-guardrails.md | Define concern areas: PR description accuracy, blog post tone (technical but accessible), no credentials in PR body, backlog issue cross-reference. |
-| 12-05 | Restructure SKILL.md as orchestrator | Rewrite SKILL.md to create PR → wait for CI → if CI fails, diagnose + fix → re-push (max 3 iterations). Generate blog draft at `data/blog-drafts/<slug>-<date>.md`. Update backlog issue. |
+| 12-05 | Restructure SKILL.md as orchestrator | Rewrite SKILL.md to create PR → wait for CI → if CI fails, diagnose + fix → re-push (max 3 iterations). Generate blog draft at `.rhoai-qs/<slug>/blog-drafts/<date>.md`. Update backlog issue. |
 | 12-06 | Validate with skill-validator | Run `skill-validator --strict` against the updated SKILL.md. |
 
 ---

@@ -31,6 +31,8 @@ Use this checklist per quickstart item:
 
 ## Report Template
 
+Grooming spans the whole backlog, not one quickstart, so save the report to the top-level `.rhoai-qs/reports/grooming-report-<date>.md` (see [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md)) — never under a single quickstart's slug folder.
+
 When producing a grooming report:
 
 ```markdown

@@ -2,7 +2,7 @@
 
 This document defines the YAML schema for each inter-skill handoff file. These contracts specify exactly what each file contains, which skill produces it, and which skill consumes it — enabling skills to be developed and validated independently.
 
-Every handoff file follows the common header defined in [spec-as-contract.md](spec-as-contract.md) and lives in the project's `.rhoai-qs/pipeline/` directory as defined in [pipeline-convention.md](pipeline-convention.md).
+Every handoff file follows the common header defined in [spec-as-contract.md](spec-as-contract.md) and lives in the quickstart's `.rhoai-qs/<slug>/pipeline/` directory as defined in [pipeline-convention.md](pipeline-convention.md).
 
 ## Common Header
 
@@ -32,7 +32,7 @@ The pipeline passes structured artifacts through these files, in order:
 | 6 | `deploy-state.yaml` | rh-qs-debug-and-deploy | rh-qs-document | State |
 | 7 | `doc-manifest.yaml` | rh-qs-document | rh-qs-ship | Manifest |
 
-Additionally, the PRD (`data/prds/<slug>.md`) produced by rh-qs-discovery is a Markdown file, not YAML, and its format is defined by the PRD template — not this document.
+Additionally, the PRD (`.rhoai-qs/<slug>/prds/prd.md`) produced by rh-qs-discovery is a Markdown file, not YAML, and its format is defined by the PRD template — not this document.
 
 ---
 
@@ -79,7 +79,7 @@ architecture_diagram: |
   <mermaid diagram>
 
 dependencies:
-  - spec: data/prds/spending-transaction-monitor.md
+  - spec: .rhoai-qs/spending-transaction-monitor/prds/prd.md
     fields_used: [problem_statement, target_persona, technology_constraints]
     content_hash: "sha256:..."
 ```
@@ -176,7 +176,7 @@ dependencies:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `repo.name` | string | yes | Repository name |
-| `repo.root` | string | yes | Root path (typically `"."`) |
+| `repo.root` | string | yes | Root path within the quickstart's own repo (typically `"."`) — this is separate from where the repo is nested on disk relative to `quickstart-factory`, see [pipeline-convention.md](pipeline-convention.md#nested-quickstart-repos) |
 | `packages` | list | yes | Packages created, each with name, path, language, framework |
 | `packages[].name` | string | yes | Package identifier |
 | `packages[].path` | string | yes | Relative path from repo root |
@@ -418,16 +418,16 @@ overall_status: PASS | PASS_WITH_WARNINGS | BLOCKED
 scanners:
   code:
     status: PASS | FAIL
-    source_file: .rhoai-qs/pipeline/qs-security-code.yaml
+    source_file: .rhoai-qs/spending-transaction-monitor/pipeline/qs-security-code.yaml
   containers:
     status: PASS | FAIL
-    source_file: .rhoai-qs/pipeline/qs-security-containers.yaml
+    source_file: .rhoai-qs/spending-transaction-monitor/pipeline/qs-security-containers.yaml
   helm:
     status: PASS | FAIL
-    source_file: .rhoai-qs/pipeline/qs-security-helm.yaml
+    source_file: .rhoai-qs/spending-transaction-monitor/pipeline/qs-security-helm.yaml
   dependencies:
     status: PASS | FAIL
-    source_file: .rhoai-qs/pipeline/qs-security-deps.yaml
+    source_file: .rhoai-qs/spending-transaction-monitor/pipeline/qs-security-deps.yaml
 
 findings:
   - id: sec-1
@@ -691,6 +691,7 @@ Consuming skills must check `spec_version` on read and fail with a clear error i
 ## Relationship to Other Foundation Docs
 
 - **[spec-as-contract.md](spec-as-contract.md)** — defines the spec format that `architecture-spec.yaml` (file #1) follows fully; other files use the common header and `dependencies` section
-- **[pipeline-convention.md](pipeline-convention.md)** — defines the `.rhoai-qs/pipeline/` directory where all these files live
+- **[pipeline-convention.md](pipeline-convention.md)** — defines the `.rhoai-qs/<slug>/pipeline/` directory where all these files live
 - **[skill-directory-structure.md](skill-directory-structure.md)** — each skill's `spec-template.md` defines skill-specific fields within these schemas
 - **[acceptance-criteria.md](acceptance-criteria.md)** — defines how `acceptance_criteria` sections in specs are validated
+- **[validation-skill-template.md](validation-skill-template.md)** — how `<slug>` is resolved before any of these files are read or written

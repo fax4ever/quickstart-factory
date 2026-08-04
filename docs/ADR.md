@@ -80,7 +80,7 @@ Before any skill modifies files, it generates a YAML spec describing *what* it w
 Analyze → Generate Spec → User Approval → Validate Spec (parallel) → Refine → Implement → Post-validate
 ```
 
-Each spec is written to a temp file (`/tmp/<skill>-spec.yaml`) following a structure defined in `spec-template.md`.
+Each spec is written to `.rhoai-qs/<slug>/pipeline/<skill>-spec.yaml` following a structure defined in `spec-template.md`.
 
 **User-approved acceptance criteria:** For key workflow stages (architecture, implementation, deployment), the spec must include acceptance criteria that the user reviews and approves before implementation begins. These criteria define what "done" looks like and serve as the contract that post-validation checks against. Specs may also reference externally defined test cases, contract tests, or example patterns provided by the user or domain experts.
 
@@ -98,27 +98,27 @@ Every skill that produces artifacts validates its output and iterates on failure
    c. Re-run validation
 3. Max N iterations (skill-specific, typically 3)
 4. If still failing after max:
-   a. Document remaining failures in temp file
+   a. Document remaining failures in the pipeline spec file
    b. Ask user: proceed, provide guidance, or stop
 5. Only advance to next phase when validation passes
 ```
 
-### Pattern 4: Temp-File Handoff
+### Pattern 4: Persistent-File Handoff
 
-Skills pass structured artifacts to each other via temp files, not conversation context.
+Skills pass structured artifacts to each other via files in `.rhoai-qs/`, not conversation context — this matters because each skill typically runs in its own separate chat session.
 
-**Namespace scoping:** All temp files are scoped to a project-specific directory: `/tmp/qs-<slug>/` (e.g., `/tmp/qs-spending-transaction-monitor/`). This prevents name clashes between concurrent runs and preserves context from previous runs when resuming. Note: throughout this document, `/tmp/` paths in skill specs are shown without the `qs-<slug>/` prefix for brevity — all of them are implicitly scoped.
+**Namespace scoping:** All pipeline files are scoped to a quickstart-specific directory: `.rhoai-qs/<slug>/pipeline/` (e.g., `.rhoai-qs/spending-transaction-monitor/pipeline/`), inside the `quickstart-factory` repo itself. This prevents name clashes between different quickstarts and preserves context from previous runs when resuming. Every skill resolves `<slug>` via the `validation-skill` subagent (Phase 0) before touching any of these files — see [pipeline-convention.md](foundation/pipeline-convention.md) and [validation-skill-template.md](foundation/validation-skill-template.md).
 
-| Transition | Temp File | Format |
+| Transition | File | Format |
 |-----------|----------|--------|
-| Discovery → Architect | `data/prds/<slug>.md` | Markdown (existing) |
-| Architect → Scaffold | `/tmp/qs-<slug>/architecture-spec.yaml` | YAML |
-| Scaffold → Implement | `/tmp/qs-<slug>/scaffold-manifest.yaml` | YAML |
-| Implement → Deploy | `/tmp/qs-<slug>/implementation-manifest.yaml` | YAML |
-| Deploy → Security | `/tmp/qs-<slug>/deploy-manifest.yaml` | YAML |
-| Security → Debug-and-Deploy | `/tmp/qs-<slug>/security-report.yaml` | YAML |
-| Debug-and-Deploy → Document | `/tmp/qs-<slug>/deploy-state.yaml` | YAML |
-| Document → Ship | `/tmp/qs-<slug>/doc-manifest.yaml` | YAML |
+| Discovery → Architect | `.rhoai-qs/<slug>/prds/prd.md` | Markdown |
+| Architect → Scaffold | `.rhoai-qs/<slug>/pipeline/architecture-spec.yaml` | YAML |
+| Scaffold → Implement | `.rhoai-qs/<slug>/pipeline/scaffold-manifest.yaml` | YAML |
+| Implement → Deploy | `.rhoai-qs/<slug>/pipeline/implementation-manifest.yaml` | YAML |
+| Deploy → Security | `.rhoai-qs/<slug>/pipeline/deploy-manifest.yaml` | YAML |
+| Security → Debug-and-Deploy | `.rhoai-qs/<slug>/pipeline/security-report.yaml` | YAML |
+| Debug-and-Deploy → Document | `.rhoai-qs/<slug>/pipeline/deploy-state.yaml` | YAML |
+| Document → Ship | `.rhoai-qs/<slug>/pipeline/doc-manifest.yaml` | YAML |
 
 ### Pattern 5: Reasoning Guardrails
 
@@ -156,7 +156,7 @@ A shared, tagged, scored knowledge base of reusable patterns mined from complete
 | `prd-structurer-prompt.md` | Convert unstructured notes/docs into PRD sections | User-uploaded documents, conversation notes | Structured PRD sections in JSON |
 | `backlog-matcher-prompt.md` | Check if idea duplicates existing backlog issues | Idea summary + backlog data | Match report (duplicate/similar/unique) |
 
-**Spec file:** `/tmp/discovery-spec.yaml` (interview plan based on initial input)
+**Spec file:** `.rhoai-qs/<slug>/pipeline/discovery-spec.yaml` (interview plan based on initial input)
 
 **Validation:** After drafting the PRD, the agent validates completeness — all required PRD sections are populated (problem statement, target persona, success metrics, scope boundaries, technology constraints). Missing or vague sections are flagged for the user to clarify.
 
@@ -176,7 +176,7 @@ A shared, tagged, scored knowledge base of reusable patterns mined from complete
 | `chart-selector-prompt.md` | Match features to ai-architecture-charts | Feature vector + KB | Component bill of materials with rationale |
 | `diagram-generator-prompt.md` | Generate Mermaid architecture diagram | Bill of materials | Mermaid diagram code |
 
-**Spec file:** `/tmp/architecture-spec.yaml`
+**Spec file:** `.rhoai-qs/<slug>/pipeline/architecture-spec.yaml`
 
 **Knowledge base:** `knowledge-base/components/`, `knowledge-base/deployment-types/`, `knowledge-base/industries/`
 
@@ -200,9 +200,9 @@ A shared, tagged, scored knowledge base of reusable patterns mined from complete
 | `ci-generator-prompt.md` | Generate GitHub Actions workflows | Component list from spec | CI/CD YAML files |
 | `scaffold-validator-prompt.md` | Validate generated scaffold | Generated files | Validation report (READY/BLOCKED) |
 
-**Spec file:** `/tmp/scaffold-spec.yaml` (repo name, packages to create, CI jobs, linting config)
+**Spec file:** `.rhoai-qs/<slug>/pipeline/scaffold-spec.yaml` (repo name, packages to create, CI jobs, linting config)
 
-**Output manifest:** `/tmp/scaffold-manifest.yaml` (lists all created files/paths for rh-qs-implement)
+**Output manifest:** `.rhoai-qs/<slug>/pipeline/scaffold-manifest.yaml` (lists all created files/paths for rh-qs-implement)
 
 **Loop:** Generate → validate (files parseable, paths consistent, no placeholder strings) → fix (max 2 iterations)
 
@@ -221,7 +221,7 @@ This is the most significant change. The implementation skill gains a **two-agen
 | `frontend-implementer-prompt.md` | Implement React frontend | Implementation spec | Frontend code |
 | `db-schema-prompt.md` | Generate SQLAlchemy models + Alembic migration | Implementation spec | DB package code |
 
-**Spec file:** `/tmp/implementation-spec.yaml` (endpoints, schemas, services, DB models, UI routes)
+**Spec file:** `.rhoai-qs/<slug>/pipeline/implementation-spec.yaml` (endpoints, schemas, services, DB models, UI routes)
 
 **The Test Loop (core innovation):**
 
@@ -231,7 +231,7 @@ This is the most significant change. The implementation skill gains a **two-agen
 │  test-writer subagent                                       │
 │  (reads PRD + architecture + scaffold manifest)             │
 │  → generates test files                                     │
-│  → writes to /tmp/test-spec.yaml (test inventory)           │
+│  → writes to .rhoai-qs/<slug>/pipeline/test-spec.yaml (test inventory)           │
 │                                                             │
 │          ↓ test files                                       │
 │                                                             │
@@ -242,12 +242,12 @@ This is the most significant change. The implementation skill gains a **two-agen
 │    (backend-implementer or frontend-implementer)            │
 │  → implementer fixes its own code with full context         │
 │  → main agent re-runs tests                                 │
-│  → writes results to /tmp/test-results.yaml                 │
+│  → writes results to .rhoai-qs/<slug>/pipeline/test-results.yaml                 │
 │                                                             │
 │          ↓ if tests still fail after implementer fixes      │
 │                                                             │
 │  test-writer subagent (resumed)                             │
-│  → reads /tmp/test-results.yaml                             │
+│  → reads .rhoai-qs/<slug>/pipeline/test-results.yaml                             │
 │  → reviews failures: are tests wrong or is code wrong?      │
 │  → adjusts tests ONLY if they were over-specified or wrong  │
 │  → writes updated tests + rationale                         │
@@ -265,7 +265,7 @@ This is the most significant change. The implementation skill gains a **two-agen
 
 **Parallelism:** Backend + frontend implementer subagents run in parallel. DB schema runs first (dependency).
 
-**Output manifest:** `/tmp/implementation-manifest.yaml` (lists endpoints, DB models, packages, test coverage)
+**Output manifest:** `.rhoai-qs/<slug>/pipeline/implementation-manifest.yaml` (lists endpoints, DB models, packages, test coverage)
 
 **Guardrails:** Vertical slice (thinnest path), hardcoded values, error handling, async consistency, security.
 
@@ -282,7 +282,7 @@ This is the most significant change. The implementation skill gains a **two-agen
 | `containerfile-generator-prompt.md` | Generate multi-stage Containerfiles | Package list from implementation manifest | Containerfiles per package |
 | `deploy-reviewer-prompt.md` | Validate all deployment artifacts | All deploy files | Validation report (READY/BLOCKED/PARTIAL) |
 
-**Spec file:** `/tmp/deploy-spec.yaml` (chart dependencies, values overrides, compose services, Containerfile specs)
+**Spec file:** `.rhoai-qs/<slug>/pipeline/deploy-spec.yaml` (chart dependencies, values overrides, compose services, Containerfile specs)
 
 **The Deploy Review Loop:**
 
@@ -298,7 +298,7 @@ This is the most significant change. The implementation skill gains a **two-agen
 │  - Containerfiles build (podman build --dry-run)         │
 │  - helm lint passes                                      │
 │  - helm template renders both modes (remote + on-cluster)│
-│  → writes /tmp/deploy-validation.yaml                    │
+│  → writes .rhoai-qs/<slug>/pipeline/deploy-validation.yaml                    │
 │          ↓                                               │
 │  if BLOCKED: main agent routes failures back to the      │
 │  relevant subagent (deploy-reviewer for Helm/compose,    │
@@ -309,7 +309,7 @@ This is the most significant change. The implementation skill gains a **two-agen
 └──────────────────────────────────────────────────────────┘
 ```
 
-**Output manifest:** `/tmp/deploy-manifest.yaml` (charts used, services, routes, env vars, validation status)
+**Output manifest:** `.rhoai-qs/<slug>/pipeline/deploy-manifest.yaml` (charts used, services, routes, env vars, validation status)
 
 **Guardrails:** Chart version compatibility, secret exposure, GPU resource configuration, image registry accessibility.
 
@@ -325,10 +325,10 @@ This is the most significant change. The implementation skill gains a **two-agen
 
 | Subagent | Role | Input | Output |
 |----------|------|-------|--------|
-| `code-security-scanner-prompt.md` | Scan for hardcoded secrets, injection vulnerabilities, insecure patterns | Source code | `/tmp/qs-security-code.yaml` |
-| `container-security-reviewer-prompt.md` | Verify Containerfiles (non-root, minimal base, no secrets baked in) | Containerfiles | `/tmp/qs-security-containers.yaml` |
-| `helm-security-reviewer-prompt.md` | Verify Helm charts (RBAC, NetworkPolicies, SCCs, secret management) | Helm chart | `/tmp/qs-security-helm.yaml` |
-| `dependency-scanner-prompt.md` | Check Python/Node dependencies for known CVEs | pyproject.toml, package.json | `/tmp/qs-security-deps.yaml` |
+| `code-security-scanner-prompt.md` | Scan for hardcoded secrets, injection vulnerabilities, insecure patterns | Source code | `.rhoai-qs/<slug>/pipeline/qs-security-code.yaml` |
+| `container-security-reviewer-prompt.md` | Verify Containerfiles (non-root, minimal base, no secrets baked in) | Containerfiles | `.rhoai-qs/<slug>/pipeline/qs-security-containers.yaml` |
+| `helm-security-reviewer-prompt.md` | Verify Helm charts (RBAC, NetworkPolicies, SCCs, secret management) | Helm chart | `.rhoai-qs/<slug>/pipeline/qs-security-helm.yaml` |
+| `dependency-scanner-prompt.md` | Check Python/Node dependencies for known CVEs | pyproject.toml, package.json | `.rhoai-qs/<slug>/pipeline/qs-security-deps.yaml` |
 
 **Workflow:**
 
@@ -353,8 +353,7 @@ Phase 3: FIX LOOP for CRITICAL + HIGH findings:
          │ If only HIGH remains: warn, allow proceed│
          └──────────────────────────────────────────┘
 
-Phase 4: Generate security report → /tmp/qs-security-report.yaml
-         Persist to {project}/.rhoai-qs/security-report.yaml
+Phase 4: Generate security report → .rhoai-qs/<slug>/pipeline/security-report.yaml
 ```
 
 **Security checklist areas:**
@@ -389,11 +388,11 @@ Phase 4: Generate security report → /tmp/qs-security-report.yaml
 | Subagent | Phase | Role | Input | Output |
 |----------|-------|------|-------|--------|
 | `cluster-access-validator-prompt.md` | 1a | Validate login, namespace, permissions | Namespace name | Access report |
-| `project-analyzer-prompt.md` | 1b | Discover deploy commands and dependencies | Project path | `/tmp/qs-deploy-analysis.yaml` |
-| `health-scanner-prompt.md` | 3, 4c | Scan all resources, produce health snapshot | Namespace, expected resources | `/tmp/qs-deploy-state.yaml` |
-| `resource-debugger-prompt.md` | 4a | Root-cause analysis per failing resource | Resource name/kind, namespace | `/tmp/qs-debug-{resource}.yaml` |
-| `fix-applier-prompt.md` | 4b | Validate fix against Red Hat best practices, apply | Debug report | `/tmp/qs-fix-{resource}.yaml` |
-| `e2e-tester-prompt.md` | 5 | Run TEST-PLAN.md end-to-end verification | Project path, namespace | `/tmp/qs-e2e-results.yaml` |
+| `project-analyzer-prompt.md` | 1b | Discover deploy commands and dependencies | Project path | `.rhoai-qs/<slug>/pipeline/qs-deploy-analysis.yaml` |
+| `health-scanner-prompt.md` | 3, 4c | Scan all resources, produce health snapshot | Namespace, expected resources | `.rhoai-qs/<slug>/pipeline/qs-deploy-state.yaml` |
+| `resource-debugger-prompt.md` | 4a | Root-cause analysis per failing resource | Resource name/kind, namespace | `.rhoai-qs/<slug>/pipeline/qs-debug-{resource}.yaml` |
+| `fix-applier-prompt.md` | 4b | Validate fix against Red Hat best practices, apply | Debug report | `.rhoai-qs/<slug>/pipeline/qs-fix-{resource}.yaml` |
+| `e2e-tester-prompt.md` | 5 | Run TEST-PLAN.md end-to-end verification | Project path, namespace | `.rhoai-qs/<slug>/pipeline/qs-e2e-results.yaml` |
 
 **Workflow:**
 
@@ -401,7 +400,7 @@ Phase 4: Generate security report → /tmp/qs-security-report.yaml
 Phase 1a: cluster-access-validator → verify login + namespace + policy
 Phase 1b: project-analyzer → discover deploy commands + dependency order
 Phase 2:  main agent runs deploy commands from analysis
-Phase 3:  health-scanner → /tmp/qs-deploy-state.yaml
+Phase 3:  health-scanner → .rhoai-qs/<slug>/pipeline/qs-deploy-state.yaml
 
 Phase 4:  DEBUG LOOP (per unhealthy resource, dependency order):
 
@@ -418,7 +417,7 @@ Phase 4:  DEBUG LOOP (per unhealthy resource, dependency order):
           └──────────────────────────────────────────────────┘
 
 Phase 5:  e2e-tester → run TEST-PLAN.md (no re-entry to debug on E2E fail)
-Phase 6:  Final report → copy to {project}/.rhoai-qs/deploy-report.yaml
+Phase 6:  Final report → .rhoai-qs/<slug>/pipeline/deploy-state.yaml
 ```
 
 **Fix boundary rules:**
@@ -429,7 +428,7 @@ Phase 6:  Final report → copy to {project}/.rhoai-qs/deploy-report.yaml
 
 **Attempt tracking:** Debug and fix files append `attempt_N` keys — never overwrite previous attempts. The debugger reviews previous attempts before proposing a new fix to avoid repeating failed approaches.
 
-**Output:** `/tmp/qs-deploy-state.yaml` (final health state), `{project}/.rhoai-qs/deploy-report.yaml` (persistent copy)
+**Output:** `.rhoai-qs/<slug>/pipeline/deploy-state.yaml` (final health state, persistent from the start — no `/tmp/` intermediate)
 
 **Guardrails:** Namespace isolation (every `oc`/`helm` command must use `-n <namespace>`), don't change application intent, dependency-order debugging (fix leaves first then work up), max 3 attempts per resource.
 
@@ -473,8 +472,8 @@ Phase 6:  Final report → copy to {project}/.rhoai-qs/deploy-report.yaml
 
 | Subagent | Role | Input | Output |
 |----------|------|-------|--------|
-| `change-analyzer-prompt.md` | Analyze what needs updating and scope the change | Repo + update request | `/tmp/qs-update-analysis.yaml` |
-| `impact-assessor-prompt.md` | Determine which pipeline stages need re-running | Update analysis | `/tmp/qs-update-impact.yaml` |
+| `change-analyzer-prompt.md` | Analyze what needs updating and scope the change | Repo + update request | `.rhoai-qs/<slug>/pipeline/qs-update-analysis.yaml` |
+| `impact-assessor-prompt.md` | Determine which pipeline stages need re-running | Update analysis | `.rhoai-qs/<slug>/pipeline/qs-update-impact.yaml` |
 | `update-applier-prompt.md` | Apply the updates to source files | Update analysis | Modified files |
 | `update-validator-prompt.md` | Validate updates don't break existing functionality | Modified files | Validation report |
 
@@ -526,8 +525,8 @@ Then hands off to the pipeline at the detected re-entry point:
 
 | Subagent | Role | Input | Output |
 |----------|------|-------|--------|
-| `state-detector-prompt.md` | Analyze repo and determine completion state per stage | Repo path | `/tmp/qs-handoff-state.yaml` |
-| `gap-analyzer-prompt.md` | Identify specific gaps within each incomplete stage | State report + repo | `/tmp/qs-handoff-gaps.yaml` |
+| `state-detector-prompt.md` | Analyze repo and determine completion state per stage | Repo path | `.rhoai-qs/<slug>/pipeline/qs-handoff-state.yaml` |
+| `gap-analyzer-prompt.md` | Identify specific gaps within each incomplete stage | State report + repo | `.rhoai-qs/<slug>/pipeline/qs-handoff-gaps.yaml` |
 | `context-reconstructor-prompt.md` | Reconstruct PRD/design from existing code (if missing) | Repo code | Reconstructed PRD or design doc |
 
 **Workflow:**
@@ -535,16 +534,16 @@ Then hands off to the pipeline at the detected re-entry point:
 ```
 Phase 1: state-detector scans the repo for evidence of each stage:
 
-         ┌──────────────────────────────────────────────────────┐
-         │ Stage 1 (Discovery):  data/prds/<slug>.md exists?   │
-         │ Stage 2 (Architect):  data/designs/<slug>.md exists? │
-         │ Stage 3 (Scaffold):   .github/workflows/ exists?     │
-         │ Stage 4 (Implement):  packages/api/src/main.py?      │
-         │ Stage 5 (Deploy):     deploy/helm/? compose.yml?     │
-         │ Stage 6 (Security):   .rhoai-qs/security-report.yaml?   │
-         │ Stage 7 (Debug):      .rhoai-qs/deploy-report.yaml?     │
-         │ Stage 8 (Document):   README.md beyond placeholder?  │
-         │ Stage 9 (Ship):       Open PR exists?                │
+         ┌────────────────────────────────────────────────────────────────┐
+         │ Stage 1 (Discovery):  .rhoai-qs/<slug>/prds/prd.md exists?    │
+         │ Stage 2 (Architect):  .rhoai-qs/<slug>/designs/design.md?     │
+         │ Stage 3 (Scaffold):   .github/workflows/ exists?               │
+         │ Stage 4 (Implement):  packages/api/src/main.py?                │
+         │ Stage 5 (Deploy):     deploy/helm/? compose.yml?               │
+         │ Stage 6 (Security):   .rhoai-qs/<slug>/pipeline/security-report.yaml? │
+         │ Stage 7 (Debug):      .rhoai-qs/<slug>/pipeline/deploy-state.yaml?   │
+         │ Stage 8 (Document):   README.md beyond placeholder?            │
+         │ Stage 9 (Ship):       Open PR exists?                          │
          └──────────────────────────────────────────────────────┘
 
 Phase 2: gap-analyzer identifies specific missing pieces within
@@ -580,11 +579,11 @@ Phase 5: User confirms → route to appropriate skill with
 
 | Subagent | Role | Input | Output |
 |----------|------|-------|--------|
-| `component-pattern-extractor-prompt.md` | Extract component usage patterns (config, wiring, gotchas) | Source code + Helm chart | `/tmp/qs-kb-components.yaml` |
-| `deployment-pattern-extractor-prompt.md` | Extract deployment patterns (chart combos, env configs, resource sizing) | Helm + compose + deploy report | `/tmp/qs-kb-deployment.yaml` |
-| `industry-pattern-extractor-prompt.md` | Extract domain-specific patterns (data schemas, compliance, workflows) | PRD + source code | `/tmp/qs-kb-industry.yaml` |
-| `security-pattern-extractor-prompt.md` | Extract security patterns (SCC configs, secret handling, hardening) | Security report + Helm chart | `/tmp/qs-kb-security.yaml` |
-| `kb-dedup-scorer-prompt.md` | Deduplicate against existing KB, score novelty, merge or create | Extracted patterns + existing KB | `/tmp/qs-kb-update-plan.yaml` |
+| `component-pattern-extractor-prompt.md` | Extract component usage patterns (config, wiring, gotchas) | Source code + Helm chart | `.rhoai-qs/<slug>/pipeline/qs-kb-components.yaml` |
+| `deployment-pattern-extractor-prompt.md` | Extract deployment patterns (chart combos, env configs, resource sizing) | Helm + compose + deploy report | `.rhoai-qs/<slug>/pipeline/qs-kb-deployment.yaml` |
+| `industry-pattern-extractor-prompt.md` | Extract domain-specific patterns (data schemas, compliance, workflows) | PRD + source code | `.rhoai-qs/<slug>/pipeline/qs-kb-industry.yaml` |
+| `security-pattern-extractor-prompt.md` | Extract security patterns (SCC configs, secret handling, hardening) | Security report + Helm chart | `.rhoai-qs/<slug>/pipeline/qs-kb-security.yaml` |
+| `kb-dedup-scorer-prompt.md` | Deduplicate against existing KB, score novelty, merge or create | Extracted patterns + existing KB | `.rhoai-qs/<slug>/pipeline/qs-kb-update-plan.yaml` |
 
 **Workflow:**
 
@@ -606,8 +605,7 @@ Phase 3: Main agent applies the update plan:
          - Run validation: frontmatter schema check, no duplicate
            entries, all tags reference valid components
 
-Phase 4: Generate extraction report → /tmp/qs-kb-extraction-report.yaml
-         Persist to {project}/.rhoai-qs/kb-extraction-report.yaml
+Phase 4: Generate extraction report → .rhoai-qs/<slug>/pipeline/qs-kb-extraction-report.yaml
 ```
 
 **Chain of Density summary format:** Each KB file's `summary:` field uses a 4-sentence Chain of Density summary — progressively denser sentences that pack maximum information for scored retrieval without loading the full file.
@@ -873,13 +871,13 @@ Every new skill introduced in this ADR (rh-qs-security, rh-qs-debug-and-deploy, 
 - **Maintenance burden** — more files to keep consistent and up to date
 - **Debugging difficulty** — multi-subagent orchestration is harder to debug than flat skills
 - **Onboarding cost** — new contributors must understand the orchestration patterns
-- **Temp file dependency** — `/tmp/` files are ephemeral; long-running sessions across reboots could lose state
+- **Concurrency limitation** — running the same quickstart's pipeline concurrently in two sessions is not safe (see [pipeline-convention.md](foundation/pipeline-convention.md#concurrency))
 
 ### Mitigations
 
 - Each skill's `subagents/README.md` documents all subagent roles clearly
 - `make skills-check` continues to validate all skills against agentskills.io spec
-- Persistent reports (`.rhoai-qs/deploy-report.yaml`, `.rhoai-qs/security-report.yaml`) survive beyond `/tmp/`
+- Persistent reports (`.rhoai-qs/<slug>/pipeline/deploy-state.yaml`, `.rhoai-qs/<slug>/pipeline/security-report.yaml`) live in `quickstart-factory` itself, not `/tmp/`, so they survive reboots and separate chat sessions
 - Phase-gated rollout allows validating each change before the next
 
 ---

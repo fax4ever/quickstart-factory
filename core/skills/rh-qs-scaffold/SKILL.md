@@ -10,7 +10,7 @@ description: Scaffold a new AI Quickstart GitHub repository with CI/CD, linting,
 
 ## Trigger
 
-Design document approved from `rh-qs-architect` at `data/designs/<slug>.md`
+Design document approved from `rh-qs-architect` at `.rhoai-qs/<slug>/designs/design.md`
 
 ## What it does
 
@@ -27,6 +27,29 @@ Design document approved from `rh-qs-architect` at `data/designs/<slug>.md`
 
 ## Workflow
 
+### Phase 0: Resolve Quickstart Context
+
+Before doing anything, resolve which quickstart this session is for. Run `ls .rhoai-qs/ 2>/dev/null` (excluding `reports` and `blog-drafts`) and spawn the **validation-skill subagent**:
+
+```python
+Agent(
+    description="Resolve which quickstart this scaffold session is for",
+    prompt=f"""
+Read and follow instructions from:
+core/skills/rh-qs-scaffold/subagents/validation-skill-prompt.md
+
+User message: {user_message}
+Existing slugs: {existing_slugs}
+Is entry point: false
+Calling skill: rh-qs-scaffold
+"""
+)
+```
+
+Handle the result per [validation-skill-template.md](../../../docs/foundation/validation-skill-template.md#main-agent-handling). If `resolution: error` (no slugs exist), tell the user to run `rh-qs-discovery` and `rh-qs-architect` first and stop.
+
+### Remaining phases
+
 ```
 - [ ] 1. Create GitHub repo
 - [ ] 2. Configure branch protection
@@ -40,11 +63,37 @@ Design document approved from `rh-qs-architect` at `data/designs/<slug>.md`
 
 ### Create repository
 
+**Important:** `.rhoai-qs/<slug>/` already exists and already contains `pipeline/`, `prds/`, `designs/` from earlier phases — it is **not empty**. `git clone` (and `gh repo create ... --clone`) refuses to clone into a non-empty directory, so **do not use `--clone`**. Instead, create the GitHub repo separately, then `git init` the existing folder and connect it to the new remote:
+
 ```bash
-gh repo create rh-ai-quickstart/<slug> --public --description "<from PRD>" --clone
+# 1. Ensure we're at the quickstart-factory root
+cd "$(git rev-parse --show-toplevel)"
+
+# 2. Create the GitHub repo WITHOUT cloning (no --clone flag)
+gh repo create rh-ai-quickstart/<slug> --public --description "<from PRD>"
+
+# 3. Move into the existing folder (already has pipeline/, prds/, designs/)
+#    and turn it into a git repo pointed at the new remote
+cd .rhoai-qs/<slug>/
+git init
+git remote add origin "https://github.com/rh-ai-quickstart/<slug>.git"
+git branch -M main
 ```
 
-Start from [ai-quickstart-template](https://github.com/rh-ai-quickstart/ai-quickstart-template) when possible. Remove packages not in the design matrix.
+If starting from [ai-quickstart-template](https://github.com/rh-ai-quickstart/ai-quickstart-template), create the repo with `--template rh-ai-quickstart/ai-quickstart-template` (still no `--clone`), then pull the template's content into the existing folder without disturbing `pipeline/`, `prds/`, `designs/`:
+
+```bash
+gh repo create rh-ai-quickstart/<slug> --public --template rh-ai-quickstart/ai-quickstart-template --description "<from PRD>"
+cd .rhoai-qs/<slug>/
+git init
+git remote add origin "https://github.com/rh-ai-quickstart/<slug>.git"
+git fetch origin
+git checkout -t origin/main -f
+```
+
+`git checkout -f` only touches files that exist in the template's tree — since the template has no `pipeline/`, `prds/`, or `designs/` folders, the existing bookkeeping content is left untouched. Remove packages not in the design matrix afterward.
+
+**Do NOT gitignore `pipeline/`, `prds/`, `designs/`, `blog-drafts/`, `reports/` in this repo.** These folders stay tracked and get pushed to the quickstart's own GitHub remote throughout development — this is intentional, so the team can collaborate on the PRD, design doc, and pipeline state via normal pull requests (e.g., reviewing a design doc together), not just on one engineer's local machine. They only get removed as a final cleanup step in `rh-qs-ship`, right before the quickstart is considered done. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nested-quickstart-repos) for the full rationale.
 
 ### Branch protection
 
@@ -56,8 +105,16 @@ Start from [ai-quickstart-template](https://github.com/rh-ai-quickstart/ai-quick
 
 ## Repository structure
 
+This lives at `.rhoai-qs/<slug>/`. The top five entries (`pipeline/`, `prds/`, `designs/`, `blog-drafts/`, `reports/`) are factory bookkeeping from earlier phases — tracked and pushed like everything else during development so the team can collaborate on the PRD, design, etc., then removed as a final cleanup step in `rh-qs-ship` (see Create repository above):
+
 ```
-<quickstart-name>/
+.rhoai-qs/<slug>/               # = this repo's root
+├── pipeline/                    # ─┐
+├── prds/                        #  │  factory bookkeeping — tracked during
+├── designs/                     #  │  development, removed by rh-qs-ship
+├── blog-drafts/                 #  │  right before the quickstart is done
+├── reports/                     # ─┘
+│
 ├── .github/
 │   ├── workflows/
 │   │   ├── ci.yaml              # Lint + unit tests (runs on PR)
@@ -167,4 +224,5 @@ When scaffold is pushed and CI is green → **`rh-qs-implement`**
 
 - [ai-quickstart-template](https://github.com/rh-ai-quickstart/ai-quickstart-template)
 - [it-self-service-agent CI patterns](../rh-qs-test-suite/SKILL.md) — production workflow split (post-deploy)
-- Design doc: `data/designs/<slug>.md`
+- Design doc: `.rhoai-qs/<slug>/designs/design.md`
+- [subagents/validation-skill-prompt.md](./subagents/validation-skill-prompt.md) — pass by file path only, do NOT read directly

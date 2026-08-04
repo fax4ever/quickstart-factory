@@ -234,6 +234,6 @@ Note: all criteria for `rh-qs-implement` are `requires_user_approval: false` bec
 ## Relationship to Other Foundation Docs
 
 - **[spec-as-contract.md](spec-as-contract.md)** — defines the `acceptance_criteria` and `validation_rules` fields within the spec format, and the post-implementation validation flow
-- **[pipeline-convention.md](pipeline-convention.md)** — specs containing acceptance criteria live in `.rhoai-qs/pipeline/`
+- **[pipeline-convention.md](pipeline-convention.md)** — specs containing acceptance criteria live in `.rhoai-qs/<slug>/pipeline/`
 - **[pipeline-contracts.md](pipeline-contracts.md)** — handoff manifests may reference acceptance criteria results from upstream skills
 - **[reasoning-guardrails-template.md](reasoning-guardrails-template.md)** — guardrails are concern areas the agent reasons about organically; acceptance criteria are concrete, verifiable pass/fail checks

@@ -14,7 +14,7 @@ Discovery is the first skill in the pipeline, so this spec has no upstream depen
 .rhoai-qs/<slug>/pipeline/discovery-spec.yaml
 ```
 
-See [pipeline-convention.md](../../docs/foundation/pipeline-convention.md) for directory scoping rules.
+See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md) for directory scoping rules.
 
 ## File Structure
 
@@ -116,7 +116,7 @@ validation_rules:
 dependencies: []
 # Discovery is the first pipeline skill — no upstream spec dependencies.
 # Downstream skills (rh-qs-architect) will reference the PRD at
-# data/prds/<slug>.md, not this spec file.
+# .rhoai-qs/<slug>/prds/prd.md, not this spec file.
 ```
 
 ## Field Descriptions
@@ -283,7 +283,7 @@ dependencies: []
 
 ### For Main Agent (Phase 4)
 
-Read this template, then generate `.rhoai-qs/<slug>/pipeline/discovery-spec.yaml` based on the user's initial input and the backlog check results. The spec serves as the interview plan — it tracks which sections are covered and which questions remain.
+Read this template, then generate `.rhoai-qs/<slug>/pipeline/discovery-spec.yaml` based on the user's initial input and the backlog check results. The spec serves as the interview plan — it tracks which sections are covered and which questions remain. For a brand-new idea, the slug is minted here (from `quickstart_name`); for a continuing session, it was already resolved by `validation-skill` in Phase 0 — see [validation-skill-template.md](../../../docs/foundation/validation-skill-template.md).
 
 Update the spec as the interview progresses: move items from `remaining_questions` to `completed_sections` as answers come in.
 
@@ -293,4 +293,4 @@ Before presenting the PRD to the user, check each `validation_rules` entry again
 
 ### Downstream Consumer
 
-`rh-qs-architect` reads the PRD at `data/prds/<slug>.md`, not this spec. This spec is an internal working document for the discovery process. The PRD is the handoff artifact.
+`rh-qs-architect` reads the PRD at `.rhoai-qs/<slug>/prds/prd.md`, not this spec. This spec is an internal working document for the discovery process. The PRD is the handoff artifact.

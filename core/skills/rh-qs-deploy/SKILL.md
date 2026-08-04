@@ -11,6 +11,10 @@ description: Deploy configuration for AI Quickstarts. Wires ai-architecture-char
 
 Local verification passed from **`rh-qs-verify-build`** (`make dev`, `make test`, `make lint` pass)
 
+## Where This Runs
+
+This skill works inside `.rhoai-qs/<slug>/` — the scaffolded quickstart's own repo, since that's where Helm charts and Containerfiles live. Pipeline files and the design doc sit right alongside the code in this same folder — reference them as plain relative paths (`designs/design.md`, `pipeline/...`), no `../` needed. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#where-skills-run-and-why-it-matters-for-paths).
+
 ## Agent guardrails
 
 - **Helm-only on cluster.** All install/upgrade/uninstall is expressed as Makefile targets (`make deploy`, `make undeploy`). Agents do **not** run `oc` or `kubectl`.
@@ -30,6 +34,29 @@ Local verification passed from **`rh-qs-verify-build`** (`make dev`, `make test`
 9. Hands off live cluster validation to **`rh-qs-verify-deploy`** (after `make deploy`)
 
 ## Workflow
+
+### Phase 0: Resolve Quickstart Context
+
+Before doing anything, resolve which quickstart this session is for. Run `ls ../ 2>/dev/null` (excluding `reports` and `blog-drafts`) and spawn the **validation-skill subagent**:
+
+```python
+Agent(
+    description="Resolve which quickstart this deploy session is for",
+    prompt=f"""
+Read and follow instructions from:
+core/skills/rh-qs-deploy/subagents/validation-skill-prompt.md
+
+User message: {user_message}
+Existing slugs: {existing_slugs}
+Is entry point: false
+Calling skill: rh-qs-deploy
+"""
+)
+```
+
+Handle the result per [validation-skill-template.md](../../../docs/foundation/validation-skill-template.md#main-agent-handling).
+
+### Remaining phases
 
 ```
 - [ ] 1. Wire Helm app chart (api, ui, db, routes, migration job)
@@ -97,4 +124,5 @@ When deploy configs render locally → **`rh-qs-test-suite`** (if design include
 - [Helm: Llama Stack guide](./references/helm-llamastack.md)
 - [Helm: MinIO guide](./references/helm-minio.md)
 - [ai-architecture-charts](https://github.com/rh-ai-quickstart/ai-architecture-charts)
-- Design doc: `data/designs/<slug>.md`
+- Design doc: `designs/design.md`
+- [subagents/validation-skill-prompt.md](./subagents/validation-skill-prompt.md) — pass by file path only, do NOT read directly

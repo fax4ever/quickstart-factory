@@ -2,7 +2,9 @@
 
 This template is used by the main agent in **gap analysis mode** only (when the user asks to identify coverage gaps and suggest new quickstart ideas). It is not read during normal PRD discovery.
 
-**Location:** `data/reports/gap-analysis-<YYYY-MM-DD>.md`
+Gap analysis surveys the whole backlog — it runs before any specific quickstart slug exists, so this report is **not** namespaced under `.rhoai-qs/<slug>/`. It's a cross-cutting artifact, like a grooming report.
+
+**Location:** `.rhoai-qs/reports/gap-analysis-<YYYY-MM-DD>.md`
 
 ```markdown
 # Quickstart Gap Analysis — <Date>

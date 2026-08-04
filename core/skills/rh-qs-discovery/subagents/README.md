@@ -19,7 +19,33 @@ This directory contains specialized subagent prompts that handle focused tasks d
 
 ## Subagent Prompts
 
-### 1. prd-structurer-prompt.md
+### 1. validation-skill-prompt.md
+
+| Field | Description |
+|-------|-------------|
+| **Name** | `validation-skill-prompt.md` |
+| **Purpose** | Resolve which quickstart (by slug) this session applies to, when continuing or refining an existing idea |
+| **Input** | User's raw message, list of existing slugs under `.rhoai-qs/` (excluding `reports` and `blog-drafts`), `is_entry_point: true`, calling skill name |
+| **Output** | Resolution status as JSON — resolved/needs_user_input/new_quickstart/error, with slug and confidence |
+| **When used** | Phase 0 — only when continuing/refining an existing idea; skipped for brand-new ideas (no slug exists yet) |
+| **Why subagent** | Mechanical slug matching against a list, no reasoning about the PRD itself, self-contained — see [validation-skill-template.md](../../../../docs/foundation/validation-skill-template.md) for the full spec |
+
+**Output schema:**
+
+```json
+{
+  "resolution": "resolved|needs_user_input|new_quickstart|error",
+  "slug": "mortgage-processor",
+  "confidence": "high|medium|low",
+  "confirm_with_user": false,
+  "question_for_user": null,
+  "error_message": null
+}
+```
+
+---
+
+### 2. prd-structurer-prompt.md
 
 | Field | Description |
 |-------|-------------|
@@ -49,7 +75,7 @@ This directory contains specialized subagent prompts that handle focused tasks d
 
 ---
 
-### 2. backlog-matcher-prompt.md
+### 3. backlog-matcher-prompt.md
 
 | Field | Description |
 |-------|-------------|
@@ -115,3 +141,4 @@ Each subagent prompt is **self-contained** with:
 | `reasoning-guardrails.md` | During PRD validation (Phase 7) |
 | `spec-template.md` | When generating the discovery spec (Phase 4) |
 | `output-templates.md` | When writing the final PRD (Phase 8) |
+| `../../../../docs/foundation/validation-skill-template.md` | Never — this is background for humans; the subagent prompt itself is self-contained |

@@ -91,4 +91,4 @@ Security review is **embedded** in the pipeline — not a terminal stage. After 
 - [Agent permissions and MCP guardrails](./references/agent-permissions.md)
 - [Application security checklist](./references/application-security.md)
 - [Llama Stack safety](https://llama-stack.readthedocs.io/) — when orchestration is enabled
-- Design doc: `data/designs/<slug>.md`
+- Design doc: `.rhoai-qs/<slug>/designs/design.md` when invoked from the factory root (e.g. during `rh-qs-architect`), or plain `designs/design.md` when invoked from inside the scaffolded quickstart repo itself (e.g. during `rh-qs-deploy`, which already runs from `.rhoai-qs/<slug>/`)
