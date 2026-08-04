@@ -93,22 +93,7 @@ git checkout -t origin/main -f
 
 `git checkout -f` only touches files that exist in the template's tree — since the template has no `pipeline/`, `prds/`, or `designs/` folders, the existing bookkeeping content is left untouched. Remove packages not in the design matrix afterward.
 
-Then, **inside this repo** (`.rhoai-qs/<slug>/`), add the factory's bookkeeping folders to *its own* `.gitignore` — this is a different concern from the factory's own `.gitignore`, and just as important, since without it these internal working files would get pushed to the quickstart's public GitHub remote:
-
-```bash
-cat >> .gitignore <<'EOF'
-
-# Factory bookkeeping — internal to the quickstart-factory pipeline, not
-# part of the shipped quickstart
-/pipeline/
-/prds/
-/designs/
-/blog-drafts/
-/reports/
-EOF
-```
-
-See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nested-quickstart-repos) for why this repo lives here and why the two `.gitignore` files are separate concerns.
+**Do NOT gitignore `pipeline/`, `prds/`, `designs/`, `blog-drafts/`, `reports/` in this repo.** These folders stay tracked and get pushed to the quickstart's own GitHub remote throughout development — this is intentional, so the team can collaborate on the PRD, design doc, and pipeline state via normal pull requests (e.g., reviewing a design doc together), not just on one engineer's local machine. They only get removed as a final cleanup step in `rh-qs-ship`, right before the quickstart is considered done. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nested-quickstart-repos) for the full rationale.
 
 ### Branch protection
 
@@ -120,14 +105,14 @@ See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nes
 
 ## Repository structure
 
-This lives at `.rhoai-qs/<slug>/`. The top four entries (`pipeline/`, `prds/`, `designs/`, `blog-drafts/`, `reports/`) are factory bookkeeping from earlier phases, gitignored *within this repo* (see Create repository above) — everything else is the actual shipped quickstart:
+This lives at `.rhoai-qs/<slug>/`. The top five entries (`pipeline/`, `prds/`, `designs/`, `blog-drafts/`, `reports/`) are factory bookkeeping from earlier phases — tracked and pushed like everything else during development so the team can collaborate on the PRD, design, etc., then removed as a final cleanup step in `rh-qs-ship` (see Create repository above):
 
 ```
 .rhoai-qs/<slug>/               # = this repo's root
 ├── pipeline/                    # ─┐
-├── prds/                        #  │  factory bookkeeping — in .gitignore,
-├── designs/                     #  │  never pushed to GitHub
-├── blog-drafts/                 #  │
+├── prds/                        #  │  factory bookkeeping — tracked during
+├── designs/                     #  │  development, removed by rh-qs-ship
+├── blog-drafts/                 #  │  right before the quickstart is done
 ├── reports/                     # ─┘
 │
 ├── .github/
@@ -175,7 +160,7 @@ This lives at `.rhoai-qs/<slug>/`. The top four entries (`pipeline/`, `prds/`, `
 ├── turbo.json
 ├── .env.example
 ├── .pre-commit-config.yaml
-├── .gitignore                   # includes the bookkeeping-folder rules from above
+├── .gitignore
 └── README.md
 ```
 

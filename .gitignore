@@ -38,10 +38,11 @@ data/
 # set up directly inside .rhoai-qs/<slug>/ by rh-qs-scaffold via git init, not
 # git clone, since the folder already has pipeline/prds/designs/ in it before
 # scaffold runs). One single rule covers all of it — no per-slug maintenance
-# needed here. Note: the quickstart's own repo needs its OWN .gitignore entries
-# for pipeline/, prds/, designs/, blog-drafts/, reports/ so those bookkeeping
-# folders never get pushed to its public GitHub remote — see
-# docs/foundation/pipeline-convention.md.
+# needed here. Note: the quickstart's own repo intentionally does NOT gitignore
+# pipeline/, prds/, designs/, reports/ — they stay tracked and pushed during
+# development for team collaboration (reviewing the PRD/design together, etc.),
+# and only get removed as a final cleanup step in rh-qs-ship, right before the
+# quickstart ships — see docs/foundation/pipeline-convention.md.
 .rhoai-qs/
 
 # Temporary files
