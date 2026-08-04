@@ -10,7 +10,7 @@ This directory contains the `validation-skill` subagent used by `rh-qs-deploy` (
 |-------|-------------|
 | **Name** | `validation-skill-prompt.md` |
 | **Purpose** | Resolve which quickstart (by slug) this session applies to |
-| **Input** | User's raw message, list of existing slugs under `../.rhoai-qs/` (excluding `_shared`), `is_entry_point: false`, calling skill name |
+| **Input** | User's raw message, list of existing slugs under `../` (excluding `reports` and `blog-drafts`), `is_entry_point: false`, calling skill name |
 | **Output** | Resolution status as JSON — resolved/needs_user_input/error, with slug and confidence |
 | **When used** | Phase 0 — before reading the design doc or wiring Helm charts |
 | **Why subagent** | Mechanical slug matching against a list, self-contained — see [validation-skill-template.md](../../../../docs/foundation/validation-skill-template.md) for the full spec |
@@ -32,4 +32,4 @@ This directory contains the `validation-skill` subagent used by `rh-qs-deploy` (
 
 **DO NOT read `validation-skill-prompt.md` directly.** Pass it by file path to the Agent tool — see [../SKILL.md](../SKILL.md) Phase 0.
 
-Since `rh-qs-deploy` runs inside the scaffolded quickstart repo, the existing-slugs listing comes from `../.rhoai-qs/`, one level up.
+Since `rh-qs-deploy` runs inside `.rhoai-qs/<slug>/` itself (the scaffolded quickstart repo), the existing-slugs listing comes from `../`, one level up — that's `.rhoai-qs/` itself.

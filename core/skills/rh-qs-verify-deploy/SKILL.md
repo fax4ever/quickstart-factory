@@ -18,7 +18,7 @@ description: |
 
 ## Where This Runs
 
-This skill works inside the scaffolded quickstart's own repo. Pipeline files, design doc, and reports stay in the parent `quickstart-factory/.rhoai-qs/<slug>/` — reference them as `../.rhoai-qs/<slug>/...`. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nested-quickstart-repos).
+This skill works inside `.rhoai-qs/<slug>/` — the scaffolded quickstart's own repo. Pipeline files, design doc, and reports sit right alongside the code in this same folder — reference them as plain relative paths, no `../` needed. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#where-skills-run-and-why-it-matters-for-paths).
 
 ## Purpose
 
@@ -37,14 +37,14 @@ Closes the **biggest pipeline gap**: validating that the quickstart actually wor
 3. Runs optional **`helm test`** hooks if the chart defines them
 4. Validates **security smoke checks** from **`rh-qs-secure`** (no plaintext secrets in running config)
 5. Exercises the **primary user journey** at minimum (API call or UI smoke — as defined in PRD)
-6. Writes **`../.rhoai-qs/<slug>/reports/verify-deploy-<date>.md`** with pass/fail evidence
+6. Writes **`reports/verify-deploy-<date>.md`** with pass/fail evidence
 7. Only when verification passes → hand off to **`rh-qs-document`**
 
 ## Workflow
 
 ### Phase 0: Resolve Quickstart Context
 
-Before doing anything, resolve which quickstart this session is for. Run `ls ../.rhoai-qs/ 2>/dev/null` (excluding `_shared`) and spawn the **validation-skill subagent**:
+Before doing anything, resolve which quickstart this session is for. Run `ls ../ 2>/dev/null` (excluding `reports` and `blog-drafts`) and spawn the **validation-skill subagent**:
 
 ```python
 Agent(
@@ -72,7 +72,7 @@ Handle the result per [validation-skill-template.md](../../../docs/foundation/va
 - [ ] 4. Run make verify-deploy NAMESPACE=<ns>
 - [ ] 5. Run security smoke checks (rh-qs-secure application-security.md)
 - [ ] 6. Exercise primary user flow (scripted curl or documented manual step)
-- [ ] 7. Write verification report to ../.rhoai-qs/<slug>/reports/
+- [ ] 7. Write verification report to reports/
 - [ ] 8. Fix deploy/chart issues and re-verify if any check fails
 ```
 
@@ -101,7 +101,7 @@ helm-template:
 
 ## Verification report template
 
-Save to **`../.rhoai-qs/<slug>/reports/verify-deploy-YYYY-MM-DD.md`**:
+Save to **`reports/verify-deploy-YYYY-MM-DD.md`**:
 
 ```markdown
 # Verify deploy — <Title>
@@ -140,7 +140,7 @@ When using shared MLflow or other cluster-wide services:
 
 ## Output
 
-- Verification report in `../.rhoai-qs/<slug>/reports/`
+- Verification report in `reports/`
 - Chart/Makefile fixes if verification failed
 - Green light for **`rh-qs-document`** only when critical checks pass
 
@@ -153,5 +153,5 @@ When verification report is green → **`rh-qs-document`** (docs must match veri
 - [Agent permissions](../rh-qs-secure/references/agent-permissions.md)
 - [Application security](../rh-qs-secure/references/application-security.md)
 - [Makefile CI contract](../rh-qs-test-suite/references/makefile-ci-contract.md)
-- Design doc: `../.rhoai-qs/<slug>/designs/design.md`
+- Design doc: `designs/design.md`
 - [subagents/validation-skill-prompt.md](./subagents/validation-skill-prompt.md) — pass by file path only, do NOT read directly

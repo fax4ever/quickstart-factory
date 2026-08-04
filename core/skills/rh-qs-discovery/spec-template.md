@@ -14,7 +14,7 @@ Discovery is the first skill in the pipeline, so this spec has no upstream depen
 .rhoai-qs/<slug>/pipeline/discovery-spec.yaml
 ```
 
-See [pipeline-convention.md](../../docs/foundation/pipeline-convention.md) for directory scoping rules.
+See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md) for directory scoping rules.
 
 ## File Structure
 

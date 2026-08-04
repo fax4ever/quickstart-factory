@@ -10,7 +10,7 @@ This directory contains the `validation-skill` subagent used by `rh-qs-architect
 |-------|-------------|
 | **Name** | `validation-skill-prompt.md` |
 | **Purpose** | Resolve which quickstart (by slug) this session applies to |
-| **Input** | User's raw message, list of existing slugs under `.rhoai-qs/` (excluding `_shared`), `is_entry_point: false`, calling skill name |
+| **Input** | User's raw message, list of existing slugs under `.rhoai-qs/` (excluding `reports` and `blog-drafts`), `is_entry_point: false`, calling skill name |
 | **Output** | Resolution status as JSON — resolved/needs_user_input/error, with slug and confidence |
 | **When used** | Phase 0 — before reading the PRD or writing the design doc |
 | **Why subagent** | Mechanical slug matching against a list, self-contained — see [validation-skill-template.md](../../../../docs/foundation/validation-skill-template.md) for the full spec |

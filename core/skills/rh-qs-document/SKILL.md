@@ -9,13 +9,13 @@ description: Generate README and catalog documentation for AI Quickstarts from v
 
 ## Trigger
 
-**`rh-qs-verify-deploy`** report is green (`../.rhoai-qs/<slug>/reports/verify-deploy-*.md`); CI workflows from `rh-qs-test-suite` are in place when the design requires them
+**`rh-qs-verify-deploy`** report is green (`reports/verify-deploy-*.md`); CI workflows from `rh-qs-test-suite` are in place when the design requires them
 
 Documentation runs **after** verification — not before. Every deploy command in the README must match what verify-deploy actually ran.
 
 ## Where This Runs
 
-This skill works inside the scaffolded quickstart's own repo, since `README.md` lives at that repo's root. Pipeline files, design doc, and reports stay in the parent `quickstart-factory/.rhoai-qs/<slug>/` — reference them as `../.rhoai-qs/<slug>/...`. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nested-quickstart-repos).
+This skill works inside `.rhoai-qs/<slug>/` — the scaffolded quickstart's own repo, since `README.md` lives at that repo's root. Pipeline files, design doc, and reports sit right alongside the code in this same folder — reference them as plain relative paths, no `../` needed. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#where-skills-run-and-why-it-matters-for-paths).
 
 ## What it does
 
@@ -30,7 +30,7 @@ This skill works inside the scaffolded quickstart's own repo, since `README.md` 
 
 ### Phase 0: Resolve Quickstart Context
 
-Before doing anything, resolve which quickstart this session is for. Run `ls ../.rhoai-qs/ 2>/dev/null` (excluding `_shared`) and spawn the **validation-skill subagent**:
+Before doing anything, resolve which quickstart this session is for. Run `ls ../ 2>/dev/null` (excluding `reports` and `blog-drafts`) and spawn the **validation-skill subagent**:
 
 ```python
 Agent(
@@ -106,5 +106,5 @@ When README is complete → **`rh-qs-ship`**
 ## References
 
 - [README structure](./references/ReadmeStructure.md)
-- Design doc: `../.rhoai-qs/<slug>/designs/design.md`
+- Design doc: `designs/design.md`
 - [subagents/validation-skill-prompt.md](./subagents/validation-skill-prompt.md) — pass by file path only, do NOT read directly

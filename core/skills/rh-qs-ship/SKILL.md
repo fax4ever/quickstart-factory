@@ -14,7 +14,7 @@ Documentation is complete from `rh-qs-document`
 
 ## Where This Runs
 
-This skill works inside the scaffolded quickstart's own repo, since it creates a PR against that repo. The blog draft, however, is a factory-side artifact — it's written to the parent `quickstart-factory/.rhoai-qs/<slug>/blog-drafts/`, referenced as `../.rhoai-qs/<slug>/blog-drafts/...`. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nested-quickstart-repos).
+This skill works inside `.rhoai-qs/<slug>/` — the scaffolded quickstart's own repo, since it creates a PR against that repo. The blog draft, however, is factory bookkeeping (it's never meant to be pushed to the quickstart's GitHub remote) — it's written to `blog-drafts/` in this same folder, which is gitignored within the quickstart's own repo (see [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nested-quickstart-repos)).
 
 ## What it does
 
@@ -27,7 +27,7 @@ This skill works inside the scaffolded quickstart's own repo, since it creates a
 
 ### Phase 0: Resolve Quickstart Context
 
-Before doing anything, resolve which quickstart this session is for. Run `ls ../.rhoai-qs/ 2>/dev/null` (excluding `_shared`) and spawn the **validation-skill subagent**:
+Before doing anything, resolve which quickstart this session is for. Run `ls ../ 2>/dev/null` (excluding `reports` and `blog-drafts`) and spawn the **validation-skill subagent**:
 
 ```python
 Agent(
@@ -106,7 +106,7 @@ python3 core/skills/github/rh-qs-ship/scripts/create_pr.py --base main
 - Implementation repo URL
 - Contrib: https://github.com/rh-ai-quickstart/ai-quickstart-contrib
 
-Save to **`../.rhoai-qs/<slug>/blog-drafts/YYYY-MM-DD.md`**. Drafts require human review before publication.
+Save to **`blog-drafts/YYYY-MM-DD.md`**. Drafts require human review before publication.
 
 ### Update backlog
 
@@ -124,7 +124,7 @@ Comment on or close the related contrib issue. Mark in-progress during review, c
 | Artifact | Path |
 |----------|------|
 | Pull request | GitHub URL |
-| Blog draft | `../.rhoai-qs/<slug>/blog-drafts/<date>.md` |
+| Blog draft | `blog-drafts/<date>.md` |
 
 ## References
 

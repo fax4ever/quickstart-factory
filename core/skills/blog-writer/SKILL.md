@@ -7,7 +7,7 @@ description: Generate blog post drafts for completed AI Quickstarts. Use when an
 
 ## Purpose
 
-Generate blog post drafts for completed AI Quickstarts. Outputs to `.rhoai-qs/<slug>/blog-drafts/` (or `.rhoai-qs/_shared/blog-drafts/` if the quickstart's own slug folder doesn't exist, e.g. for older quickstarts predating this convention). Drafts require review before publication.
+Generate blog post drafts for completed AI Quickstarts. Outputs to `.rhoai-qs/<slug>/blog-drafts/` (or the top-level `.rhoai-qs/blog-drafts/` if the quickstart's own slug folder doesn't exist, e.g. for older quickstarts predating this convention). Drafts require review before publication.
 
 ## Workflow
 
@@ -35,7 +35,9 @@ Include in every blog post:
 ## Output
 
 - **If the quickstart's slug folder exists:** `.rhoai-qs/<slug>/blog-drafts/YYYY-MM-DD.md` — no slug in the filename, the folder already disambiguates (e.g. `.rhoai-qs/vllm-cpu/blog-drafts/2025-03-11.md`)
-- **Fallback (no slug folder, e.g. an older quickstart predating this convention):** `.rhoai-qs/_shared/blog-drafts/{quickstart-slug}-YYYY-MM-DD.md` — the slug **is** needed here since `_shared/` mixes drafts for every quickstart (e.g. `vllm-cpu-2025-03-11.md`)
+- **Fallback (no slug folder, e.g. an older quickstart predating this convention):** `.rhoai-qs/blog-drafts/{quickstart-slug}-YYYY-MM-DD.md` — the slug **is** needed here since this top-level folder mixes drafts for every quickstart lacking its own slug folder (e.g. `vllm-cpu-2025-03-11.md`)
+
+> **Note:** it isn't yet certain how often this fallback path will actually be used in practice — most quickstarts going forward should have their own slug folder from the start. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#cross-cutting-locations).
 
 ## References
 

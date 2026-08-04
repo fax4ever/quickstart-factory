@@ -27,11 +27,13 @@ Self-contained, following the standard subagent structure from [skill-directory-
 | Input | Description |
 |-------|-------------|
 | `user_message` | The user's raw request for this session (e.g., "deploy mortgage-processor", "continue the fraud idea", "run rh-qs-deploy") |
-| `existing_slugs` | Output of `ls .rhoai-qs/ 2>/dev/null` run by the main agent, **excluding** `_shared` |
+| `existing_slugs` | List of quickstart slug folders, **excluding** the two cross-cutting folders `reports/` and `blog-drafts/` (see [pipeline-convention.md](pipeline-convention.md#cross-cutting-locations)) |
 | `is_entry_point` | `true` only for `rh-qs-discovery`; changes how a zero-match result is handled |
 | `calling_skill` | Name of the skill invoking this subagent (for logging/messaging only) |
 
-The main agent runs the `ls` command itself — the subagent never has filesystem access, it only reasons over the list it's given.
+The main agent runs the listing command itself — the subagent never has filesystem access, it only reasons over the list it's given. The exact command depends on where the calling skill runs (see [pipeline-convention.md](pipeline-convention.md#where-skills-run-and-why-it-matters-for-paths)):
+- Skills running at the `quickstart-factory` root (discovery, architect, scaffold): `ls .rhoai-qs/ 2>/dev/null`, then filter out `reports` and `blog-drafts`.
+- Skills running inside `.rhoai-qs/<slug>/` itself (implement, deploy, verify-deploy, document, test-suite, ship): `ls ../ 2>/dev/null`, then filter out `reports` and `blog-drafts`.
 
 ## Resolution Logic
 
@@ -102,12 +104,19 @@ The main agent runs the `ls` command itself — the subagent never has filesyste
 
 ## Once Resolved
 
-Every subsequent phase constructs paths using the resolved `slug`:
+Every subsequent phase constructs paths using the resolved `slug`, in whichever form matches the calling skill's own working directory:
 
 ```
+# From the quickstart-factory root (discovery, architect, scaffold):
 .rhoai-qs/<slug>/pipeline/<skill>-spec.yaml
 .rhoai-qs/<slug>/prds/prd.md
 .rhoai-qs/<slug>/designs/design.md
+
+# From inside .rhoai-qs/<slug>/ itself (implement, deploy, verify-deploy,
+# document, test-suite, ship):
+pipeline/<skill>-spec.yaml
+prds/prd.md
+designs/design.md
 ```
 
 ## Relationship to Other Foundation Docs

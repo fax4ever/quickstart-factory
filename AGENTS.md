@@ -10,9 +10,9 @@
 
 ## Greenfield pipeline
 
-For building a new quickstart end-to-end, see [docs/NEW_QUICKSTART_SKILLS.md](../docs/NEW_QUICKSTART_SKILLS.md). Key rule: **`rh-qs-document` runs only after `rh-qs-verify-deploy`**. Agents do not run `oc`/`kubectl` — use Helm/Makefile targets per **`rh-qs-secure`**.
+For building a new quickstart end-to-end, see [docs/NEW_QUICKSTART_SKILLS.md](docs/NEW_QUICKSTART_SKILLS.md). Key rule: **`rh-qs-document` runs only after `rh-qs-verify-deploy`**. Agents do not run `oc`/`kubectl` — use Helm/Makefile targets per **`rh-qs-secure`**.
 
-All pipeline state, PRDs, designs, and reports live under `.rhoai-qs/<slug>/` inside this repo — see [pipeline-convention.md](docs/foundation/pipeline-convention.md). Quickstart code is scaffolded as a separate GitHub repo, cloned as a sibling folder at this repo's root by `rh-qs-scaffold`. Every skill resolves which quickstart it's working on via the `validation-skill` subagent before doing anything else — see [validation-skill-template.md](docs/foundation/validation-skill-template.md).
+Everything for a quickstart — pipeline state, PRD, design, blog drafts, reports, **and its scaffolded application code** — lives together under `.rhoai-qs/<slug>/` inside this repo. The code is still its own separate GitHub repo (cloned there by `rh-qs-scaffold`), just nested inside this folder rather than sitting next to it. See [pipeline-convention.md](docs/foundation/pipeline-convention.md). Every skill resolves which quickstart it's working on via the `validation-skill` subagent before doing anything else — see [validation-skill-template.md](docs/foundation/validation-skill-template.md).
 
 ## Foundation Docs (for skill implementation)
 
@@ -22,7 +22,7 @@ When implementing or upgrading skills (EPICs 04+), consult these convention docs
 |-----|----------------|-------------|
 | `skill-directory-structure.md` | Canonical layout: SKILL.md, subagents/, reasoning-guardrails.md, spec-template.md | Creating or restructuring a skill directory |
 | `spec-as-contract.md` | YAML spec format, validation flow, refinement loop, staleness detection | Writing a spec-template.md or implementing the spec → validate → implement workflow |
-| `pipeline-convention.md` | `.rhoai-qs/<slug>/` directory, file categories, `_shared/` bucket, cleanup, resumability | Reading/writing any pipeline, PRD, design, or report file |
+| `pipeline-convention.md` | `.rhoai-qs/<slug>/` directory (bookkeeping + the quickstart's own code, together), file categories, top-level `reports/`/`blog-drafts/` for cross-cutting cases, cleanup, resumability | Reading/writing any pipeline, PRD, design, or report file |
 | `validation-skill-template.md` | Required `subagents/validation-skill-prompt.md` — Phase 0 slug resolution | Every skill, before touching any `.rhoai-qs/` file |
 | `pipeline-contracts.md` | YAML schemas for all 7 handoff files (architecture-spec through doc-manifest) | Producing or consuming a handoff manifest between skills |
 | `reasoning-guardrails-template.md` | Template for reasoning-guardrails.md — concern areas, not checklists | Writing a skill's reasoning-guardrails.md |

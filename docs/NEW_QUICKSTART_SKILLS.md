@@ -63,6 +63,6 @@ Some steps like 1–3 need to be done in order because the data needs to be in p
 
 ## Where Everything Lives
 
-Every skill above runs inside the `quickstart-factory` repo. All pipeline state, PRDs, designs, blog drafts, and reports are centralized under `quickstart-factory/.rhoai-qs/<slug>/`, namespaced by quickstart slug — not split across the quickstart's own repo. Only stage 3 onward produces a separate artifact: a real GitHub repo (`rh-ai-quickstart/<slug>`), cloned as a sibling folder at the `quickstart-factory` root by `rh-qs-scaffold`.
+Every skill above runs inside the `quickstart-factory` repo. Everything for a quickstart — pipeline state, PRD, design, blog drafts, reports, **and its application code** — lives together under `quickstart-factory/.rhoai-qs/<slug>/`, namespaced by quickstart slug. Starting at stage 3, that folder also becomes the working directory of a real, separate GitHub repo (`rh-ai-quickstart/<slug>`), set up there by `rh-qs-scaffold` — it's a distinct git repository with its own remote and history, just nested inside `.rhoai-qs/<slug>/` rather than sitting next to it.
 
 Because each skill typically runs in a fresh, separate chat session, and `.rhoai-qs/` can hold data for many quickstarts at once, **every skill resolves which quickstart it's working on before doing anything else**, via the `validation-skill` subagent (Phase 0). See [pipeline-convention.md](foundation/pipeline-convention.md) and [validation-skill-template.md](foundation/validation-skill-template.md).

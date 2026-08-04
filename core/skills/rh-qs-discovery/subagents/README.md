@@ -25,7 +25,7 @@ This directory contains specialized subagent prompts that handle focused tasks d
 |-------|-------------|
 | **Name** | `validation-skill-prompt.md` |
 | **Purpose** | Resolve which quickstart (by slug) this session applies to, when continuing or refining an existing idea |
-| **Input** | User's raw message, list of existing slugs under `.rhoai-qs/` (excluding `_shared`), `is_entry_point: true`, calling skill name |
+| **Input** | User's raw message, list of existing slugs under `.rhoai-qs/` (excluding `reports` and `blog-drafts`), `is_entry_point: true`, calling skill name |
 | **Output** | Resolution status as JSON — resolved/needs_user_input/new_quickstart/error, with slug and confidence |
 | **When used** | Phase 0 — only when continuing/refining an existing idea; skipped for brand-new ideas (no slug exists yet) |
 | **Why subagent** | Mechanical slug matching against a list, no reasoning about the PRD itself, self-contained — see [validation-skill-template.md](../../../../docs/foundation/validation-skill-template.md) for the full spec |

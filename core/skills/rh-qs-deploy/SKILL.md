@@ -13,7 +13,7 @@ Local verification passed from **`rh-qs-verify-build`** (`make dev`, `make test`
 
 ## Where This Runs
 
-This skill works inside the scaffolded quickstart's own repo, since that's where Helm charts and Containerfiles live. Pipeline files and the design doc stay in the parent `quickstart-factory/.rhoai-qs/<slug>/` — reference them as `../.rhoai-qs/<slug>/...`. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nested-quickstart-repos).
+This skill works inside `.rhoai-qs/<slug>/` — the scaffolded quickstart's own repo, since that's where Helm charts and Containerfiles live. Pipeline files and the design doc sit right alongside the code in this same folder — reference them as plain relative paths (`designs/design.md`, `pipeline/...`), no `../` needed. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#where-skills-run-and-why-it-matters-for-paths).
 
 ## Agent guardrails
 
@@ -37,7 +37,7 @@ This skill works inside the scaffolded quickstart's own repo, since that's where
 
 ### Phase 0: Resolve Quickstart Context
 
-Before doing anything, resolve which quickstart this session is for. Run `ls ../.rhoai-qs/ 2>/dev/null` (excluding `_shared`) and spawn the **validation-skill subagent**:
+Before doing anything, resolve which quickstart this session is for. Run `ls ../ 2>/dev/null` (excluding `reports` and `blog-drafts`) and spawn the **validation-skill subagent**:
 
 ```python
 Agent(
@@ -124,5 +124,5 @@ When deploy configs render locally → **`rh-qs-test-suite`** (if design include
 - [Helm: Llama Stack guide](./references/helm-llamastack.md)
 - [Helm: MinIO guide](./references/helm-minio.md)
 - [ai-architecture-charts](https://github.com/rh-ai-quickstart/ai-architecture-charts)
-- Design doc: `../.rhoai-qs/<slug>/designs/design.md`
+- Design doc: `designs/design.md`
 - [subagents/validation-skill-prompt.md](./subagents/validation-skill-prompt.md) — pass by file path only, do NOT read directly

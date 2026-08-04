@@ -29,7 +29,7 @@ Design document approved from `rh-qs-architect` at `.rhoai-qs/<slug>/designs/des
 
 ### Phase 0: Resolve Quickstart Context
 
-Before doing anything, resolve which quickstart this session is for. Run `ls .rhoai-qs/ 2>/dev/null` (excluding `_shared`) and spawn the **validation-skill subagent**:
+Before doing anything, resolve which quickstart this session is for. Run `ls .rhoai-qs/ 2>/dev/null` (excluding `reports` and `blog-drafts`) and spawn the **validation-skill subagent**:
 
 ```python
 Agent(
@@ -63,26 +63,52 @@ Handle the result per [validation-skill-template.md](../../../docs/foundation/va
 
 ### Create repository
 
-The scaffolded repo is cloned as a sibling folder at the `quickstart-factory` root — **not** inside `.rhoai-qs/`. This requires two steps in order:
+**Important:** `.rhoai-qs/<slug>/` already exists and already contains `pipeline/`, `prds/`, `designs/` from earlier phases — it is **not empty**. `git clone` (and `gh repo create ... --clone`) refuses to clone into a non-empty directory, so **do not use `--clone`**. Instead, create the GitHub repo separately, then `git init` the existing folder and connect it to the new remote:
 
 ```bash
-# 1. Ensure we're at the quickstart-factory root, so --clone lands the new
-#    repo as a direct child folder, not inside whatever subfolder we were in.
+# 1. Ensure we're at the quickstart-factory root
 cd "$(git rev-parse --show-toplevel)"
 
-# 2. Create and clone the repo
-gh repo create rh-ai-quickstart/<slug> --public --description "<from PRD>" --clone
+# 2. Create the GitHub repo WITHOUT cloning (no --clone flag)
+gh repo create rh-ai-quickstart/<slug> --public --description "<from PRD>"
+
+# 3. Move into the existing folder (already has pipeline/, prds/, designs/)
+#    and turn it into a git repo pointed at the new remote
+cd .rhoai-qs/<slug>/
+git init
+git remote add origin "https://github.com/rh-ai-quickstart/<slug>.git"
+git branch -M main
 ```
 
-Then immediately add a gitignore entry so `quickstart-factory`'s own git never tries to track the nested repo's contents:
+If starting from [ai-quickstart-template](https://github.com/rh-ai-quickstart/ai-quickstart-template), create the repo with `--template rh-ai-quickstart/ai-quickstart-template` (still no `--clone`), then pull the template's content into the existing folder without disturbing `pipeline/`, `prds/`, `designs/`:
 
 ```bash
-echo "/<slug>/" >> .gitignore
+gh repo create rh-ai-quickstart/<slug> --public --template rh-ai-quickstart/ai-quickstart-template --description "<from PRD>"
+cd .rhoai-qs/<slug>/
+git init
+git remote add origin "https://github.com/rh-ai-quickstart/<slug>.git"
+git fetch origin
+git checkout -t origin/main -f
 ```
 
-See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nested-quickstart-repos) for why this repo lives here instead of somewhere else.
+`git checkout -f` only touches files that exist in the template's tree — since the template has no `pipeline/`, `prds/`, or `designs/` folders, the existing bookkeeping content is left untouched. Remove packages not in the design matrix afterward.
 
-Start from [ai-quickstart-template](https://github.com/rh-ai-quickstart/ai-quickstart-template) when possible. Remove packages not in the design matrix.
+Then, **inside this repo** (`.rhoai-qs/<slug>/`), add the factory's bookkeeping folders to *its own* `.gitignore` — this is a different concern from the factory's own `.gitignore`, and just as important, since without it these internal working files would get pushed to the quickstart's public GitHub remote:
+
+```bash
+cat >> .gitignore <<'EOF'
+
+# Factory bookkeeping — internal to the quickstart-factory pipeline, not
+# part of the shipped quickstart
+/pipeline/
+/prds/
+/designs/
+/blog-drafts/
+/reports/
+EOF
+```
+
+See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nested-quickstart-repos) for why this repo lives here and why the two `.gitignore` files are separate concerns.
 
 ### Branch protection
 
@@ -94,8 +120,16 @@ Start from [ai-quickstart-template](https://github.com/rh-ai-quickstart/ai-quick
 
 ## Repository structure
 
+This lives at `.rhoai-qs/<slug>/`. The top four entries (`pipeline/`, `prds/`, `designs/`, `blog-drafts/`, `reports/`) are factory bookkeeping from earlier phases, gitignored *within this repo* (see Create repository above) — everything else is the actual shipped quickstart:
+
 ```
-<quickstart-name>/
+.rhoai-qs/<slug>/               # = this repo's root
+├── pipeline/                    # ─┐
+├── prds/                        #  │  factory bookkeeping — in .gitignore,
+├── designs/                     #  │  never pushed to GitHub
+├── blog-drafts/                 #  │
+├── reports/                     # ─┘
+│
 ├── .github/
 │   ├── workflows/
 │   │   ├── ci.yaml              # Lint + unit tests (runs on PR)
@@ -141,7 +175,7 @@ Start from [ai-quickstart-template](https://github.com/rh-ai-quickstart/ai-quick
 ├── turbo.json
 ├── .env.example
 ├── .pre-commit-config.yaml
-├── .gitignore
+├── .gitignore                   # includes the bookkeeping-folder rules from above
 └── README.md
 ```
 

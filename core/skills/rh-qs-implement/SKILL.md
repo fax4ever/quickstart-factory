@@ -13,7 +13,7 @@ Scaffold exists from `rh-qs-scaffold`
 
 ## Where This Runs
 
-This skill works inside the scaffolded quickstart's own repo (e.g. `mortgage-processor/`, a sibling folder of `quickstart-factory`), since that's where the application code lives. Pipeline files (PRD, design doc, specs, manifests) stay in the parent `quickstart-factory/.rhoai-qs/<slug>/` — reference them as `../.rhoai-qs/<slug>/...` relative to the quickstart repo root. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#nested-quickstart-repos).
+This skill works inside `.rhoai-qs/<slug>/` — the scaffolded quickstart's own repo, since that's where the application code lives. The PRD, design doc, and pipeline specs/manifests sit right alongside the code in this same folder — reference them as plain relative paths (`prds/prd.md`, `designs/design.md`, `pipeline/...`), no `../` needed. See [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md#where-skills-run-and-why-it-matters-for-paths).
 
 ## What it does
 
@@ -33,7 +33,7 @@ Builds the **minimal vertical slice** that proves the use case end-to-end:
 
 ### Phase 0: Resolve Quickstart Context
 
-Before reading any files, resolve which quickstart this session is for. Run `ls ../.rhoai-qs/ 2>/dev/null` (excluding `_shared`) and spawn the **validation-skill subagent**:
+Before reading any files, resolve which quickstart this session is for. Run `ls ../ 2>/dev/null` (excluding `reports` and `blog-drafts`) and spawn the **validation-skill subagent**:
 
 ```python
 Agent(
@@ -133,6 +133,6 @@ When vertical slice works locally → **`rh-qs-verify-build`**
 
 - [Monorepo layout](./references/template-layout.md)
 - [Design checklist](./references/design-checklist.md)
-- PRD: `../.rhoai-qs/<slug>/prds/prd.md`
-- Design: `../.rhoai-qs/<slug>/designs/design.md`
+- PRD: `prds/prd.md`
+- Design: `designs/design.md`
 - [subagents/validation-skill-prompt.md](./subagents/validation-skill-prompt.md) — pass by file path only, do NOT read directly

@@ -16,7 +16,7 @@ Your output tells the main agent exactly what to do next: proceed with a resolve
 
 **Input Parameters:**
 - `{user_message}`: the user's raw request for this session
-- `{existing_slugs}`: list of slugs found under `.rhoai-qs/` (excluding `_shared`), gathered by the main agent via `ls .rhoai-qs/ 2>/dev/null`
+- `{existing_slugs}`: list of slugs found under `.rhoai-qs/` (excluding `reports` and `blog-drafts`), gathered by the main agent via `ls .rhoai-qs/ 2>/dev/null`
 - `{is_entry_point}`: always `true` for `rh-qs-discovery`
 - `{calling_skill}`: `rh-qs-discovery`
 

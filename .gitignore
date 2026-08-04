@@ -29,19 +29,20 @@ __pycache__/
 .gemini/*
 !.gemini/skills/
 
-# Generated output (blog drafts, reports, etc.)
+# Generated output (legacy convention, largely superseded by .rhoai-qs/ below)
 data/
 
-# Per-quickstart pipeline state, specs, PRDs, designs, blog drafts, reports.
-# Namespaced by slug: .rhoai-qs/<slug>/{pipeline,prds,designs,blog-drafts,reports}/
-# plus .rhoai-qs/_shared/ for cross-cutting reports (grooming, gap analysis).
+# Everything for every quickstart lives here: pipeline state, specs, PRDs,
+# designs, blog drafts, reports, AND each quickstart's own code repo (each
+# quickstart is its own separate git repo/remote, e.g. rh-ai-quickstart/<slug>,
+# set up directly inside .rhoai-qs/<slug>/ by rh-qs-scaffold via git init, not
+# git clone, since the folder already has pipeline/prds/designs/ in it before
+# scaffold runs). One single rule covers all of it — no per-slug maintenance
+# needed here. Note: the quickstart's own repo needs its OWN .gitignore entries
+# for pipeline/, prds/, designs/, blog-drafts/, reports/ so those bookkeeping
+# folders never get pushed to its public GitHub remote — see
+# docs/foundation/pipeline-convention.md.
 .rhoai-qs/
-
-# Quickstart repos nested at the factory root (each is its own separate git
-# repo/remote, e.g. rh-ai-quickstart/<slug>, cloned here by rh-qs-scaffold).
-# rh-qs-scaffold adds one explicit "/<slug>/" line below per quickstart it
-# creates, so the factory repo never tries to track their contents.
-# Example: /mortgage-processor/
 
 # Temporary files
 .tmp/

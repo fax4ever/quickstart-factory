@@ -33,7 +33,7 @@ Identify potential new AI Quickstarts by:
 
 ## Output
 
-Coverage analysis spans the whole backlog, not one quickstart, so save any report to `.rhoai-qs/_shared/reports/` (see [pipeline-convention.md](../../docs/foundation/pipeline-convention.md)) — never under a single quickstart's slug folder. If the user decides to pursue one of the proposed ideas, hand off to `rh-qs-discovery`, which will create the actual slug folder.
+Coverage analysis spans the whole backlog, not one quickstart, so save any report to the top-level `.rhoai-qs/reports/` (see [pipeline-convention.md](../../../docs/foundation/pipeline-convention.md)) — never under a single quickstart's slug folder. If the user decides to pursue one of the proposed ideas, hand off to `rh-qs-discovery`, which will create the actual slug folder.
 
 ## References
 
