@@ -8,7 +8,8 @@ This directory contains specialized subagent prompts that handle focused tasks d
 - Orchestrates the discovery workflow phases
 - Conducts the structured interview with the user
 - Reads reasoning guardrails organically while drafting (Phases 1-6)
-- Reviews subagent outputs — including the `prd-validator`'s findings — and decides what to change, using conversational context the subagents don't have
+- Reviews subagent outputs — including the `prd-griller`'s questions and the `prd-validator`'s findings — and decides what to change, using conversational context the subagents don't have
+- Runs the `prd-griller`'s question rounds directly with the user (frontier computation, presentation, and re-computation are all main-agent work — the subagent is invoked once)
 - Presents the draft PRD to the user and manages the uncapped refinement loop
 
 **Subagents** (this directory):
@@ -144,6 +145,43 @@ This directory contains specialized subagent prompts that handle focused tasks d
       "observation": "...",
       "cited_section": "ai_touchpoints",
       "recommendation": "..."
+    }
+  ]
+}
+```
+
+---
+
+### 5. prd-griller-prompt.md
+
+| Field | Description |
+|-------|-------------|
+| **Name** | `prd-griller-prompt.md` |
+| **Purpose** | Stress-test the draft PRD with tough, open-ended questions that surface contradictions, vague language, missing non-goals, and untested assumptions — complementary to `prd-validator`'s structural completeness checks, not a replacement for them |
+| **Input** | Current draft PRD content, the `backlog-matcher` output, the Phase 6 requirement mapping |
+| **Output** | Structured findings as JSON — a dependency graph of questions (each with a `recommended_answer` and `depends_on`), plus any weak spots already resolved by cross-referencing another PRD section. **Never a revised PRD** — recommendations only |
+| **When used** | Phase 6.5 (PRD Grilling) — once per PRD draft, between requirement mapping and PRD validation, and only when overall PRD coverage is medium or high |
+| **Why subagent** | Open-ended stress-testing benefits from a focused, self-contained pass, and working out the full question dependency graph in one invocation lets the main agent run multiple question rounds with the user without ever re-spawning the subagent |
+
+**Output schema:**
+
+```json
+{
+  "questions": [
+    {
+      "question_id": "q1",
+      "title": "Scanned vs. text-only documents",
+      "question": "...",
+      "recommended_answer": "...",
+      "depends_on": null,
+      "impact": "high|medium|low"
+    }
+  ],
+  "answered_by_cross_reference": [
+    {
+      "question": "...",
+      "answer_found_in_section": "user_flows",
+      "answer": "..."
     }
   ]
 }
