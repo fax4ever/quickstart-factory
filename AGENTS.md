@@ -10,7 +10,7 @@
 
 ## Greenfield pipeline
 
-For building a new quickstart end-to-end, see [docs/NEW_QUICKSTART_SKILLS.md](docs/NEW_QUICKSTART_SKILLS.md). Key rule: **`rh-qs-document` runs only after `rh-qs-verify-deploy`**. Agents do not run `oc`/`kubectl` — use Helm/Makefile targets per **`rh-qs-secure`**.
+For building a new quickstart end-to-end, see [docs/NEW_QUICKSTART_SKILLS.md](docs/NEW_QUICKSTART_SKILLS.md). Key rule: Agents do not run `oc`/`kubectl` — use Helm/Makefile targets per **`rh-qs-secure`**.
 
 Everything for a quickstart — pipeline state, PRD, design, blog drafts, reports, **and its scaffolded application code** — lives together under `.rhoai-qs/<slug>/` inside this repo. The code is still its own separate GitHub repo (cloned there by `rh-qs-scaffold`), just nested inside this folder rather than sitting next to it. See [pipeline-convention.md](docs/foundation/pipeline-convention.md). Every skill resolves which quickstart it's working on via the `validation-skill` subagent before doing anything else — see [validation-skill-template.md](docs/foundation/validation-skill-template.md).
 

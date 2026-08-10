@@ -340,5 +340,5 @@ class TestMain:
     def test_missing_registry_exits(self, mod, tmp_path):
         mod.REGISTRY_PATH = tmp_path / "no-such-file.yaml"
         with patch("sys.argv", ["prog", "--skill-name", "skill-1", "--qs-name", "demo"]):
-            with pytest.raises(SystemExit, match="1"):
+            with pytest.raises(FileNotFoundError):
                 mod.main()

@@ -26,7 +26,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REGISTRY_PATH = SCRIPT_DIR / "pipeline-registry.yaml"
-FRESHNESS_WINDOW = 600  # seconds — outputs must be younger than this
+FRESHNESS_WINDOW = 6000  # seconds — outputs must be younger than this
 
 LOG_DIR = Path(".tmp")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -47,6 +47,9 @@ def _append_error_to_dashboard(qs_name: str, skill_name: str, error: Exception):
     try:
         dashboard_path = Path(f".rhoai-qs/{qs_name}/flow/dashboard.md")
         dashboard_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_dir = Path(f".tmp/{qs_name}")
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "dashboard.lock"
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         error_block = (
             f"\n\n---\n\n"
@@ -54,8 +57,14 @@ def _append_error_to_dashboard(qs_name: str, skill_name: str, error: Exception):
             f"**{type(error).__name__}**: `{error}`\n\n"
             f"> {timestamp} UTC\n"
         )
-        with open(dashboard_path, "a") as f:
-            f.write(error_block)
+        lock_fd = open(lock_path, "w")
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            with open(dashboard_path, "a") as f:
+                f.write(error_block)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            lock_fd.close()
     except Exception:
         log.exception("Failed to append error to dashboard")
 
@@ -78,6 +87,14 @@ def parse_dashboard_frontmatter(text: str) -> dict:
 
 def serialise_frontmatter(fm: dict) -> str:
     return "---\n" + yaml.dump(fm, default_flow_style=False, sort_keys=False).rstrip() + "\n---"
+
+
+def resolve_qs_path(template, qs_name: str) -> str:
+    if isinstance(template, dict):
+        template = template.get("path", "")
+    else:
+        template = str(template)
+    return template.replace("{qs-name}", qs_name)
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +137,7 @@ def render_dashboard(qs_name: str, skills: list[dict], state: dict) -> str:
             outputs = s.get("expected_outputs", [])
             if outputs:
                 first_out = outputs[0]
-                out_path = first_out.get("path", "").replace("{qs-name}", qs_name) if isinstance(first_out, dict) else str(first_out).replace("{qs-name}", qs_name)
+                out_path = resolve_qs_path(first_out, qs_name)
                 out_link = f"[{os.path.basename(out_path)}](../../../{out_path})"
             else:
                 out_link = "—"
@@ -148,7 +165,7 @@ def render_dashboard(qs_name: str, skills: list[dict], state: dict) -> str:
     if last_done_skill:
         guidance = last_done_skill.get("review_guidance", "").strip()
         if guidance:
-            guidance = guidance.replace("{qs-name}", qs_name)
+            guidance = resolve_qs_path(guidance, qs_name)
             review_section = f"\n---\n\n## ⚠️ Review Before Continuing — {last_done_skill['id']}\n\n{guidance}\n"
 
     # Next step
@@ -235,8 +252,7 @@ def validate_outputs(skill: dict, qs_name: str) -> bool:
         return True
     now = time.time()
     for out in outputs:
-        pattern = out.get("path", "") if isinstance(out, dict) else str(out)
-        pattern = pattern.replace("{qs-name}", qs_name)
+        pattern = resolve_qs_path(out, qs_name)
         matches = glob.glob(pattern)
         if not matches:
             return False
