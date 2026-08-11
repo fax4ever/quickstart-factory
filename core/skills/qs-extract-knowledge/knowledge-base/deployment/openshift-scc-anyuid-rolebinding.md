@@ -1,7 +1,7 @@
 ---
 name: openshift-scc-anyuid-rolebinding
 description: SCC anyuid granted via RoleBinding to default and NV-Ingest service accounts for third-party containers
-summary: "Enables third-party containers (NV-Ingest, Milvus, Redis, Loki, Grafana) that hardcode UIDs or require root to run under OpenShift's restricted SCC by granting anyuid or privileged SCC to service accounts via Helm-managed RoleBindings. Approach A (dedicated RoleBinding templates in charts/ingest/templates/) suits custom subcharts you control, binding default SA and {{ .Release.Name }}-nv-ingest SA to system:openshift:scc:anyuid with a separate ingestor-server-rbac.yaml for OBC RBAC; Approach B (extraObjects in values.yaml) suits third-party charts, using Role+RoleBinding for Loki anyuid (loki/loki-canary/minio-sa SAs) and direct ClusterRole RoleBinding for Grafana privileged SCC. Approach A references system:openshift:scc:anyuid ClusterRole with SA name {{ .Release.Name }}-nv-ingest and is unconditionally created with no values toggle; Approach B embeds RBAC in extraObjects arrays using inconsistent patterns -- namespace-scoped Role for Loki vs ClusterRole reference for Grafana. Helm release name changes break the NV-Ingest SA reference in Approach A, default SA grants elevate SCC namespace-wide for all pods, Loki's extraObjects mixes RBAC with Route definitions, minio-sa refers to Loki's built-in MinIO not a separate subchart, and Grafana requires privileged SCC despite initChownData being disabled."
+summary: "Enables third-party containers (NV-Ingest, Milvus, Redis, Loki, Grafana, pgAdmin) that hardcode UIDs or require root to run under OpenShift's restricted SCC by granting anyuid or privileged SCC to service accounts via three approaches. Approach A (dedicated RoleBinding templates in custom subcharts, Helm-lifecycle-managed) suits charts you control, binding default SA and {{ .Release.Name }}-nv-ingest SA to system:openshift:scc:anyuid with a separate ingestor-server-rbac.yaml for OBC SA anyuid; Approach B (extraObjects in values.yaml) suits third-party charts, using namespace-scoped Role for Loki anyuid (loki/loki-canary/minio-sa SAs) and direct ClusterRole RoleBinding for Grafana privileged SCC; Approach C (imperative oc adm policy add-scc-to-user privileged -z pgadmin in Makefile before helm install) suits optional components needing a simple pre-step outside Helm lifecycle with a dedicated pre-created SA. Approach A references system:openshift:scc:anyuid ClusterRole unconditionally with no values toggle; Approach B embeds inconsistent patterns -- namespace-scoped Role with use verb on securitycontextconstraints (Loki) vs ClusterRole reference (Grafana) -- in extraObjects; Approach C requires fsGroup: 5050 and allowPrivilegeEscalation: true in the deployment spec and is the only non-restricted-SCC component in its quickstart. Helm release name changes break the {{ .Release.Name }}-nv-ingest SA reference, default SA grants elevate SCC namespace-wide, Loki's extraObjects mixes RBAC with Route definitions (minio-sa refers to Loki's built-in MinIO not a separate subchart), Approach C grants survive helm uninstall requiring manual cleanup with 2>/dev/null silently swallowing genuine errors, and Grafana requires privileged SCC despite initChownData being disabled."
 metadata:
   type: deployment-pattern
 tags:
@@ -16,6 +16,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
     notes: "Anyuid and privileged SCC via extraObjects in third-party chart values (Loki, Grafana)"
     approach: "B"
+  - quickstart: "data-governance-co-pilot"
+    repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
+    notes: "Privileged SCC via imperative oc CLI command in Makefile before helm install for pgAdmin"
+    approach: "C"
 ---
 
 # OpenShift SCC Anyuid via RoleBinding
@@ -172,12 +176,73 @@ grafana:
 
 ---
 
+---
+
+## Approach C: Imperative CLI SCC Grant in Makefile (from data-governance-co-pilot)
+
+### When to Use
+
+When deploying a third-party container image (e.g., pgAdmin) that requires privileged SCC and you want a simple, explicit pre-step before `helm install` rather than encoding RBAC into Helm templates or values. This approach suits optional components with dedicated service accounts where the SCC grant is a one-time prerequisite.
+
+### Differences from Approaches A and B
+
+- SCC grant is imperative (`oc adm policy add-scc-to-user`) rather than declarative (Helm-managed RBAC resources)
+- The grant happens outside Helm's lifecycle -- `helm uninstall` does not remove the SCC binding
+- Uses a pre-created dedicated service account rather than the namespace `default` SA
+
+### Makefile Pre-Create Pattern
+
+The pgadmin-install target creates the service account and grants privileged SCC before running `helm install`:
+
+```makefile
+# helm/Makefile (pgadmin-install target)
+pgadmin-install:
+	@echo "Pre-creating pgadmin service account and granting privileged SCC..."
+	@oc create serviceaccount pgadmin -n $(NAMESPACE) 2>/dev/null || echo "ServiceAccount already exists"
+	@oc adm policy add-scc-to-user privileged -z pgadmin -n $(NAMESPACE) 2>/dev/null || echo "SCC already granted"
+	@helm -n $(NAMESPACE) upgrade --install pgadmin $(PGADMIN_CHART) \
+		--set pgadmin.email=$(pgadmin.email) \
+		--set pgadmin.password=$(pgadmin.password) \
+		--timeout 5m
+```
+
+### pgAdmin Deployment Using the Service Account
+
+The Helm chart references the pre-created service account and requires both `fsGroup` and `allowPrivilegeEscalation`:
+
+```yaml
+# helm/pgadmin/templates/deployment.yaml
+spec:
+  template:
+    spec:
+      serviceAccountName: pgadmin
+      securityContext:
+        fsGroup: 5050
+      containers:
+        - name: pgadmin
+          image: dpage/pgadmin4:latest
+          securityContext:
+            allowPrivilegeEscalation: true
+            runAsUser: 5050
+```
+
+### Gotchas (Approach C)
+
+- The SCC grant survives `helm uninstall` -- the service account and its SCC binding must be manually cleaned up or handled by a separate uninstall step (the uninstall target does not remove the SCC binding, see `helm/Makefile` pgadmin-uninstall target)
+- The `2>/dev/null || echo "already exists"` pattern makes the commands idempotent but also silently swallows genuine errors
+- pgAdmin requires `privileged` SCC (not just `anyuid`) because the upstream `dpage/pgadmin4` image needs both `fsGroup: 5050` and `runAsUser: 5050` with `allowPrivilegeEscalation: true` for its Python virtual environment (see `helm/pgadmin/templates/deployment.yaml`)
+- This is the only component in the quickstart that does not use the restricted SCC -- all other custom components (copilot-backend, copilot-ui, pg-airman-mcp) explicitly set `runAsNonRoot: true` and `allowPrivilegeEscalation: false`
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A | Approach B |
-|----------|-----------|-----------|
-| SCC grant location | Dedicated RoleBinding template in chart | `extraObjects` in values.yaml |
-| When to use | Custom subcharts where you control templates | Third-party charts configured via values |
-| SCC level used | anyuid only | anyuid and privileged |
-| Role indirection | Direct ClusterRole reference | Mix of Role (Loki) and ClusterRole (Grafana) |
-| Visibility | Separate template file, easy to find | Buried in values.yaml among other config |
+| Criteria | Approach A | Approach B | Approach C |
+|----------|-----------|-----------|-----------|
+| SCC grant location | Dedicated RoleBinding template in chart | `extraObjects` in values.yaml | Imperative `oc adm policy` in Makefile |
+| When to use | Custom subcharts where you control templates | Third-party charts configured via values | Simple pre-step for optional components |
+| SCC level used | anyuid only | anyuid and privileged | privileged |
+| Role indirection | Direct ClusterRole reference | Mix of Role (Loki) and ClusterRole (Grafana) | None (direct oc adm policy) |
+| Visibility | Separate template file, easy to find | Buried in values.yaml among other config | Visible in Makefile target |
+| Lifecycle management | Managed by Helm (created/deleted with release) | Managed by Helm via extraObjects | Imperative -- survives helm uninstall |
+| Service account scope | default SA + chart-specific SA | Chart-specific SAs (loki, grafana) | Dedicated pre-created SA |

@@ -1,13 +1,13 @@
 ---
 name: agentic-app
 description: "Agent-based AI app with tool use, multi-framework runners, and orchestrated workflows on RHOAI"
-summary: "Archetype for deploying AI agents on RHOAI that reason, invoke tools via MCP protocol, and orchestrate multi-step workflows -- Approach A (ai-virtual-agent) provides a user-initiated conversational platform with pluggable multi-framework runners (LlamaStack, LangGraph, CrewAI) and configurable guardrails, while Approach B (ansible-log-analysis) provides an event-driven LangGraph pipeline triggered by Grafana alerts with nested sub-agents following a fixed domain flow (detect, classify, route, gather Loki context via MCP, remediate). Choose over rag-chatbot when AI must take actions beyond document retrieval (API calls, dynamic tool selection, multi-step reasoning) and over model-serving-app when an orchestration layer managing agent state, tool dispatch, and multi-turn reasoning wraps the served model; pick Approach A for general-purpose interactive tool use and Approach B for automated domain-specific analysis pipelines triggered by external events. Approach A stacks vLLM/LlamaStack model serving with function calling behind FastAPI managing agent lifecycle, session state, and SSE streaming, with React/PatternFly frontend, PostgreSQL/pgvector, MCP tool servers, and ingestion pipelines; Approach B uses dual OpenAI-compatible endpoints (separate for tool-calling models), Gradio UI with DeepEval annotation, FAISS RAG with HuggingFace TEI, nested sub-agents (main graph to get_more_context_agent to loki_agent), and Arize Phoenix + Grafana + Alloy observability. Medium-to-high complexity archetype requiring model serving with function calling support and a full agent orchestration layer; Approach B adds deployment complexity with its nested sub-agent topology and log management stack (Alloy, Loki, Grafana), and a simple prompt-response or document-only QA should use model-serving-app or rag-chatbot instead."
+summary: "Archetype for deploying AI agents on RHOAI that reason, invoke tools via MCP protocol, and orchestrate multi-step workflows -- Approach A (ai-virtual-agent) provides user-initiated conversational platform with pluggable multi-framework runners (LlamaStack, LangGraph, CrewAI) and configurable guardrails, Approach B (ansible-log-analysis) provides event-driven LangGraph pipeline triggered by Grafana alerts with nested sub-agents (main graph -> get_more_context_agent -> loki_agent) following fixed domain flow, and Approach C (data-governance-co-pilot) provides framework-less MCP-native agent with LLMProvider abstraction (MCPDirectProvider self-managed loop vs LlamaStackProvider delegated orchestration switchable via COPILOT_PROVIDER_MODE). Choose over rag-chatbot when AI must take actions beyond document retrieval (API calls, dynamic tool selection, multi-step reasoning) and over model-serving-app when an orchestration layer managing agent state, tool dispatch, and multi-turn reasoning wraps the served model; pick A for general-purpose interactive tool use, B for automated domain-specific analysis triggered by external events, C for domain-specific MCP-native agents needing switchable orchestration modes and hard-coded tool security with Pydantic-validated ALLOWED_TOOLS allowlist (fail-closed). A stacks vLLM/LlamaStack with function calling behind FastAPI managing agent lifecycle, session state, and SSE streaming with React/PatternFly, PostgreSQL/pgvector, and MCP tool servers; B uses dual OpenAI-compatible endpoints (separate for tool-calling models), Gradio UI with DeepEval annotation, FAISS RAG with HuggingFace TEI, and Arize Phoenix + Grafana + Alloy observability; C deploys KServe + vLLM (Nemotron Nano 9B or Qwen3-14B AWQ), auto-converts MCP tools to OpenAI function calling format, injects governance policies via REST API (/policy/upload), and renders Vega-Lite visualizations in SvelteKit. Medium-to-high complexity requiring model serving with function calling support and a full agent orchestration layer; B adds deployment complexity with nested sub-agent topology and full log management stack (Alloy collects, Loki stores, Grafana alerts); C requires MCP session reconnection with exponential backoff for pod restarts and handles dual tool calling formats (Nemotron custom TOOLCALL tags vs standard OpenAI) with auto-detection from model name; simple prompt-response or document-only QA should use model-serving-app or rag-chatbot instead."
 metadata:
   type: archetype
 tags:
-  tech_stack: [fastapi, react, patternfly, postgresql, python, gradio, langchain, langgraph]
-  ai_pattern: [agents, rag, guardrails, model-serving, embeddings, evaluation]
-  platform: [rhoai, openshift, vllm, tei]
+  tech_stack: [fastapi, react, patternfly, postgresql, python, gradio, langchain, langgraph, sveltekit, vega-lite, mcp, openai-sdk, pydantic]
+  ai_pattern: [agents, rag, guardrails, model-serving, embeddings, evaluation, tool-calling, governance]
+  platform: [rhoai, openshift, vllm, tei, kserve, llama-stack]
   data_layer: [pgvector, faiss]
 source_examples:
   - quickstart: "ai-virtual-agent"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
     notes: "Event-driven LangGraph agent pipeline for automated Ansible log analysis with MCP-based Loki querying, error classification, expert routing, and step-by-step remediation"
     approach: "B"
+  - quickstart: "data-governance-co-pilot"
+    repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
+    notes: "Framework-less MCP-native agent with provider abstraction (MCP-Direct self-managed loop vs Llama Stack delegated orchestration), pg-airman-mcp for PostgreSQL governance, hard-coded tool allowlist security, and dual model format support (Nemotron vs OpenAI)"
+    approach: "C"
 ---
 
 # Agentic App
@@ -46,6 +50,7 @@ An agentic app deploys one or more AI agents that can reason, use tools, and tak
 |------------|---------------------|
 | ai-virtual-agent | Multi-framework agent platform with pluggable runners (LlamaStack, LangGraph, CrewAI), MCP tool servers, configurable guardrails, and RAG-backed knowledge bases |
 | ansible-log-analysis | Event-driven LangGraph agent pipeline that detects Ansible errors from Grafana alerts, classifies and routes them to domain experts, retrieves additional log context via MCP-based Loki queries, and generates step-by-step remediation |
+| data-governance-co-pilot | Framework-less MCP-native agent with dual provider modes (MCP-Direct and Llama Stack), pg-airman-mcp for PostgreSQL governance tools, hard-coded tool allowlist with Pydantic validation, governance policy injection, and SvelteKit + Vega-Lite frontend |
 
 ## Decision Criteria
 
@@ -89,16 +94,46 @@ When the agentic app is triggered by external events (alerts, webhooks, log stre
 
 ---
 
+## Approach C: Framework-less MCP-Native Agent with Provider Abstraction (from data-governance-co-pilot)
+
+### When to Use
+
+When the agentic app needs direct control over the agentic loop without framework dependencies, connects to a single specialized MCP server for domain-specific tool use (e.g., database governance), and benefits from the ability to switch between a self-managed agentic loop (MCP-Direct) and a delegated orchestration mode (Llama Stack) via a provider abstraction layer.
+
+### Differences from Approach A
+
+- **Agent framework:** Approach A uses pluggable framework runners (LlamaStack, LangGraph, CrewAI); Approach C uses no agent framework in MCP-Direct mode -- the agentic loop is hand-coded in `packages/copilot/src/copilot/providers/mcp_direct.py` using the MCP SDK (`mcp.ClientSession`) and OpenAI SDK (`AsyncOpenAI`) directly, with an alternative Llama Stack provider (`packages/copilot/src/copilot/providers/llama_stack.py`) that delegates orchestration to Llama Stack's Agents API
+- **Provider abstraction:** Approach C introduces a `LLMProvider` abstract base class (`packages/copilot/src/copilot/providers/base.py`) with `MCPDirectProvider` and `LlamaStackProvider` implementations, switchable via the `COPILOT_PROVIDER_MODE` environment variable (`packages/copilot/src/copilot/providers/factory.py`); Approach A uses pluggable runners within a single framework
+- **MCP integration:** Approach A uses MCP servers as general-purpose tool providers; Approach C connects to a single specialized MCP server (EDB's `pg-airman-mcp` for PostgreSQL) via the official MCP SDK's `streamablehttp_client` transport (`packages/copilot/src/copilot/providers/mcp_direct.py` line 31), with MCP tool definitions automatically converted to OpenAI function calling format (`_convert_mcp_tools_to_openai` method)
+- **Tool security:** Approach C implements a hard-coded tool allowlist with Pydantic schema validation in `packages/copilot/src/copilot/providers/tool_validation.py` -- every tool call is validated against `ALLOWED_TOOLS` set and type-checked via Pydantic models (`ExecuteSqlArgs`, `ListObjectsArgs`, etc.) before execution, with fail-closed behavior (unknown tools are rejected even if MCP server advertises them); Approach A delegates tool validation to the framework runners
+- **Model format detection:** Approach C supports two tool calling formats -- Nemotron's custom `<TOOLCALL>` tags parsed by `_parse_nemotron_tool_calls()` and standard OpenAI function calling -- with auto-detection from model name (`_detect_tool_call_format` in `mcp_direct.py`); configurable via `LLM_TOOL_CALL_FORMAT` env var (`auto`/`nemotron`/`openai`)
+- **Governance policy:** Approach C makes data governance policy a first-class concept -- policies can be uploaded/deleted via REST API (`/policy/upload`, `/policy/status`, `/policy/delete` in `service.py`), injected into the system prompt dynamically for MCP-Direct mode (no conversation restart needed), or trigger agent recreation for Llama Stack mode (requires conversation restart per `requires_conversation_restart_on_policy_update()`)
+- **MCP session resilience:** Approach C includes MCP session reconnection logic (`_reconnect_mcp` method) and retry with exponential backoff (`_retry_mcp_operation` method) for handling pod restarts and transient failures
+- **Thinking tag handling:** Approach C handles Nemotron's `<think>` and `</think>` tags during streaming, separating LLM reasoning from user-facing content, with support for both `enable_reasoning=True` (show thinking) and `enable_reasoning=False` (silently discard via Nemotron's `/no_think` instruction)
+- **Frontend:** Approach A uses React/PatternFly; Approach C uses SvelteKit with Vega-Lite for inline data visualizations (bar charts, pie charts, line charts) generated by the LLM in `vega-lite` code blocks (`packages/copilot/src/copilot/providers/mcp_direct.py` system prompt lines 433-466)
+- **Model options:** Approach C supports two models -- NVIDIA Nemotron Nano 9B v2 (9B params, custom TOOLCALL format, MCP-Direct only) and Qwen3-14B AWQ (14B params, OpenAI function calling, both modes) -- deployed via KServe + vLLM (`helm/nemotron-model/`, `helm/qwen3-model/`)
+
+### Typical Components
+
+- **Model serving:** KServe + vLLM deploying either NVIDIA Nemotron Nano 9B v2 or Qwen3-14B AWQ; optional Llama Stack Distribution for delegated agent orchestration (`helm/copilot-llama-stack/`)
+- **Backend:** FastAPI (`packages/copilot/`) with provider abstraction layer, direct MCP SDK + OpenAI SDK agentic loop (MCP-Direct) or Llama Stack Agents API delegation, SSE streaming, tool validation allowlist
+- **Frontend:** SvelteKit (`apps/ui/`) with Vega-Lite for inline data visualizations, Markdown rendering, SQL syntax highlighting
+- **Data layer:** PostgreSQL + pgvector (`helm/pgvector/`) for the governed e-commerce loyalty dataset (not used for RAG), EDB pg-airman-mcp (`helm/pg-airman-mcp/`) for MCP-based database tools
+- **Supporting:** MinIO for object storage (`helm/minio/`), pgAdmin for database administration (`helm/pgadmin/`), Jupyter notebooks for model download and data verification (`notebooks/`)
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Conversational Agent Platform) | Approach B (Event-Driven Agent Pipeline) |
-|----------|-------------------------------------------|------------------------------------------|
-| Triggering | User-initiated conversation | External events (Grafana alerts, webhooks) |
-| Agent framework | Multi-framework (LlamaStack, LangGraph, CrewAI) | LangGraph only |
-| Agent topology | Single agent with tool access | Main graph with nested sub-agents |
-| Pipeline | Open-ended conversational tool use | Fixed domain-specific multi-step flow |
-| Model serving | Self-hosted vLLM/LlamaStack | API-only (OpenAI-compatible endpoint) |
-| Frontend | React/PatternFly | Gradio |
-| RAG | pgvector knowledge bases | FAISS cheat sheet from domain docs |
-| Observability | Not included | Arize Phoenix + Grafana + Alloy |
-| Best for | General-purpose agent with interactive tool use | Automated domain-specific analysis pipelines |
+| Criteria | Approach A (Conversational Agent Platform) | Approach B (Event-Driven Agent Pipeline) | Approach C (MCP-Native Agent with Provider Abstraction) |
+|----------|-------------------------------------------|------------------------------------------|--------------------------------------------------------|
+| Triggering | User-initiated conversation | External events (Grafana alerts, webhooks) | User-initiated conversation |
+| Agent framework | Multi-framework (LlamaStack, LangGraph, CrewAI) | LangGraph only | None (MCP-Direct) or Llama Stack (delegated) |
+| Agent topology | Single agent with tool access | Main graph with nested sub-agents | Single agent with tool allowlist |
+| Pipeline | Open-ended conversational tool use | Fixed domain-specific multi-step flow | Domain-specific conversational tool use (database governance) |
+| Model serving | Self-hosted vLLM/LlamaStack | API-only (OpenAI-compatible endpoint) | KServe + vLLM with optional Llama Stack |
+| Frontend | React/PatternFly | Gradio | SvelteKit + Vega-Lite |
+| RAG | pgvector knowledge bases | FAISS cheat sheet from domain docs | None (database accessed via MCP tools) |
+| Observability | Not included | Arize Phoenix + Grafana + Alloy | Not included |
+| Tool security | Framework-managed | Framework-managed | Hard-coded allowlist + Pydantic validation |
+| Best for | General-purpose agent with interactive tool use | Automated domain-specific analysis pipelines | Domain-specific agent with direct MCP integration and switchable orchestration modes |

@@ -1,14 +1,14 @@
 ---
 name: mcp-tool-integration
-description: MCP tool integration from multi-framework registration and discovery to single-server transport layer
-summary: "Integrates MCP tool servers into agent systems via two approaches: Approach A (ai-virtual-agent) provides multi-framework registration via LlamaStack toolgroups API (`POST /api/v1/mcp_servers/`, provider `model-context-protocol`), Kubernetes-native discovery from ToolHive MCPServer CRDs and Services labeled `app.kubernetes.io/component=mcp-server`, and four runtime paths (LlamaStack resolves `mcp::` prefixed toolgroup IDs into Responses API definitions, LangGraph ReAct uses `langchain-mcp-adapters` MultiServerMCPClient, GraphEngine calls MCP directly via JSON-RPC with deterministic non-LLM node invocation, CrewAI maps server names to hardcoded classes via `_TOOL_CLASS_BY_NAME`/`_SERVER_TOOL_NAME_HINTS`), while Approach B (ansible-log-analysis) hides MCP inside LangChain `@tool` functions as a transport layer for a single Loki server configured via `LOKI_MCP_SERVER_URL` env var with per-query httpx `MCPClient` session lifecycle and tool result caching via `_store_tool_result` returning lightweight `result_id` references. Choose Approach A for extensible multi-server platforms needing dynamic Kubernetes discovery, UI management, and multi-framework support producing `tool_call` SSE events; choose Approach B for single fixed-server integrations where MCP is invisible to the LLM, using `Mcp-Session-Id`-based sessions, `MAX_LOGS_PER_QUERY` (5000) caps, and closure-bound tool creation via `create_log_lines_above_tool`. MCP servers are registered with `mcp_endpoint={\"uri\": url}` and built with FastMCP using `transport=\"streamable-http\"`; Kubernetes discovery is namespace-scoped with transport type set by `mcp.transport` label (default streamable-http, appending `/mcp` to URL); Approach B wraps all MCP calls inside `execute_loki_query()` which creates a new `MCPClient` per invocation with JSON-RPC initialize handshake. GraphEngine maintains module-level `_MCP_SESSIONS` and `_TOOL_SCHEMAS` caches that refresh on 400/404 responses containing \"session\"; `_filter_args_to_schema` drops extra template-rendered arguments to prevent JSON-RPC -32602 (invalid params) errors; CrewAI MCP is not native and requires entries in both mapping tables for each new tool type; Approach B creates new `MCPClient` and `httpx.AsyncClient` per query with no connection pooling."
+description: MCP tool integration from multi-framework registration to transport layer to persistent validated sessions
+summary: "Integrates MCP tool servers into agent systems via three approaches: Approach A (ai-virtual-agent) provides multi-framework registration via LlamaStack toolgroups API (`POST /api/v1/mcp_servers/`, provider `model-context-protocol`), Kubernetes-native discovery from ToolHive MCPServer CRDs and Services labeled `app.kubernetes.io/component=mcp-server`, and four runtime paths (LlamaStack resolves `mcp::` prefixed toolgroup IDs, LangGraph ReAct uses `langchain-mcp-adapters` MultiServerMCPClient, GraphEngine calls MCP directly via JSON-RPC with `_MCP_SESSIONS`/`_TOOL_SCHEMAS` module-level caches refreshing on 400/404 containing \"session\" and `_filter_args_to_schema` preventing -32602 errors, CrewAI maps server names to hardcoded classes via `_TOOL_CLASS_BY_NAME`/`_SERVER_TOOL_NAME_HINTS`); Approach B (ansible-log-analysis) hides MCP inside LangChain `@tool` functions as a transport layer for a single Loki server configured via `LOKI_MCP_SERVER_URL` with per-query httpx `MCPClient` using `Mcp-Session-Id` headers, tool result caching via `_store_tool_result` returning `result_id` references, `MAX_LOGS_PER_QUERY` (5000) cap, and closure-bound tool creation via `create_log_lines_above_tool`; Approach C (data-governance-co-pilot) maintains a persistent MCP session with pg-airman-mcp using MCP SDK `streamablehttp_client`+`ClientSession` with exponential backoff (5 retries, 1-10s), converts discovered tools to OpenAI format via `_convert_mcp_tools_to_openai`, validates calls via hard-coded `ALLOWED_TOOLS` set with Pydantic `TOOL_SCHEMAS`, auto-reconnects via `_reconnect_mcp()` on 404/\"Session terminated\"/ClosedResourceError, and supports dual consumption via MCP-Direct (custom agentic loop) or Llama Stack (toolgroup `mcp::pg_airman`). Choose Approach A for extensible multi-server platforms needing dynamic Kubernetes discovery, UI management, and multi-framework support; choose Approach B for single fixed-server integrations where MCP is invisible to the LLM with per-query session lifecycle; choose Approach C for security-first single-server scenarios needing persistent sessions with auto-reconnection, tool validation allowlist, and dual-mode consumption (MCP-Direct appends `/mcp` to URL, Llama Stack appends `/sse`). MCP servers are registered with `mcp_endpoint={\"uri\": url}` and built with FastMCP using `transport=\"streamable-http\"`; Kubernetes discovery is namespace-scoped with transport type set by `mcp.transport` label (default streamable-http); Approach B wraps all MCP calls inside `execute_loki_query()` creating a new `MCPClient` per invocation with JSON-RPC initialize handshake; Approach C's `check_mcp_server_tools()` logs warnings at startup for unrecognized tools without blocking. CrewAI MCP is not native, requiring entries in both `_TOOL_CLASS_BY_NAME` and `_SERVER_TOOL_NAME_HINTS` mapping tables; Approach B creates new `MCPClient` and `httpx.AsyncClient` per query with no connection pooling; Approach C's Pydantic tool validation is only active in MCP-Direct mode -- Llama Stack bypasses it, creating a prompt injection risk; pg-airman-mcp uses `mcp_readonly` user in `restricted` access mode with `allowCommentInRestricted: false` and supports multiple replicas requiring Service-level session affinity."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, llamastack, langchain, langgraph, python, httpx]
-  ai_pattern: [agents, model-serving]
-  platform: [llamastack, rhoai, openshift, kubernetes]
-  data_layer: []
+  tech_stack: [fastapi, llamastack, langchain, langgraph, python, httpx, openai-sdk, pydantic]
+  ai_pattern: [agents, model-serving, data-governance]
+  platform: [llamastack, vllm, rhoai, openshift, kubernetes, kserve]
+  data_layer: [postgresql, pgvector]
 source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
     notes: "Custom MCP client for Loki log queries, embedded inside LangChain tools as a query transport layer within a LangGraph agent subgraph"
     approach: "B"
+  - quickstart: "data-governance-co-pilot"
+    repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
+    notes: "Persistent MCP session with pg-airman-mcp for PostgreSQL governance tools, tool validation allowlist with Pydantic schemas, dual consumption via MCP-Direct (backend agentic loop) and Llama Stack (toolgroup registration)"
+    approach: "C"
 ---
 
 # MCP Tool Integration
@@ -355,14 +359,198 @@ The Loki agent uses a system prompt loaded from `src/alm/agents/loki_agent/promp
 
 ---
 
+## Approach C: Persistent MCP Session with Tool Validation Allowlist (from data-governance-co-pilot)
+
+### When to Use
+
+Use this approach when integrating a single, known MCP server (e.g., EDB's pg-airman-mcp for PostgreSQL analysis) as the primary tool source for an AI copilot, where the MCP tools are visible to the LLM (unlike Approach B which hides MCP), security requires an application-level tool validation layer (unlike Approach A which relies on framework-managed registration), and the same MCP server must be consumed by two different provider modes (direct agentic loop vs delegated orchestration). This approach is suited for data governance scenarios where the LLM must use database tools under strict security controls.
+
+### Differences from Approach A and Approach B
+
+| Aspect | Approach A (Multi-Framework MCP) | Approach B (MCP as Transport Layer) | Approach C (Persistent Session + Validation) |
+|--------|----------------------------------|-------------------------------------|---------------------------------------------|
+| MCP server count | Multiple, dynamically registered | Single, hardcoded via env var | Single, hardcoded via env var |
+| Registration | LlamaStack toolgroups API | None | MCP-Direct: none; Llama Stack: toolgroup registration |
+| Discovery | Kubernetes MCPServer CRDs + labeled Services | None | None (known server at deploy time) |
+| Client library | LlamaStack native, langchain-mcp-adapters, httpx, CrewAI shims | Custom MCPClient using httpx | MCP SDK (`streamablehttp_client` + `ClientSession`) and LlamaStackClient |
+| Session lifecycle | Framework-managed or module-level cache | Per-query (create, use, dispose) | Persistent (startup to shutdown, with reconnection logic) |
+| Tool visibility to LLM | LLM sees MCP tools directly | MCP hidden behind LangChain tools | LLM sees tools directly (converted to OpenAI format) |
+| Tool security | Framework-managed tool registration | None | Hard-coded allowlist + Pydantic schema validation |
+| Dual consumption | Each framework has its own MCP path | Single path (LangChain tools) | Two paths: backend loop (MCP-Direct) or delegated (Llama Stack) |
+
+### Data Flow
+
+**MCP-Direct Mode (Backend-Managed):**
+
+1. On startup, `MCPDirectProvider.initialize()` connects to pg-airman-mcp via `streamablehttp_client` with retry logic (up to 5 retries with exponential backoff)
+2. MCP session sends `initialize` handshake, then discovers tools via `session.list_tools()`
+3. Discovered MCP tools are converted to OpenAI function calling format (`_convert_mcp_tools_to_openai`)
+4. `check_mcp_server_tools()` compares advertised tools against the hard-coded `ALLOWED_TOOLS` set, logging warnings for mismatches
+5. During query processing, the LLM receives tool definitions and may request tool calls
+6. Each tool call is validated: `validate_tool_name()` checks against allowlist, `validate_tool_arguments()` runs Pydantic schema validation
+7. Validated tool calls are executed via the persistent MCP session: `self.mcp_session.call_tool(tool_name, tool_args)` with 5-minute timeout and retry logic
+8. If MCP session is lost (404, "Session terminated", ClosedResourceError), `_reconnect_mcp()` creates a new session and retries
+
+**Llama Stack Mode (Delegated):**
+
+1. On startup, `LlamaStackProvider.initialize()` discovers the tool_runtime provider from Llama Stack
+2. Registers pg-airman-mcp as a toolgroup: `client.toolgroups.register(toolgroup_id="mcp::pg_airman", provider_id=..., mcp_endpoint={"uri": url})`
+3. Creates an agent with the toolgroup: `client.alpha.agents.create(agent_config={"toolgroups": ["mcp::pg_airman"], ...})`
+4. During query processing, Llama Stack handles all MCP tool execution internally via the registered toolgroup
+5. The provider receives tool_call and tool_result events from the Llama Stack streaming response
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| MCPDirectProvider | pg-airman-mcp | HTTP (MCP streamable-http via MCP SDK) | Persistent session for tool discovery and execution |
+| MCPDirectProvider | vLLM model server | HTTP (AsyncOpenAI) | LLM inference with tool definitions |
+| LlamaStackProvider | Llama Stack server | HTTP (LlamaStackClient) | Toolgroup registration + agent orchestration |
+| Llama Stack server | pg-airman-mcp | HTTP (MCP, transport from provider config) | Tool execution via registered toolgroup |
+| pg-airman-mcp | PostgreSQL | TCP (port 5432) | Read-only database queries (mcp_readonly user) |
+
+### Key Integration Points
+
+#### MCP Session Initialization with Retry
+
+The MCP-Direct provider initializes the MCP session at startup with configurable retry logic to handle pod startup order in Kubernetes.
+
+```python
+# packages/copilot/src/copilot/providers/mcp_direct.py (lines 208-234)
+async def initialize(self) -> None:
+    async def connect_to_mcp():
+        self._mcp_client_context = streamablehttp_client(self.mcp_server_url)
+        self._mcp_read, self._mcp_write, _ = await self._mcp_client_context.__aenter__()
+        self._mcp_session_context = ClientSession(self._mcp_read, self._mcp_write)
+        self.mcp_session = await self._mcp_session_context.__aenter__()
+        await self.mcp_session.initialize()
+        tools_response = await self.mcp_session.list_tools()
+        return tools_response
+
+    tools_response = await self._retry_mcp_operation(
+        connect_to_mcp, "connection", max_retries=5  # Up to ~31 seconds
+    )
+    self.mcp_tools = self._convert_mcp_tools_to_openai(tools_response.tools)
+    advertised_tool_names = [tool["function"]["name"] for tool in self.mcp_tools]
+    check_mcp_server_tools(advertised_tool_names)
+```
+
+#### MCP Tool Conversion to OpenAI Format
+
+MCP tool definitions are converted to OpenAI function calling format so the LLM can select tools regardless of whether it uses Nemotron or OpenAI calling conventions.
+
+```python
+# packages/copilot/src/copilot/providers/mcp_direct.py (lines 243-266)
+def _convert_mcp_tools_to_openai(self, mcp_tools) -> list[dict[str, Any]]:
+    openai_tools = []
+    for tool in mcp_tools:
+        openai_tool = {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": tool.inputSchema if hasattr(tool, 'inputSchema') else {
+                    "type": "object", "properties": {}
+                }
+            }
+        }
+        openai_tools.append(openai_tool)
+    return openai_tools
+```
+
+#### Tool Allowlist and Schema Validation
+
+A hard-coded allowlist with Pydantic schemas provides defense-in-depth against prompt injection attacks that attempt to coerce the LLM into calling unauthorized tools.
+
+```python
+# packages/copilot/src/copilot/providers/tool_validation.py (lines 26-107)
+class ExecuteSqlArgs(BaseModel):
+    sql: str = Field(default="all", description="SQL to run")
+
+class ExplainQueryArgs(BaseModel):
+    sql: str = Field(..., description="SQL query to explain")
+    analyze: bool = Field(default=False, description="...")
+    hypothetical_indexes: list[dict[str, Any]] = Field(default=[], description="...")
+
+TOOL_SCHEMAS: Dict[str, type[BaseModel]] = {
+    "execute_sql": ExecuteSqlArgs,
+    "list_schemas": ListSchemasArgs,
+    "list_objects": ListObjectsArgs,
+    "get_object_details": GetObjectDetailsArgs,
+    "explain_query": ExplainQueryArgs,
+    "add_comment_to_object": AddCommentToObjectArgs,
+    "analyze_workload_indexes": AnalyzeWorkloadIndexesArgs,
+    "analyze_query_indexes": AnalyzeQueryIndexesArgs,
+    "analyze_db_health": AnalyzeDbHealthArgs,
+    "get_top_queries": GetTopQueriesArgs,
+}
+ALLOWED_TOOLS: Set[str] = set(TOOL_SCHEMAS.keys())
+```
+
+#### MCP Session Reconnection
+
+The provider detects session failures during tool execution and automatically reconnects, creating a new MCP session.
+
+```python
+# packages/copilot/src/copilot/providers/mcp_direct.py (lines 954-968)
+except Exception as e:
+    error_msg = str(e)
+    error_type = type(e).__name__
+    if "Session terminated" in error_msg or "404" in error_msg or "ClosedResourceError" in error_type:
+        logger.warning(f"MCP session terminated, attempting to reconnect and retry {tool_name}...")
+        try:
+            await self._reconnect_mcp()  # Calls initialize() to create new session
+            tool_result = await asyncio.wait_for(
+                self.mcp_session.call_tool(tool_name, tool_args),
+                timeout=300.0
+            )
+        except Exception as reconnect_error:
+            tool_result = {"error": f"Tool '{tool_name}' failed after reconnection: {str(reconnect_error)}"}
+```
+
+#### MCP Server Security Configuration
+
+pg-airman-mcp runs in `restricted` access mode with a read-only PostgreSQL user, providing database-level defense-in-depth alongside the application-level tool validation.
+
+```yaml
+# helm/pg-airman-mcp/values.yaml (lines 5-18)
+postgres:
+  host: pgvector-0.pgvector-postgres-service
+  port: 5432
+  user: mcp_readonly  # Read-only user created by load_data.py
+mcp:
+  accessMode: restricted  # Read-only, suitable for production
+  allowCommentInRestricted: false
+  transport: streamable-http
+  port: 8000
+```
+
+### Prompt / Chain Patterns
+
+MCP tools are presented to the LLM as standard function definitions. The LLM selects tools based on the user's query and the tool descriptions discovered from the MCP server. In MCP-Direct mode, the system prompt includes explicit tool-specific guidelines (e.g., "explain_query: Pass ONLY the SELECT query, always use analyze=false"). In Llama Stack mode, the prompt adds Llama Stack-specific tool calling rules ("use empty braces {} for no-parameter calls", "only ONE tool call at a time").
+
+### Gotchas
+
+- The MCP-Direct provider appends `"/mcp"` to the configured URL (line 114 of `mcp_direct.py`) for streamable-http transport, while the Llama Stack provider appends `"/sse"` (line 103 of `llama_stack.py`) for SSE transport fallback. If the Llama Stack server's tool_runtime provider already has the MCP endpoint configured, the SSE fallback is not used.
+- Tool validation via the allowlist and Pydantic schemas is only active in MCP-Direct mode. The Llama Stack mode delegates tool execution entirely to Llama Stack, which does not perform equivalent validation. This means a prompt injection attack could potentially call unauthorized tools when running in Llama Stack mode.
+- The persistent MCP session uses the MCP SDK's `streamablehttp_client` and `ClientSession` context managers, but stores the context managers as instance attributes (lines 214-218 of `mcp_direct.py`) rather than using `async with` blocks. This is necessary to keep the connection alive across requests, but cleanup depends on the application shutdown handler calling `__aexit__` manually (lines 1025-1032).
+- `check_mcp_server_tools()` (lines 206-239 of `tool_validation.py`) runs at startup and only logs warnings when the MCP server advertises tools not in the allowlist. It does not block startup or remove the unknown tools -- they are rejected at call time by `validate_tool_name()`.
+- pg-airman-mcp uses a read-only PostgreSQL user (`mcp_readonly`) for defense-in-depth. Even if the tool validation is bypassed, the database user cannot modify data or schema. The `accessMode: restricted` configuration (line 14 of `pg-airman-mcp/values.yaml`) blocks `EXPLAIN ANALYZE` -- the system prompt instructs the LLM to always use `analyze=false`.
+- The `_retry_mcp_operation` method (lines 156-206 of `mcp_direct.py`) uses exponential backoff (1s, 2s, 4s, 8s, 10s max) and is used both for initial connection (5 retries) and tool calls (2 retries). This handles Kubernetes pod startup ordering where pg-airman-mcp may not be ready when the backend starts.
+- The pg-airman-mcp Helm chart supports multiple replicas (`replicas: 2` in `pg-airman-mcp/values.yaml`) but the MCP-Direct provider maintains a single persistent session to one pod. Session affinity is noted in the Helm chart comments but must be configured at the Kubernetes Service level.
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Multi-Framework MCP) | Approach B (MCP as Transport Layer) |
-|----------|----------------------------------|-------------------------------------|
-| Number of MCP servers | Multiple, dynamically added | Single, known at deploy time |
-| Registration/discovery | LlamaStack API + Kubernetes CRDs/Services | Environment variable only |
-| Agent framework | Multiple (LlamaStack, LangGraph, CrewAI) | LangChain tools inside LangGraph |
-| MCP visibility to LLM | LLM sees MCP tools directly | MCP hidden behind LangChain tools |
-| Session management | Framework-managed or cached at module level | Per-query (create, use, dispose) |
-| Use case | Extensible tool platform with UI management | Fixed integration with specific backend service |
-| Complexity | Higher (registration API, discovery, multi-framework) | Lower (single client, single server, no management layer) |
+| Criteria | Approach A (Multi-Framework MCP) | Approach B (MCP as Transport Layer) | Approach C (Persistent Session + Validation) |
+|----------|----------------------------------|-------------------------------------|---------------------------------------------|
+| Number of MCP servers | Multiple, dynamically added | Single, known at deploy time | Single, known at deploy time |
+| Registration/discovery | LlamaStack API + Kubernetes CRDs/Services | Environment variable only | Env var (MCP-Direct) or toolgroup registration (Llama Stack) |
+| Agent framework | Multiple (LlamaStack, LangGraph, CrewAI) | LangChain tools inside LangGraph | MCP-Direct (custom loop) or Llama Stack (delegated) |
+| MCP visibility to LLM | LLM sees MCP tools directly | MCP hidden behind LangChain tools | LLM sees MCP tools directly (converted to OpenAI format) |
+| Session management | Framework-managed or cached at module level | Per-query (create, use, dispose) | Persistent (startup to shutdown) with auto-reconnection |
+| Tool security | Framework-managed registration | None | Hard-coded allowlist + Pydantic schema validation |
+| MCP client library | Various (LlamaStack native, langchain-mcp-adapters, httpx, CrewAI shims) | Custom MCPClient (httpx) | MCP SDK (streamablehttp_client + ClientSession) |
+| Use case | Extensible tool platform with UI management | Fixed integration with specific backend service | Data governance copilot with security-first tool access |
+| Complexity | Higher (registration API, discovery, multi-framework) | Lower (single client, single server, no management layer) | Moderate (persistent session, validation layer, dual provider) |

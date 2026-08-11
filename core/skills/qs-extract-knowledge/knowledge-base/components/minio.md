@@ -1,13 +1,13 @@
 ---
 name: minio
 description: "S3-compatible object storage for file attachments, optional via compose profiles and feature flags"
-summary: "MinIO (quay.io/minio/minio:latest) provides S3-compatible object storage for quickstarts, handling chat attachment uploads (Approach A) or serving as shared infrastructure for RAG index persistence, ML model storage, Loki log backend, and document seeding (Approach B). Use Approach A (boto3, configure-pipeline subchart v0.5.6, ATTACHMENTS_BUCKET_* env vars) when MinIO is a single-purpose optional service gated by compose `attachments` profile and inverted DISABLE_ATTACHMENTS flag; use Approach B (minio Python SDK >=7.2.17, standalone minio subchart v0.1.0 as StatefulSet with 50Gi PVC, MINIO_* env vars with shared K8s Secret) when MinIO is always-on with multiple consumers (backend, clustering, rag, Loki). Approach A uses lazy _get_s3() with module-level globals and auto-bucket via head_bucket/create_bucket storing attachments under session-scoped keys ({session_id}/{attachment_id}{ext}); Approach B uses centralized get_minio_client() factory (secure=False hardcoded, config priority: params > env vars > defaults), LATEST.json pointer tracking RAG index status (BUILDING/READY/FAILED), joblib serialization for ML model storage, and OpenShift Routes with TLS edge termination. The start-dev.sh script bridges ENABLE_ATTACHMENTS to the inverted DISABLE_ATTACHMENTS flag, compose backend must declare MinIO with `required: false` to avoid blocking startup, Loki deploys its own separate MinIO with anyuid SCC for minio-sa, the minio subchart is packaged as .tgz requiring extraction to inspect templates, clustering model_loader.py duplicates client logic bypassing the shared factory, and session-scoped authorization remains unimplemented (TODO)."
+summary: "MinIO (quay.io/minio/minio:latest) provides S3-compatible object storage for quickstarts, handling chat attachment uploads (Approach A), serving as shared infrastructure for RAG index persistence, ML model storage, Loki log backend, and document seeding (Approach B), or providing infrastructure-only S3 storage with automated bucket provisioning and ODH dashboard integration (Approach C). Use Approach A (boto3, configure-pipeline subchart v0.5.6, ATTACHMENTS_BUCKET_* env vars) when MinIO is a single-purpose optional service gated by compose `attachments` profile and inverted DISABLE_ATTACHMENTS flag; use Approach B (minio Python SDK >=7.2.17, standalone minio subchart v0.1.0 as StatefulSet with 50Gi PVC, MINIO_* env vars with shared K8s Secret) when MinIO is always-on with multiple consumers (backend, clustering, rag, Loki); use Approach C (in-repo helm/minio/ chart as Deployment with 100Gi PVC, Makefile DEPLOY_MINIO flag, post-install minio/mc bucket Job, opendatahub.io/dashboard: 'true' labels) when MinIO is infrastructure-only with no Python SDK integration. Approach A uses lazy _get_s3() with module-level globals and auto-bucket via head_bucket/create_bucket storing attachments under session-scoped keys ({session_id}/{attachment_id}{ext}); Approach B uses centralized get_minio_client() factory (secure=False hardcoded, config priority: params > env vars > defaults), LATEST.json pointer tracking RAG index status (BUILDING/READY/FAILED), joblib serialization for ML model storage, and OpenShift Routes with TLS edge termination; Approach C uses Helm post-install hook Job with minio/mc:latest CLI connecting via in-cluster DNS (backoffLimit: 3, hook-delete-policy: hook-succeeded) and Makefile credential validation enforcing minimum length requirements. The start-dev.sh script bridges ENABLE_ATTACHMENTS to the inverted DISABLE_ATTACHMENTS flag, compose backend must declare MinIO with `required: false` to avoid blocking startup, Loki deploys its own separate MinIO with anyuid SCC for minio-sa, the minio subchart is packaged as .tgz requiring extraction to inspect templates, Approach C's Secret template is noted as not production-hardened (should use ExternalSecret/Vault), the post-install bucket Job has no explicit wait-for-ready logic, clustering model_loader.py duplicates client logic bypassing the shared factory, and session-scoped authorization remains unimplemented (TODO)."
 metadata:
   type: component
 tags:
-  tech_stack: [minio, python, boto3, fastapi, joblib, faiss]
-  ai_pattern: [rag, embeddings, vector-search]
-  platform: [openshift, rhoai]
+  tech_stack: [minio, python, boto3, fastapi, joblib, faiss, helm]
+  ai_pattern: [rag, embeddings, vector-search, data-pipeline]
+  platform: [openshift, rhoai, opendatahub]
   data_layer: [minio]
 source_examples:
   - quickstart: "ai-virtual-agent"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
     notes: "Multi-purpose MinIO as StatefulSet for RAG index persistence, ML model storage, Loki backend, and sample doc upload"
     approach: "B"
+  - quickstart: "data-governance-co-pilot"
+    repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
+    notes: "Optional MinIO Deployment with in-repo Helm chart, post-install bucket Job, ODH dashboard labels, Makefile-gated install"
+    approach: "C"
 ---
 
 # MinIO
@@ -454,15 +458,232 @@ Two OpenShift Routes are created for external access: one for the API (port 9000
 
 ---
 
+## Approach C: In-Repo Helm Deployment with Post-Install Bucket Job (from data-governance-co-pilot)
+
+### When to Use
+
+When MinIO is an optional infrastructure component deployed via a self-contained Helm chart checked into the repo (not from ai-architecture-charts). This approach is suited for quickstarts that need S3-compatible storage but do not require Python SDK integration -- MinIO is purely infrastructure provisioned through Helm with bucket creation automated via a post-install hook Job.
+
+### Differences from Approach A and B
+
+- **Deployment kind:** Kubernetes Deployment with a separate PVC (not StatefulSet with VolumeClaimTemplate like B, not configure-pipeline subchart like A)
+- **Chart source:** In-repo standalone Helm chart at `helm/minio/` -- not packaged from ai-architecture-charts
+- **Optionality:** Gated by Makefile `DEPLOY_MINIO` flag (default `false`) with credential validation -- not compose profiles/feature flags (A) or always-on (B)
+- **Bucket creation:** Helm `post-install` hook Job using `minio/mc:latest` CLI, not Python SDK auto-create
+- **ODH integration:** Secret and ConfigMap carry `opendatahub.io/dashboard: 'true'` label for Open Data Hub dashboard visibility
+- **No Python SDK:** No code-level MinIO client -- purely infrastructure
+
+### Tech Stack & Dependencies
+- **Runtime:** MinIO server (S3-compatible API)
+- **Container image:** `quay.io/minio/minio:latest`
+- **Bucket init image:** `minio/mc:latest`
+- **Key dependencies:** None at application level -- MinIO is infrastructure-only
+- **Helm chart:** In-repo `helm/minio/` chart (v0.1.0, application type)
+
+### Key Patterns
+
+#### Deployment with Separate PVC
+
+MinIO runs as a single-replica Deployment with a Recreate strategy. Storage is a separate 100Gi PVC mounted with a subPath, and explicit resource limits and health probes are defined.
+
+```yaml
+# helm/minio/templates/deployment.yaml (lines 1-30, 60-78)
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: minio
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  template:
+    spec:
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-pvc
+      containers:
+        - name: minio
+          image: 'quay.io/minio/minio:latest'
+          resources:
+            limits:
+              cpu: 250m
+              memory: 1Gi
+            requests:
+              cpu: 20m
+              memory: 100Mi
+          readinessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /data
+              subPath: minio
+          args:
+            - server
+            - /data
+            - '--console-address'
+            - ':9090'
+```
+
+#### Post-Install Bucket Creation Job
+
+A Helm post-install hook Job uses the `minio/mc` CLI to create the default bucket after the MinIO pod is ready. The Job uses `helm.sh/hook-delete-policy: hook-succeeded` for automatic cleanup.
+
+```yaml
+# helm/minio/templates/create-bucket.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: create-bucket
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: create-bucket
+        image: minio/mc:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            mc alias set minio http://minio-service.{{.Release.Namespace}}.svc.cluster.local:9000 \
+              "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}" --api S3v4;
+            mc mb --ignore-existing minio/${MINIO_DEFAULT_BUCKET};
+  backoffLimit: 3
+```
+
+#### ODH Dashboard-Labeled Secret and ConfigMap
+
+The Secret and ConfigMap carry the `opendatahub.io/dashboard: 'true'` label, making them visible in the Open Data Hub / RHOAI dashboard. The Secret template comment explicitly notes it should be replaced with ExternalSecret for production.
+
+```yaml
+# helm/minio/templates/secrets.yaml
+kind: Secret #Should be replaced with ExternalSecret and use a cloud-based solution or something like Vault
+apiVersion: v1
+metadata:
+  name: minio-secret
+  labels:
+    opendatahub.io/dashboard: 'true'
+data:
+  MINIO_ROOT_PASSWORD: {{ .Values.minio.password | b64enc | quote}}
+  MINIO_ROOT_USER: {{ .Values.minio.userId | b64enc | quote }}
+```
+
+```yaml
+# helm/minio/templates/config-map.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: minio-config
+  labels:
+    opendatahub.io/dashboard: 'true'
+data:
+  DEFAULT_BUCKET: copilot
+  DEFAULT_REGION: us-east-1
+```
+
+#### Makefile-Gated Install with Credential Validation
+
+The Makefile defaults `DEPLOY_MINIO` to `false` and enforces minimum length requirements on credentials before allowing installation.
+
+```makefile
+# helm/Makefile (lines 33, 157-172, 295-306)
+DEPLOY_MINIO ?= false
+
+check-minio-credentials:
+	@if [ -z "$(minio.userId)" ]; then \
+		echo "Set minio.userId to a value that is at least $(MINIMUM_USERID_LENGTH) characters in length."; \
+		exit 1; fi
+	@if [ -z "$(minio.password)" ]; then \
+		echo "Set minio.password to a value that is at least $(MINIMUM_PASSWORD_LENGTH) characters in length."; \
+		exit 1; fi
+
+minio-install:
+	@helm -n $(NAMESPACE) upgrade --install minio $(MINIO_CHART) \
+		--set minio.userId=$(minio.userId) \
+		--set minio.password=$(minio.password) \
+		--timeout 5m
+	@oc wait pod -l app=minio -n $(NAMESPACE) --for=condition=Ready --timeout=60s
+```
+
+#### OpenShift Routes with TLS Edge Termination
+
+Two routes expose the MinIO API and console UI externally with TLS edge termination, similar to Approach B.
+
+```yaml
+# helm/minio/templates/routes.yaml
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: minio-ui
+spec:
+  to:
+    kind: Service
+    name: minio-service
+  port:
+    targetPort: ui
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+```
+
+### Configuration
+- **Environment variables (container):**
+  - `MINIO_ROOT_USER` -- server root user from `minio-secret` Secret
+  - `MINIO_ROOT_PASSWORD` -- server root password from `minio-secret` Secret
+- **ConfigMap (`minio-config`):**
+  - `DEFAULT_BUCKET` -- bucket name created by the post-install Job (value: `copilot`)
+  - `DEFAULT_REGION` -- AWS region setting (value: `us-east-1`)
+- **Helm values:**
+  - `minio.userId` -- MinIO root user (required, passed at install time via Makefile)
+  - `minio.password` -- MinIO root password (required, passed at install time via Makefile)
+- **Makefile parameters:**
+  - `DEPLOY_MINIO` -- set to `true` to include MinIO in the install target (default: `false`)
+  - `minio.userId` -- forwarded to Helm `--set` (min 3 characters enforced)
+  - `minio.password` -- forwarded to Helm `--set` (min 8 characters enforced)
+
+### Known Gotchas
+- The Secret template contains a code comment (`#Should be replaced with ExternalSecret and use a cloud-based solution or something like Vault`) indicating this is not production-hardened -- the credentials are plain Helm values base64-encoded into a Secret.
+- The PVC requests 100Gi with `ReadWriteOnce` access mode and no storageClassName, relying on the cluster's default StorageClass. This differs from Approach B's 50Gi VolumeClaimTemplate.
+- The post-install bucket creation Job uses `minio/mc:latest` and connects to MinIO via the in-cluster service DNS (`minio-service.{{.Release.Namespace}}.svc.cluster.local:9000`). If MinIO is slow to start, the Job may fail and retry up to 3 times (`backoffLimit: 3`) -- there is no explicit wait-for-ready logic in the Job itself.
+- The Deployment uses `securityContext: {}` (empty), which means it inherits the namespace's default security context. No explicit SCC binding is created, unlike Approach B's Loki MinIO which requires `anyuid`.
+- The `volumeMount` uses `subPath: minio` meaning data is stored in a subdirectory of the PVC rather than at the root, allowing the PVC to potentially be shared with other subPath mounts.
+- The Makefile `minio-uninstall` target attempts to delete PVCs matching `minio-data` pattern, but the actual PVC is named `minio-pvc` -- this pattern may not match correctly.
+
+### Testing Notes
+- Verify MinIO health via readiness probe: `oc wait pod -l app=minio --for=condition=Ready`
+- Check that the post-install Job completed: `oc get jobs create-bucket` (should show `1/1` completions)
+- Verify the default bucket exists via the MinIO console route (`minio-ui`)
+- Confirm ODH dashboard visibility by checking for resources with `opendatahub.io/dashboard: 'true'` label
+
+### Related Patterns
+- Deployment: Helm post-install hook Jobs for initialization
+- Deployment: Makefile-gated optional components with credential validation
+- Architecture: ODH/RHOAI dashboard integration via resource labels
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) |
-|----------|-------------------------------|-----------------------------------|
-| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage |
-| Python SDK | boto3 / botocore | minio (>=7.2.17) |
-| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) |
-| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency |
-| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) |
-| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef |
-| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination |
-| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) |
+|----------|-------------------------------|-----------------------------------|---------------------------------------|
+| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) |
+| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client |
+| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) |
+| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag |
+| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart |
+| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label |
+| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination |
+| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) |
+| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI |
+| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) |
+| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) |

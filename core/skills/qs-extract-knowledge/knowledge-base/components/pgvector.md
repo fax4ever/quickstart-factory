@@ -1,13 +1,13 @@
 ---
 name: pgvector
 description: "PostgreSQL with pgvector extension for relational data and vector search in AI Quickstarts on RHOAI"
-summary: "pgvector serves as combined relational store (SQLAlchemy/Alembic with asyncpg driver, UUID primary keys via sqlalchemy.dialects.postgresql) and LlamaStack vector_io provider (provider_id: \"pgvector\", embedding_model: \"all-MiniLM-L6-v2\" in agent templates) for RHOAI quickstarts needing both structured application state and RAG vector search. Use Approach A (ai-virtual-agent) when a single service needs vector search plus relational data with LlamaStack managing vector operations (extraDatabases vectordb: false, DATABASE_URL assembled from pgSecret keys); use Approach B (ansible-log-analysis) when multiple services (backend, annotation-interface, phoenix) share one PostgreSQL as relational store with pre-built URI secret key, ConfigMap init scripts running CREATE EXTENSION VECTOR, SQLModel.metadata.create_all instead of Alembic, psycopg2 sync driver swap for non-async consumers, and embeddings stored externally in MinIO. Deployed as Helm subchart from ai-architecture-charts (v0.5.5 for A, v0.1.0 bundled for B) with credentials via install_with_env.sh --set flags; Approach A Alembic rewrites postgresql+asyncpg:// to synchronous postgresql:// with expire_on_commit=False sessions; Approach B secret embeds namespace-qualified DNS in pre-built uri and pg_isready init containers gate startup. Common gotchas: Settings.DATABASE_URL defaults to sqlite+aiosqlite:///:memory: causing silent SQLite fallback if env var missing; local dev compose uses postgres:15 without pgvector extension (need pgvector/pgvector:pg15 or pg17); Approach B chained .replace() URL normalization is fragile if URI already contains \"postgresql+asyncpg://\"; deployment template fails if extraDatabases is empty or reordered; SQLModel.metadata.create_all has no migration framework so schema changes require table drops."
+summary: "pgvector serves as combined relational store (SQLAlchemy/Alembic with asyncpg driver, UUID primary keys via sqlalchemy.dialects.postgresql) and LlamaStack vector_io provider (provider_id: \"pgvector\", embedding_model: \"all-MiniLM-L6-v2\") or standalone data-governance database for RHOAI quickstarts needing structured application state, RAG vector search, or curated data views with MCP read-only access. Use Approach A (ai-virtual-agent) when a single service needs vector search plus relational data with LlamaStack managing vector operations (extraDatabases vectordb: false, DATABASE_URL assembled from pgSecret keys); Approach B (ansible-log-analysis) when multiple services (backend, annotation-interface, phoenix) share one PostgreSQL as relational store with pre-built namespace-qualified URI secret, SQLModel.metadata.create_all instead of Alembic, psycopg2 sync driver swap for non-async consumers, ConfigMap init CREATE EXTENSION VECTOR, and embeddings stored in MinIO; Approach C (data-governance-co-pilot) when deploying standalone Helm chart with quay.io/rh-aiservices-bu Red Hat image, Helm post-install Job seeding ~45MB CSV via OpenShift BuildConfig (bypassing ConfigMap 3MB limit), mcp_readonly SELECT-only user for MCP defense-in-depth, CERTIFIED/DEPRECATED governance views, and raw psycopg2 with no ORM. Deployed as ai-architecture-charts subchart (v0.5.5 for A, v0.1.0 bundled for B) or standalone chart (C); A's Alembic rewrites postgresql+asyncpg:// to synchronous postgresql:// with expire_on_commit=False; B's secret embeds Release.Namespace in URI and pg_isready init containers gate startup; C's data loader connects via pod DNS (pgvector-0) assuming single replica. Common gotchas: Settings.DATABASE_URL defaults to sqlite+aiosqlite:///:memory: causing silent SQLite fallback; local dev postgres:15 lacks pgvector extension (need pgvector/pgvector:pg15 or pg17); B's chained .replace() URL normalization fragile if URI already contains \"postgresql+asyncpg://\"; A's deployment template fails if extraDatabases empty or reordered; C's readonlyPassword appears plaintext in rendered Job manifest, mcp_readonly grants don't auto-apply to future tables, and values.yaml placeholder strings cause broken deployments if --set flags omitted."
 metadata:
   type: component
 tags:
-  tech_stack: [postgresql, fastapi, sqlalchemy, sqlmodel, alembic, asyncpg, psycopg2, gradio]
-  ai_pattern: [vector-search, rag, embeddings]
-  platform: [openshift, rhoai]
+  tech_stack: [postgresql, fastapi, sqlalchemy, sqlmodel, alembic, asyncpg, psycopg2, gradio, pandas]
+  ai_pattern: [vector-search, rag, embeddings, data-pipeline]
+  platform: [openshift, rhoai, kserve]
   data_layer: [pgvector]
 source_examples:
   - quickstart: "ai-virtual-agent"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
     notes: "PostgreSQL as shared relational store for multiple services (backend, annotation-interface, phoenix); vector extension enabled but embeddings stored in MinIO"
     approach: "B"
+  - quickstart: "data-governance-co-pilot"
+    repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
+    notes: "Standalone pgvector Helm chart with StatefulSet, post-install data loader Job via OpenShift BuildConfig, read-only MCP user, and data governance views"
+    approach: "C"
 ---
 
 # pgvector
@@ -362,17 +366,228 @@ readinessProbe:
 
 ---
 
+## Approach C: Standalone Chart with Data Loader Job and MCP Read-Only User (from data-governance-co-pilot)
+
+### When to Use
+
+When PostgreSQL with pgvector is deployed as a standalone Helm chart (not an ai-architecture-charts subchart) that needs to load large seed datasets (exceeding ConfigMap 3MB limits) and expose a read-only database user for MCP server access with defense-in-depth security. Use this approach when the quickstart focuses on data governance patterns with curated views (CERTIFIED/DEPRECATED) and structured relational data rather than vector search.
+
+### Differences from Approach A
+
+- **Standalone Helm chart:** Has its own `Chart.yaml`, templates directory, and `values.yaml` -- not pulled as a dependency from `ai-architecture-charts`.
+- **Different container image:** Uses `quay.io/rh-aiservices-bu/postgresql-15-pgvector-c9s:latest` (Red Hat-published image with pgvector baked in) rather than the `pgvector/pgvector` community image.
+- **Data loader Job pattern:** A Kubernetes Job runs as a Helm post-install hook to seed the database with CSV data via a custom container image built through OpenShift BuildConfig, bypassing ConfigMap size limits.
+- **Read-only MCP user:** Creates a `mcp_readonly` PostgreSQL user with SELECT-only grants for defense-in-depth when an MCP server connects to the database.
+- **No ORM or migrations:** Schema is created via raw SQL in a Python data loader script using `psycopg2` directly -- no SQLAlchemy, SQLModel, or Alembic.
+- **Data governance views:** Creates CERTIFIED and DEPRECATED views with table/view comments indicating PII classifications and deprecation status.
+
+### StatefulSet with PVC and Headless Service
+
+The pgvector database is deployed as a StatefulSet with a 20Gi PersistentVolumeClaim and a headless Service for stable pod DNS. The init script is mounted from a ConfigMap to enable the vector extension at startup.
+
+```yaml
+# helm/pgvector/templates/stateful-set.yaml
+spec:
+  serviceName: pgvector-postgres-service
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: pgvector
+          image: quay.io/rh-aiservices-bu/postgresql-15-pgvector-c9s:latest
+          env:
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: vector-database
+                  key: DATABASE_USER
+          volumeMounts:
+            - name: pgvector-data
+              mountPath: /var/lib/pgsql/data
+            - name: init-script
+              mountPath: /opt/app-root/src/postgresql-start/
+  volumeClaimTemplates:
+    - metadata:
+        name: pgvector-data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 20Gi
+```
+
+### ConfigMap Init Script for Extension Creation
+
+The vector extension is enabled via a ConfigMap-mounted shell script placed at `/opt/app-root/src/postgresql-start/`. The script waits for PostgreSQL readiness and creates the database if it does not exist before enabling the extension.
+
+```bash
+# helm/pgvector/templates/config-map.yaml (init-vector.sh)
+until pg_isready -U "$POSTGRESQL_USER" -d postgres -q; do
+  echo "Waiting for PostgreSQL to start..."
+  sleep 1
+done
+if ! psql -U "$POSTGRESQL_USER" -d postgres -lqt | cut -d \| -f 1 | grep -qw "$POSTGRESQL_DATABASE"; then
+  psql -U "$POSTGRESQL_USER" -d postgres -c "CREATE DATABASE $POSTGRESQL_DATABASE;"
+fi
+psql -v ON_ERROR_STOP=1 --username "$POSTGRESQL_USER" --dbname "$POSTGRESQL_DATABASE" <<-EOSQL
+  CREATE EXTENSION IF NOT EXISTS vector CASCADE;
+EOSQL
+```
+
+### Data Loader Job as Helm Post-Install Hook
+
+A Kubernetes Job loads CSV data into PostgreSQL after chart installation. The Job uses Helm hook annotations to run after install/upgrade, with automatic cleanup before re-creation. The data loader image is either pulled from Quay or built on-cluster via OpenShift BuildConfig.
+
+```yaml
+# helm/pgvector/templates/data-loader-job.yaml
+metadata:
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+  template:
+    spec:
+      containers:
+        - name: data-loader
+          image: {{ .Values.dataLoader.image | default (printf "image-registry.openshift-image-registry.svc:5000/%s/pgvector-data-loader:latest" .Release.Namespace) }}
+          env:
+            - name: POSTGRES_HOST
+              value: "pgvector-0.pgvector-postgres-service.{{ .Release.Namespace }}.svc.cluster.local"
+```
+
+### OpenShift Binary Build for Large Datasets
+
+Because CSV data exceeds the ConfigMap 3MB limit (~45MB), a Binary Build strategy uploads the data directory to OpenShift which builds the data loader container image in the cluster's internal registry.
+
+```yaml
+# helm/pgvector/buildconfig.yaml
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: pgvector-data-loader
+spec:
+  output:
+    to:
+      kind: ImageStreamTag
+      name: pgvector-data-loader:latest
+  source:
+    type: Binary
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile.data-loader
+```
+
+### Read-Only User for MCP Server Security
+
+The data loader script creates a `mcp_readonly` PostgreSQL user with SELECT-only grants, providing defense-in-depth when an MCP server connects to the database. The script checks for existing users to support idempotent re-runs.
+
+```python
+# helm/pgvector/scripts/load_data.py
+def create_readonly_user(conn, readonly_password):
+    """
+    Create read-only database user for MCP server.
+    Purpose: Defense-in-depth security - limits blast radius if MCP server is compromised.
+    Note: Does NOT auto-grant on future tables - privileges must be re-granted if schema changes.
+    """
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM pg_catalog.pg_user WHERE usename = 'mcp_readonly'")
+    user_exists = cursor.fetchone() is not None
+    if not user_exists:
+        cursor.execute(f"CREATE USER mcp_readonly WITH PASSWORD %s", (readonly_password,))
+    cursor.execute("GRANT CONNECT ON DATABASE postgres TO mcp_readonly")
+    cursor.execute("GRANT USAGE ON SCHEMA public TO mcp_readonly")
+    cursor.execute("GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_readonly")
+    cursor.execute("GRANT pg_read_all_stats TO mcp_readonly")
+```
+
+### Data Governance Views with Certification and Deprecation
+
+The data loader creates views with explicit CERTIFIED/DEPRECATED labels and table comments indicating PII classifications, supporting data governance use cases.
+
+```python
+# helm/pgvector/scripts/load_data.py
+cursor.execute("""
+    COMMENT ON TABLE dim_customer IS
+    'Core customer table. CONTAINS PII (PCI, address). DO NOT USE FOR general BI. Only for auth_service.';
+""")
+
+cursor.execute("""
+    COMMENT ON VIEW v_rpt_customer_ltv_certified IS
+    '[CERTIFIED] Gold-standard, PII-scrubbed view for all customer LTV reporting. Aggregated daily. Maintained by: Finance BI Team';
+""")
+
+cursor.execute("""
+    COMMENT ON VIEW v_cust_ltv_agg_DEPRECATED IS
+    '[DEPRECATED] Old LTV calculation. Only includes data before 2018. DEPRECATED as of Q3 2024. Do not use for new reporting. Use v_rpt_customer_ltv_certified instead.';
+""")
+```
+
+### OpenShift-Compatible Data Loader Container
+
+The data loader container image uses UBI9 Python 3.11 base image and switches to non-root user (UID 1001) for OpenShift restricted SCC compatibility.
+
+```dockerfile
+# helm/pgvector/Containerfile
+FROM registry.access.redhat.com/ubi9/python-311:latest
+USER root
+RUN pip install --no-cache-dir pandas psycopg2-binary
+RUN mkdir -p /data /scripts && chown -R 1001:0 /data /scripts && chmod -R g=u /data /scripts
+COPY data/*.csv /data/
+COPY scripts/load_data.py /scripts/load_data.py
+USER 1001
+CMD ["python3", "/scripts/load_data.py"]
+```
+
+### Configuration (Approach C)
+
+- **Environment variables:**
+  - `POSTGRESQL_USER`, `POSTGRESQL_PASSWORD`, `POSTGRESQL_DATABASE` -- Set on the StatefulSet container from the `vector-database` Secret.
+  - `POSTGRESQL_ADMIN_PASSWORD` -- Set to the same value as `POSTGRESQL_PASSWORD` in the StatefulSet.
+  - `PGDATA` -- Set to `/var/lib/pgsql/data/pgdata` to place data inside the PVC mount.
+  - `POSTGRES_HOST` -- Data loader Job uses the fully-qualified pod DNS name (`pgvector-0.pgvector-postgres-service.<namespace>.svc.cluster.local`).
+  - `POSTGRES_READONLY_PASSWORD` -- Passed to the data loader Job to set the `mcp_readonly` user password; sourced from `values.yaml` `postgres.readonlyPassword`.
+- **Helm values:**
+  - `postgres.userId`, `postgres.password`, `postgres.databaseName` -- Credentials passed at install time via `--set` flags (placeholders in default `values.yaml`).
+  - `postgres.readonlyPassword` -- Required; sets the password for the `mcp_readonly` database user.
+  - `dataLoader.image` -- Defaults to `quay.io/rh-ai-quickstart/pgvector-data-loader:latest`; falls back to OpenShift internal registry image if building on-cluster.
+
+### Known Gotchas (Approach C)
+
+- **readonlyPassword in plaintext in Job spec:** The `POSTGRES_READONLY_PASSWORD` env var is set as a plaintext Helm value interpolation (`value: "{{ .Values.postgres.readonlyPassword }}"`) in the data loader Job template rather than using a secretKeyRef, so the password appears in the rendered Job manifest (see `templates/data-loader-job.yaml` line 47).
+- **mcp_readonly grants do not auto-apply to future tables:** The `GRANT SELECT ON ALL TABLES` only covers tables that exist at the time the data loader runs. If new tables are created later, the `mcp_readonly` user will not have access to them unless the script is re-run (documented in the `create_readonly_user` function comment).
+- **Data loader Job connects to pod DNS, not service DNS:** The `POSTGRES_HOST` is set to `pgvector-0.pgvector-postgres-service.<namespace>.svc.cluster.local` (pod-specific DNS) rather than the headless service name. This assumes exactly one replica and the pod name `pgvector-0`.
+- **POSTGRESQL_ADMIN_PASSWORD same as POSTGRESQL_PASSWORD:** The StatefulSet sets `POSTGRESQL_ADMIN_PASSWORD` from the same secret key as `POSTGRESQL_PASSWORD` (see `templates/stateful-set.yaml` lines 48-50), meaning the admin and regular user share the same password.
+- **Binary Build uploads ~45MB:** The OpenShift BuildConfig binary build strategy uploads the entire pgvector directory including CSV data files on every build, which may take 1-2 minutes depending on network speed (documented in README.md).
+- **values.yaml placeholders not valid defaults:** The `values.yaml` uses placeholder strings like `<postgres user id>` which are not valid defaults -- Helm will install with these literal strings if `--set` flags are omitted, leading to a broken deployment.
+
+### Testing Notes (Approach C)
+
+- Verify the data loader Job completes: `oc get job pgvector-data-loader -n <namespace>` and check logs with `oc logs -f job/pgvector-data-loader`.
+- Verify the `mcp_readonly` user exists and has correct grants: connect to the pgvector pod and run `psql -U <user> -d <dbname> -c "\du mcp_readonly"`.
+- Verify views exist: `psql -U <user> -d <dbname> -c "\dv"` should show `v_rpt_customer_ltv_certified`, `v_cust_ltv_agg_DEPRECATED`, `sales_rpt_v2`.
+- If the data loader Job fails with `ImagePullBackOff`, ensure `make build-data-loader-image` was run before `make install`.
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) |
-|----------|-------------------------------|-----------------------------------|
-| **pgvector chart version** | v0.5.5 | v0.1.0 (bundled .tgz) |
-| **PostgreSQL version** | 15 | 17 |
-| **URL construction** | Assembled from individual secret keys in deployment template | Pre-built `uri` key consumed directly from secret |
-| **DB initialization** | `extraDatabases` values mechanism | ConfigMap init script with `CREATE EXTENSION VECTOR` |
-| **Schema management** | Alembic migrations (async-to-sync URL rewrite) | `SQLModel.metadata.create_all` at startup |
-| **ORM** | SQLAlchemy ORM with PostgreSQL dialect types | SQLModel with JSON column type |
-| **Vector search usage** | Active via LlamaStack `vector_io` provider | Extension enabled but unused; embeddings in MinIO |
-| **Number of consumers** | Single backend service | Multiple services (backend, annotation-interface, phoenix) |
-| **Credential passthrough** | Install script `--set` flags | Values file defaults |
-| **Best for** | Apps needing vector search + relational data in one DB | Multi-service apps using PostgreSQL as shared relational store |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) |
+|----------|-------------------------------|-----------------------------------|---------------------------------------|
+| **pgvector chart version** | v0.5.5 (subchart) | v0.1.0 (bundled .tgz) | v0.1.0 (standalone chart) |
+| **PostgreSQL version** | 15 | 17 | 15 |
+| **Container image** | ai-architecture-charts subchart default | `pgvector/pgvector:pg17` | `quay.io/rh-aiservices-bu/postgresql-15-pgvector-c9s:latest` |
+| **Chart relationship** | Dependency subchart | Dependency subchart (bundled) | Standalone Helm chart |
+| **URL construction** | Assembled from individual secret keys in deployment template | Pre-built `uri` key consumed directly from secret | Pod DNS hardcoded in data loader Job; consumers wire their own connections |
+| **DB initialization** | `extraDatabases` values mechanism | ConfigMap init script with `CREATE EXTENSION VECTOR` | ConfigMap init script with `CREATE EXTENSION IF NOT EXISTS vector CASCADE` |
+| **Schema management** | Alembic migrations (async-to-sync URL rewrite) | `SQLModel.metadata.create_all` at startup | Raw SQL in Python data loader script |
+| **ORM** | SQLAlchemy ORM with PostgreSQL dialect types | SQLModel with JSON column type | None (raw psycopg2) |
+| **Data seeding** | None | None | Kubernetes Job with OpenShift BuildConfig for large CSV datasets |
+| **Vector search usage** | Active via LlamaStack `vector_io` provider | Extension enabled but unused; embeddings in MinIO | Extension enabled; used for data governance, not RAG |
+| **Security** | Standard credentials via secret | Standard credentials via secret | Read-only `mcp_readonly` user for MCP server defense-in-depth |
+| **Number of consumers** | Single backend service | Multiple services (backend, annotation-interface, phoenix) | Data loader Job + MCP server |
+| **Credential passthrough** | Install script `--set` flags | Values file defaults | `--set` flags (placeholder defaults in values.yaml) |
+| **Best for** | Apps needing vector search + relational data in one DB | Multi-service apps using PostgreSQL as shared relational store | Data governance demos with seed data, MCP server access, and curated views |

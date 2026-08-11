@@ -1,19 +1,23 @@
 ---
 name: llamastack
 description: "LlamaStack distribution server providing inference, agents, safety, tool runtime, and vector I/O APIs"
-summary: "LlamaStack provides a unified AI orchestration server exposing inference, agents, safety, tool runtime, vector I/O, and files APIs between a FastAPI backend and Ollama, acting as the default runner in a pluggable multi-runner dispatch system (LlamaStack/LangGraph/CrewAI) for the ai-virtual-agent quickstart. Use as a single-server orchestration layer when you need combined model inference, input safety shields (inline::llama-guard), MCP tool integration resolved from toolgroups, and Responses API streaming with Conversations -- choose LangGraph or CrewAI runners when their specific agent frameworks are required. Configured via llamastack-run.yaml mounted at RUN_CONFIG_PATH declaring providers (remote::ollama for inference, inline::llama-guard for safety), consumed through llama_stack_client==0.6.1 AsyncLlamaStackClient with 180s default timeout and K8s SA token plus X-Forwarded-User/X-Forwarded-Email auth header forwarding for RBAC. Container runs as root (user 0:0) with 90s healthcheck start_period, SDK attribute names changed between 0.3.x and 0.6.1 (identifier to id, api_model_type to model_type) requiring _get_model_type/_get_model_id version-compatibility helpers, SQLite storage is dev-only not production, platform linux/amd64 causes ARM emulation perf hit, and regex-based tool retry error parsing (Tool '(\\w+)' not found) is fragile if LlamaStack changes its error message format."
+summary: "LlamaStack provides a unified AI orchestration server exposing inference, agents, safety, tool runtime, vector I/O, and files APIs between the application backend and model providers (Ollama or vLLM), with Approach A (ai-virtual-agent, v0.6.1) using compose with Responses API and StreamAggregator-based SSE streaming in a pluggable LlamaStack/LangGraph/CrewAI runner dispatch, and Approach B (data-governance-co-pilot, v0.3.5) using a Helm-deployed LlamaStackDistribution CRD on OpenShift AI operator with alpha.agents API managing the full agentic loop and session-to-conversation event mapping. Use Approach A for local dev or when the application manages the agentic loop with dynamic MCP toolgroup resolution, input shield validation via client.safety.run_shield(), and automatic tool retry with exclusion; use Approach B for production OpenShift AI deployments where the operator manages LlamaStack lifecycle (600s DeploymentReady wait, 100m/256Mi lightweight proxy resources), vLLM serves inference via KServe, and Makefile populates Helm model.name/url/apiKey values at install time -- Nemotron models are incompatible with llama_stack mode (enforced by check-model-provider-compatibility, use mcp_direct). Configured via llamastack-run.yaml (RUN_CONFIG_PATH) declaring providers -- Approach A uses remote::ollama with AsyncLlamaStackClient (180s timeout, K8s SA token + X-Forwarded-User/Email auth headers for RBAC); Approach B uses remote::vllm with provider-prefixed model name (vllm-inference/<model>), vLLM URL derived from KServe predictor (https://<model>-predictor.<ns>.svc.cluster.local:8443/v1), VLLM_TLS_VERIFY='false' for self-signed certs, and static MCP endpoint in Helm-templated ConfigMap. Container runs as root (user 0:0) with 90s healthcheck start_period, SDK attribute names changed between 0.3.x and 0.6.1 (identifier to id, api_model_type to model_type) requiring _get_model_type/_get_model_id helpers, SQLite storage is dev-only, platform linux/amd64 causes ARM emulation perf hit, regex-based tool retry parsing (Tool '(\\w+)' not found) is fragile, has_output_text=False emits error event to prevent silent empty responses, Approach B values.yaml has empty placeholders requiring Makefile --set population, and static agent instructions require conversation restart on policy update via requires_conversation_restart_on_policy_update()."
 metadata:
   type: component
 tags:
-  tech_stack: [llamastack, ollama, python, fastapi, llama-stack-client]
-  ai_pattern: [agents, model-serving, guardrails, rag, vector-search]
-  platform: [openshift, kubernetes]
-  data_layer: [sqlite]
+  tech_stack: [llamastack, ollama, python, fastapi, llama-stack-client, vllm, helm]
+  ai_pattern: [agents, model-serving, guardrails, rag, vector-search, mcp]
+  platform: [openshift, kubernetes, rhoai, kserve]
+  data_layer: [sqlite, faiss]
 source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
     notes: "LlamaStack as unified AI orchestration layer with Ollama backend, Responses API streaming, MCP tool integration, and safety shields"
     approach: "A"
+  - quickstart: "data-governance-co-pilot"
+    repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
+    notes: "LlamaStack deployed via OpenShift AI operator CRD with remote vLLM inference, Agents alpha API for agentic orchestration, and Helm chart"
+    approach: "B"
 ---
 
 # LlamaStack
@@ -233,3 +237,205 @@ def _get_model_type(model):
 - Architecture: agent orchestration, multi-runner framework dispatch
 - Deployment: compose-based local dev with service dependency chains
 - Components: ollama (inference backend), postgresql (session/agent storage)
+
+---
+
+## Approach B: OpenShift AI Operator + Helm Chart with vLLM (from data-governance-co-pilot)
+
+### When to Use
+
+Use this approach when deploying LlamaStack on OpenShift AI with the Llama Stack operator, using remote vLLM for inference and Helm for chart management. This is the production-oriented path that leverages the operator's CRD (`LlamaStackDistribution`) to manage the LlamaStack lifecycle on-cluster.
+
+### Differences from Approach A
+
+- **Deployment**: Helm chart creating a `LlamaStackDistribution` CRD (managed by OpenShift AI operator) instead of docker-compose service
+- **Inference provider**: `remote::vllm` instead of `remote::ollama`
+- **API version**: LlamaStack 0.3.5 with `alpha.agents` API (agent-managed agentic loop) instead of 0.6.1 Responses API
+- **MCP integration**: Configured as a provider in the run.yaml ConfigMap at deploy time, not resolved dynamically from toolgroups
+- **Storage paths**: Operator-provided volume mount at `/opt/app-root/src/.llama/distributions/rh/` instead of container-local `/.llama/distributions/ollama/`
+- **Security**: Kubernetes Secrets for vLLM API keys, OpenShift Routes with TLS edge termination
+
+### Tech Stack & Dependencies
+
+- **Runtime:** LlamaStack distribution server v0.3.5
+- **Container image:** Operator-managed (distribution `imageName: "rh-dev"`)
+- **Key dependencies:** `llama_stack_client` (Python SDK), vLLM model server via KServe InferenceService, MCP server (`pg-airman-mcp-service`)
+- **Helm subchart:** None (standalone chart at `helm/copilot-llama-stack/`)
+
+### Key Patterns
+
+#### LlamaStackDistribution CRD Deployment
+
+The chart deploys a `LlamaStackDistribution` custom resource that the OpenShift AI Llama Stack operator reconciles into a running deployment. The CRD references a ConfigMap containing the `run.yaml` distribution config.
+
+```yaml
+# templates/llamastackdistribution.yaml
+apiVersion: llamastack.io/v1alpha1
+kind: LlamaStackDistribution
+metadata:
+  name: {{ .Values.distribution.name }}
+spec:
+  replicas: {{ .Values.distribution.replicas }}
+  server:
+    distribution:
+      name: {{ .Values.distribution.imageName | quote }}
+    userConfig:
+      configMapName: {{ .Values.distribution.name }}-config
+    containerSpec:
+      name: {{ .Values.container.name }}
+      port: {{ .Values.container.port }}
+```
+
+#### Run Config via Helm-Templated ConfigMap
+
+The `run.yaml` is generated as a ConfigMap using Helm templating. Environment variable references (`${env.VLLM_URL}`, `${env.INFERENCE_MODEL}`) are resolved at runtime by LlamaStack, not by Helm.
+
+```yaml
+# templates/configmap.yaml (abbreviated)
+providers:
+  inference:
+    - provider_id: vllm-inference
+      provider_type: remote::vllm
+      config:
+        url: ${env.VLLM_URL}
+        api_token: ${env.VLLM_API_TOKEN}
+        model: ${env.INFERENCE_MODEL}
+  tool_runtime:
+    - provider_id: mcp-tools
+      provider_type: remote::model-context-protocol
+      config:
+        mcp_endpoint:
+          uri: {{ include "copilot-llama-stack.mcpEndpoint" . }}
+```
+
+#### Model Name Prefixing for vLLM Provider
+
+LlamaStack 0.3.x requires the model name to be prefixed with the provider ID when passed as `INFERENCE_MODEL`. The Helm template handles this in the `LlamaStackDistribution` env vars.
+
+```yaml
+# templates/llamastackdistribution.yaml
+env:
+  - name: INFERENCE_MODEL
+    value: {{ printf "vllm-inference/%s" .Values.model.name | quote }}
+```
+
+#### vLLM URL Resolution with Fallback
+
+The `_helpers.tpl` constructs the vLLM URL from either an explicit override or by deriving it from the KServe InferenceService predictor name.
+
+```yaml
+# templates/_helpers.tpl
+{{- define "copilot-llama-stack.vllmUrl" -}}
+{{- if .Values.model.url }}
+{{- .Values.model.url }}
+{{- else }}
+{{- printf "https://%s-predictor.%s.svc.cluster.local:8443/v1" .Values.model.name .Release.Namespace }}
+{{- end }}
+{{- end }}
+```
+
+#### Agents Alpha API with Session Management
+
+The Python provider uses LlamaStack's `alpha.agents` API where LlamaStack manages the complete agentic loop. The provider creates a persistent agent with toolgroups and manages session-to-conversation mapping.
+
+```python
+# packages/copilot/src/copilot/providers/llama_stack.py
+agent = self.client.alpha.agents.create(
+    agent_config={
+        "model": self.llama_stack_model,
+        "instructions": self.get_system_prompt(enable_reasoning=True),
+        "toolgroups": [self.toolgroup_id],
+        "tool_choice": "auto",
+        "sampling_params": {
+            "max_tokens": 2048,
+            "temperature": self.temperature,
+            "min_p": self.min_p,
+        },
+    }
+)
+```
+
+#### Makefile-Driven Model Configuration
+
+Model values (`model.name`, `model.url`, `model.apiKey`) are not stored in `values.yaml` -- they are populated at install time by the Makefile, which either extracts them from a deployed KServe InferenceService or reads them from `copilot-backend/values.yaml`.
+
+```makefile
+# helm/Makefile (copilot-llama-stack-install target)
+MODEL_URL="https://$$(oc get route $$MODEL_NAME -o jsonpath='{.spec.host}' -n $(NAMESPACE))/v1"; \
+MODEL_API_KEY=$$(oc get secret default-name-$$MODEL_NAME-sa -n $(NAMESPACE) \
+  -o jsonpath='{.data.token}' | base64 -d); \
+helm upgrade --install $(LLAMA_STACK_DISTRIBUTION_NAME) $(COPILOT_LLAMA_STACK_CHART) \
+  --set model.name=$$MODEL_NAME \
+  --set model.url=$$MODEL_URL \
+  --set model.apiKey=$$MODEL_API_KEY
+```
+
+#### Event Mapping from Agents API to Standardized Schema
+
+The provider maps LlamaStack agent events (`step_start`, `step_progress`, `step_complete`, `turn_complete`) to a standardized event schema consumed by the frontend. Tool execution steps do not emit new `iteration_start` events -- they belong to the same iteration as the inference step that triggered them.
+
+```python
+# packages/copilot/src/copilot/providers/llama_stack.py
+if event_type == "step_start":
+    step_type = payload.step_type if hasattr(payload, 'step_type') else "unknown"
+    if step_type != "tool_execution":
+        return [{"type": "iteration_start", "step_type": step_type}]
+    else:
+        return []
+```
+
+### Configuration
+
+- **Environment variables (container):**
+  - `INFERENCE_MODEL` -- Model name prefixed with provider ID (e.g., `vllm-inference/qwen3-model`)
+  - `VLLM_URL` -- vLLM service endpoint URL
+  - `VLLM_API_TOKEN` -- API token from Kubernetes Secret or `"not-needed"`
+  - `VLLM_TLS_VERIFY` -- Set to `'false'` for cluster-internal TLS
+- **Environment variables (backend):**
+  - `COPILOT_PROVIDER_MODE` -- Set to `llama_stack` to activate this provider
+  - `LLAMA_STACK_BASE_URL` -- LlamaStack endpoint (default: `http://copilot-llama-stack:8000`)
+  - `LLAMA_STACK_MODEL` -- Model identifier (default: `vllm-inference/redhataillama-31-8b-instruct`)
+- **Config files:** `run.yaml` generated as ConfigMap from Helm values
+- **Helm values:**
+  - `distribution.name` -- CRD resource name (default: `copilot-llama-stack`)
+  - `distribution.imageName` -- Distribution image name (default: `rh-dev`)
+  - `container.port` -- Service port (default: `8321`)
+  - `model.name`, `model.url`, `model.apiKey` -- Populated at install time via Makefile
+  - `mcp.serviceName` -- MCP server K8s service name (default: `pg-airman-mcp-service`)
+  - `config.apis` -- List of APIs to enable (inference, agents, safety, vector_io, tool_runtime)
+  - `route.enabled` -- Create OpenShift Route (default: `true`)
+
+### Known Gotchas
+
+- Nemotron models are incompatible with `llama_stack` mode because they use a custom `<TOOLCALL>` format that LlamaStack does not support. The Makefile enforces this with `check-model-provider-compatibility` (see `helm/Makefile` line 221). Use `PROVIDER_MODE=mcp_direct` for Nemotron or `PROVIDER_MODE=llama_stack` with Qwen3.
+- LlamaStack agent instructions are static and set at agent creation time. Updating the governance policy requires recreating the agent, which invalidates all existing sessions. The `requires_conversation_restart_on_policy_update()` method returns `True` for this reason (see `llama_stack.py` line 685).
+- The `model.name`, `model.url`, and `model.apiKey` values in `values.yaml` are intentionally empty placeholders. They are populated at deploy time by the Makefile via `--set` flags. Installing the chart directly without the Makefile will result in a broken deployment.
+- LlamaStack is described as a "lightweight proxy" in the values.yaml comments -- resource requests are only 100m CPU / 256Mi memory, with limits of 500m CPU / 512Mi (see `values.yaml` lines 14-18). This is because it delegates inference to the vLLM model server.
+- The `oc wait` for LlamaStack readiness checks `.status.conditions[?(@.type=="DeploymentReady")].status=True` on the `LlamaStackDistribution` CRD with a 600-second timeout (`helm/Makefile` line 754).
+- The vLLM URL helper (`copilot-llama-stack.vllmUrl`) defaults to constructing a KServe predictor URL at port 8443 (`https://<model>-predictor.<ns>.svc.cluster.local:8443/v1`) when no explicit URL is provided (see `_helpers.tpl` line 65).
+- `VLLM_TLS_VERIFY` is set to `'false'` in the container env because cluster-internal TLS uses self-signed certificates from the KServe predictor service.
+
+### Testing Notes
+
+- Verify `LlamaStackDistribution` status: `oc get llamastackdistribution copilot-llama-stack -n <ns>`
+- Check API health: `curl -k https://$ROUTE_URL/v1/version`
+- Verify MCP connectivity: ensure `pg-airman-mcp-service` is running in the same namespace before deploying LlamaStack
+- The uninstall target also cleans up PVCs owned by the `LlamaStackDistribution` resource (`helm/Makefile` copilot-llama-stack-uninstall target)
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (ai-virtual-agent) | Approach B (data-governance-co-pilot) |
+|----------|-------------------------------|---------------------------------------|
+| Deployment method | docker-compose service | Helm chart + LlamaStackDistribution CRD (OpenShift AI operator) |
+| Inference backend | Ollama (local) | Remote vLLM via KServe InferenceService |
+| LlamaStack version | 0.6.1 | 0.3.5 |
+| Client API | Responses API with Conversations | Agents alpha API with sessions |
+| Agent management | Runner handles agentic loop, LlamaStack streams responses | LlamaStack manages full agentic loop, provider maps events |
+| MCP integration | Dynamic toolgroup resolution at runtime | Static MCP endpoint in run.yaml ConfigMap |
+| Auth model | K8s SA token + X-Forwarded headers | API key in K8s Secret, no user header forwarding |
+| Safety | Input shields via `client.safety.run_shield()` | `inline::llama-guard` provider declared in run.yaml |
+| Storage | SQLite at container-local path | SQLite at operator-managed path |
+| Platform | Local dev (compose), OpenShift (future) | OpenShift AI with operator |
+| Multi-framework | Pluggable runner (LlamaStack/LangGraph/CrewAI) | Pluggable provider (mcp_direct/llama_stack) |

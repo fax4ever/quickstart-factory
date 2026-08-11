@@ -1,14 +1,14 @@
 ---
 name: agent-orchestration
-description: Agent orchestration patterns from pluggable multi-runner dispatch to hierarchical LangGraph DAGs
-summary: "Enables pluggable multi-framework agent execution (Approach A) where a FastAPI ChatService endpoint dispatches to LlamaStack, LangGraph, or CrewAI runners based on VirtualAgent's runner_type in PostgreSQL, producing normalized SSE events (reasoning, response, tool_call, node_started/completed, error) for a React/PatternFly frontend; alternatively (Approach B) implements a hierarchical LangGraph DAG for automated event-driven processing with SentenceTransformer embedding + DBSCAN/HDBSCAN clustering, LLM structured-output routing via Command(goto=...), and nested subgraphs for RAG cheat-sheet and Loki tool-calling context retrieval. Use LlamaStack runner (default) for Responses API with built-in conversation history and auto-retry tool exclusion via AsyncLlamaStackClient; LangGraph for ReAct agents with MCP tools via MultiServerMCPClient or declarative DAG workflows (graph_config with typed nodes: llm, mcp_tool, mcp_tool_map, router and template substitution); CrewAI for multi-agent crews with persona/backstory mapping and LiteLLM OpenAI-compatible routing; Approach B for batch event-driven pipelines with fixed hierarchical subgraphs, dual LLM endpoints (default + tool-calling-capable), parallel processing of unique cluster representatives, and closure-bound Loki tools with result_id caching to reduce token usage. All runners implement BaseRunner.stream() yielding SSE strings terminated by [DONE]; VirtualAgent model stores runner_type, model_name, prompt, tools, knowledge_base_ids, vector_store_ids, shields, and graph_config; LangGraph mode switches on graph_config presence (absent = create_react_agent, present = declarative StateGraph DAG with parallel node execution); Approach B graphs are compiled at module load time with a shared module-level LLM instance. Runners are lazily imported with _check_langgraph()/CREWAI_AVAILABLE guards to handle missing optional packages; CrewAI requires a _StreamDeduplicator to filter ReAct Thought/Action/Input noise; LangGraph's InMemorySaver must be swapped for PostgresSaver in multi-worker deployments; both LangGraph and CrewAI use LLM-based _extract_input_fields to parse structured fields from natural language when graph_config.input_fields are defined; Approach B's stream_with_fallback returns partial content on mid-stream interruption and its offline pipeline separates preparation (clustering) from processing to wait for RAG service readiness."
+description: Agent orchestration patterns from multi-runner dispatch to LangGraph DAGs to dual-provider factory
+summary: "Enables pluggable multi-framework agent execution (Approach A) where a FastAPI ChatService endpoint dispatches to LlamaStack, LangGraph, or CrewAI runners based on VirtualAgent's runner_type in PostgreSQL, producing normalized SSE events (reasoning, response, tool_call, node_started/completed, error) for a React/PatternFly frontend; alternatively (Approach B) implements a hierarchical LangGraph DAG for automated event-driven processing with SentenceTransformer embedding + DBSCAN/HDBSCAN clustering, LLM structured-output routing via Command(goto=...), and nested subgraphs for RAG cheat-sheet and Loki tool-calling context retrieval; or (Approach C) a dual-provider factory selecting between backend-managed agentic loop (MCP-Direct with vLLM + Nemotron TOOLCALL tag auto-detection + hard-coded allowlist/Pydantic tool validation) and delegated orchestration (Llama Stack Agents API with toolgroup registration), both consuming the same pg-airman-mcp tool server with runtime governance policy injection. Use LlamaStack runner (default) for Responses API with built-in conversation history and auto-retry tool exclusion via AsyncLlamaStackClient; LangGraph for ReAct agents with MCP tools via MultiServerMCPClient or declarative DAG workflows (graph_config with typed nodes: llm, mcp_tool, mcp_tool_map, router and template substitution); CrewAI for multi-agent crews with persona/backstory mapping and LiteLLM OpenAI-compatible routing; Approach B for batch event-driven pipelines with fixed hierarchical subgraphs, dual LLM endpoints (default + tool-calling-capable), parallel processing of unique cluster representatives, and closure-bound Loki tools with result_id caching to reduce token usage; Approach C for interactive copilots needing deployment-time provider flexibility (COPILOT_PROVIDER_MODE env var) with single MCP tool server, where MCP-Direct gives full control over streaming/token management/model-specific parsing and Llama Stack simplifies architecture by delegating the agentic loop. All runners implement BaseRunner.stream() yielding SSE strings terminated by [DONE]; VirtualAgent model stores runner_type, model_name, prompt, tools, knowledge_base_ids, vector_store_ids, shields, and graph_config; LangGraph mode switches on graph_config presence (absent = create_react_agent, present = declarative StateGraph DAG with parallel node execution); Approach B graphs are compiled at module load time with a shared module-level LLM instance; Approach C's factory creates MCPDirectProvider or LlamaStackProvider based on COPILOT_PROVIDER_MODE, with MCP-Direct running a while loop (up to 100 iterations) auto-detecting Nemotron vs OpenAI tool call format, and Llama Stack registering pg-airman-mcp as a toolgroup with per-conversation sessions. Runners are lazily imported with _check_langgraph()/CREWAI_AVAILABLE guards to handle missing optional packages; CrewAI requires a _StreamDeduplicator to filter ReAct Thought/Action/Input noise; LangGraph's InMemorySaver must be swapped for PostgresSaver in multi-worker deployments; both LangGraph and CrewAI use LLM-based _extract_input_fields to parse structured fields from natural language when graph_config.input_fields are defined; Approach B's stream_with_fallback returns partial content on mid-stream interruption and its offline pipeline separates preparation (clustering) from processing to wait for RAG service readiness; Approach C's tool validation only applies in MCP-Direct mode (Llama Stack has no equivalent security layer), Llama Stack policy updates require full agent recreation clearing all sessions, conversation_store is in-memory (lost on pod restart), and MCP-Direct appends \"/mcp\" while Llama Stack appends \"/sse\" to the configured mcp_server_url."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, langchain, langgraph, crewai, llamastack, python, gradio, sentence-transformers, scikit-learn]
-  ai_pattern: [agents, prompt-chaining, model-serving, embeddings]
-  platform: [llamastack, vllm, rhoai, openshift]
-  data_layer: [postgresql]
+  tech_stack: [fastapi, langchain, langgraph, crewai, llamastack, python, gradio, sentence-transformers, scikit-learn, sveltekit, openai-sdk, vega-lite]
+  ai_pattern: [agents, prompt-chaining, model-serving, embeddings, data-governance]
+  platform: [llamastack, vllm, rhoai, openshift, kserve]
+  data_layer: [postgresql, pgvector]
 source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
     notes: "Hierarchical LangGraph DAG with nested subgraphs for automated event-driven Ansible log analysis, LLM-based conditional routing, and tool-calling Loki agent"
     approach: "B"
+  - quickstart: "data-governance-co-pilot"
+    repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
+    notes: "Dual-provider factory pattern selecting between backend-managed agentic loop (MCP-Direct with vLLM + MCP) and delegated orchestration (Llama Stack Agents API), both consuming the same pg-airman-mcp tool server"
+    approach: "C"
 ---
 
 # Agent Orchestration
@@ -373,15 +377,254 @@ Each LLM call in the graph uses a distinct pattern:
 
 ---
 
+## Approach C: Dual-Provider Factory with MCP Tool Validation (from data-governance-co-pilot)
+
+### When to Use
+
+Use this approach when building an AI copilot that needs to support multiple deployment modes -- one where the backend fully manages the agentic tool-calling loop (for maximum control over streaming, token management, and model-specific parsing) and another where orchestration is delegated to an external agent service like Llama Stack (for simplified architecture). This is suited for scenarios where a single MCP tool server provides all agent capabilities (e.g., database analysis via pg-airman-mcp) and the choice between modes is an infrastructure decision, not a user-facing feature.
+
+### Differences from Approach A and Approach B
+
+| Aspect | Approach A (Multi-Runner Dispatch) | Approach B (Hierarchical LangGraph DAG) | Approach C (Dual-Provider Factory) |
+|--------|-----------------------------------|----------------------------------------|-----------------------------------|
+| Pattern | Multiple frameworks behind one dispatcher | Fixed multi-level graph DAG | Two provider modes behind a factory |
+| Framework choice | Runtime (per-agent runner_type in DB) | Hardcoded (LangGraph only) | Deployment-time (COPILOT_PROVIDER_MODE env var) |
+| Agentic loop owner | Each runner manages its own loop | LangGraph graph engine | MCP-Direct: backend while loop; Llama Stack: Llama Stack server |
+| Tool server | Multiple MCP servers (travel, hotel, flight) | Single Loki MCP server inside LangChain tools | Single pg-airman-mcp server |
+| Tool security | Framework-managed tool registration | No explicit validation | Hard-coded allowlist + Pydantic schema validation |
+| Model format support | OpenAI standard tool calling | OpenAI standard tool calling | Auto-detects Nemotron custom TOOLCALL tags vs OpenAI format |
+| Conversation state | Database-driven (VirtualAgent model) | Stateless batch processing | In-memory dict (MCP-Direct) or Llama Stack sessions |
+| Policy management | Per-agent shields via LlamaStack safety API | Not applicable | Runtime policy injection into system prompt with provider-specific update behavior |
+| Streaming | Normalized SSE from all runners | No streaming (batch) | Provider-specific streaming normalized to same SSE event types |
+
+### Data Flow
+
+**MCP-Direct Mode:**
+
+1. User submits query via SvelteKit frontend to `POST /query/stream`
+2. Service retrieves or creates conversation history from in-memory `conversation_store`
+3. `DataGovernanceCopilot.process_query_stream()` delegates to `MCPDirectProvider`
+4. Provider builds system prompt (including governance policy if active) and appends user message
+5. Provider calls vLLM via AsyncOpenAI client with streaming enabled, tool definitions from MCP, and vLLM-specific `min_p` parameter via `extra_body`
+6. Response is parsed for model-specific format: Nemotron `<TOOLCALL>` tags or OpenAI function calling deltas
+7. If tool calls detected: each is validated against hard-coded allowlist + Pydantic schema, then executed via persistent MCP session
+8. Tool results appended to messages; loop continues (up to 100 iterations)
+9. When no more tool calls: cleaned response streamed as SSE events with timing summary
+
+**Llama Stack Mode:**
+
+1. User submits query via SvelteKit frontend to `POST /query/stream`
+2. Service delegates to `LlamaStackProvider`
+3. Provider resolves or creates a Llama Stack session (checking existing sessions by name for pod restart resilience)
+4. Provider calls `client.alpha.agents.turn.create()` with user message and streaming enabled
+5. Llama Stack manages the entire agentic loop -- tool calling, context, iteration
+6. Provider maps Llama Stack events (step_start, step_progress, step_complete, turn_complete) to standardized SSE events
+7. `turn_complete` event captured as internal marker; final_response emitted after stream loop
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| SvelteKit frontend | FastAPI backend | REST/SSE (port 8080) | Chat queries, policy management, tool listing |
+| FastAPI backend (MCP-Direct) | vLLM model server | HTTP (AsyncOpenAI, port 8000 via KServe route) | LLM inference with tool calling |
+| FastAPI backend (MCP-Direct) | pg-airman-mcp | HTTP (MCP streamable-http, port 8000) | Tool execution via persistent MCP session |
+| FastAPI backend (Llama Stack) | Llama Stack Distribution | HTTP (LlamaStackClient, port 8321) | Agent orchestration via Agents API |
+| Llama Stack Distribution | vLLM model server | HTTP (OpenAI-compatible) | LLM inference (delegated) |
+| Llama Stack Distribution | pg-airman-mcp | HTTP (MCP SSE, port 8000) | Tool execution via registered toolgroup |
+| pg-airman-mcp | PostgreSQL+pgvector | TCP (port 5432) | Database queries via read-only user |
+
+### Key Integration Points
+
+#### Provider Factory Pattern
+
+The factory creates the appropriate provider at startup based on environment configuration. Only one provider is active at a time.
+
+```python
+# packages/copilot/src/copilot/providers/factory.py (lines 18-99)
+def create_provider(governance_policy: str | None = None) -> LLMProvider:
+    provider_mode = os.getenv("COPILOT_PROVIDER_MODE", "mcp_direct").lower()
+
+    if provider_mode == "mcp_direct":
+        config = {
+            "llm_base_url": os.getenv("LLM_BASE_URL", "http://nemotron-service:8000/v1"),
+            "llm_model": os.getenv("LLM_MODEL", "nvidia/nemotron-nano-9b-v2"),
+            "llm_tool_call_format": os.getenv("LLM_TOOL_CALL_FORMAT", "auto"),
+            "mcp_server_url": os.getenv("PG_AIRMAN_MCP_SERVICE_PORT", "http://pg-airman-mcp-service:8000")
+        }
+        return MCPDirectProvider(config=config, governance_policy=governance_policy)
+    elif provider_mode == "llama_stack":
+        config = {
+            "llama_stack_base_url": os.getenv("LLAMA_STACK_BASE_URL", "http://copilot-llama-stack:8000"),
+            "llama_stack_model": os.getenv("LLAMA_STACK_MODEL", "vllm-inference/redhataillama-31-8b-instruct"),
+            "mcp_server_url": os.getenv("PG_AIRMAN_MCP_SERVICE_URL", "http://pg-airman-mcp-service:8000")
+        }
+        return LlamaStackProvider(config=config, governance_policy=governance_policy)
+```
+
+#### Backend-Managed Agentic Loop (MCP-Direct)
+
+The MCP-Direct provider runs its own while loop with up to 100 iterations, calling the LLM, parsing tool calls, executing them via MCP, and appending results to the conversation until the LLM responds without tool calls.
+
+```python
+# packages/copilot/src/copilot/providers/mcp_direct.py (lines 536-857)
+while iteration < max_iterations:
+    iteration += 1
+    # Call LLM with streaming
+    api_params = {
+        "model": self.llm_model,
+        "messages": messages,
+        "tools": self.mcp_tools,
+        "tool_choice": "auto",
+        "max_tokens": 2048,
+        "temperature": self.temperature,
+        "stream": True,
+        "extra_body": {"min_p": self.min_p}
+    }
+    stream = await self.llm_client.chat.completions.create(**api_params)
+    # ... parse response for tool calls based on format
+    if not tool_calls:
+        # Final answer -- send timing_summary + final_response
+        return
+    # Execute tools and loop
+```
+
+#### Nemotron TOOLCALL Tag Parsing
+
+The MCP-Direct provider auto-detects model format and parses Nemotron's custom `<TOOLCALL>` tags, converting them to the same structure as OpenAI function calling format for uniform downstream handling.
+
+```python
+# packages/copilot/src/copilot/providers/mcp_direct.py (lines 268-311)
+def _parse_nemotron_tool_calls(self, content: str) -> list[dict[str, Any]]:
+    toolcall_pattern = r'<TOOLCALL>(.*?)</TOOLCALL>'
+    matches = re.findall(toolcall_pattern, content, re.DOTALL)
+    tool_calls = []
+    for match in matches:
+        calls_data = json.loads(match.strip())
+        if not isinstance(calls_data, list):
+            calls_data = [calls_data]
+        for call in calls_data:
+            tool_call = {
+                "id": f"call_{uuid.uuid4().hex[:24]}",
+                "type": "function",
+                "function": {
+                    "name": call["name"],
+                    "arguments": json.dumps(call["arguments"])
+                }
+            }
+            tool_calls.append(tool_call)
+```
+
+#### Tool Validation Security Layer
+
+Every tool call passes through a hard-coded allowlist check and Pydantic schema validation before execution, preventing prompt injection attacks from calling unauthorized MCP tools.
+
+```python
+# packages/copilot/src/copilot/providers/tool_validation.py (lines 93-107, 183-203)
+TOOL_SCHEMAS: Dict[str, type[BaseModel]] = {
+    "execute_sql": ExecuteSqlArgs,
+    "list_schemas": ListSchemasArgs,
+    "list_objects": ListObjectsArgs,
+    "get_object_details": GetObjectDetailsArgs,
+    "explain_query": ExplainQueryArgs,
+    # ... 10 tools total
+}
+ALLOWED_TOOLS: Set[str] = set(TOOL_SCHEMAS.keys())
+
+def validate_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    validate_tool_name(tool_name)  # Reject if not in allowlist
+    validated_args = validate_tool_arguments(tool_name, arguments)  # Pydantic validation
+    return validated_args
+```
+
+#### Llama Stack Toolgroup Registration
+
+The Llama Stack provider registers pg-airman-mcp as a toolgroup and creates an agent at initialization, then reuses the agent across queries with per-conversation sessions.
+
+```python
+# packages/copilot/src/copilot/providers/llama_stack.py (lines 106-143)
+self.client.toolgroups.register(
+    toolgroup_id=self.toolgroup_id,  # "mcp::pg_airman"
+    provider_id=tool_provider.provider_id,
+    mcp_endpoint={"uri": mcp_endpoint_uri}
+)
+agent = self.client.alpha.agents.create(
+    agent_config={
+        "model": self.llama_stack_model,
+        "instructions": self.get_system_prompt(enable_reasoning=True),
+        "toolgroups": [self.toolgroup_id],
+        "tool_choice": "auto",
+        "sampling_params": {
+            "max_tokens": 2048,
+            "temperature": self.temperature,
+            "min_p": self.min_p,
+        },
+    }
+)
+```
+
+#### Runtime Governance Policy Injection
+
+Both providers support runtime policy updates via the `/policy/upload` endpoint, but differ in impact: MCP-Direct rebuilds prompts dynamically (no restart), while Llama Stack must recreate the agent (invalidates all sessions).
+
+```python
+# packages/copilot/src/copilot/providers/llama_stack.py (lines 687-738)
+async def update_governance_policy(self, new_policy: str | None) -> None:
+    self.governance_policy = new_policy
+    if self._initialized and self.client:
+        # Must recreate agent -- Llama Stack agent instructions are static
+        agent = self.client.alpha.agents.create(
+            agent_config={
+                "model": self.llama_stack_model,
+                "instructions": self.get_system_prompt(enable_reasoning=True),
+                "toolgroups": [self.toolgroup_id],
+                # ...
+            }
+        )
+        self.agent_id = agent.agent_id
+        self._session_store.clear()  # All existing sessions invalidated
+```
+
+### Prompt / Chain Patterns
+
+Both providers use the same prompt structure with governance policy injection:
+
+- **Base system prompt**: Defines the role as a PostgreSQL data analyst, establishes governance policy as highest priority, provides tool usage guidelines, database exploration strategies, formatting rules (Markdown tables, SQL code blocks), and Vega-Lite visualization instructions with chart type examples.
+- **Policy injection**: When a governance policy is active, it is embedded into the system prompt between the base content and the guidelines section, with explicit instructions that policy rules override all user requests.
+- **Nemotron reasoning control**: The MCP-Direct provider appends `/think` or `/no_think` directives to the system prompt based on the `enable_reasoning` flag, controlling Nemotron's chain-of-thought generation.
+- **Llama Stack-specific rules**: The Llama Stack provider adds tool calling format rules (empty braces `{}` for no-parameter calls, single tool call per response) that are necessary because Llama Stack's tool calling format handling differs from direct vLLM.
+
+### Gotchas
+
+- The MCP-Direct provider's agentic loop runs up to 100 iterations (line 534 of `mcp_direct.py`), which is unusually high compared to typical agent loops. Each iteration makes at least one LLM call and potentially multiple MCP tool calls.
+- The `_detect_tool_call_format` method (lines 131-154 of `mcp_direct.py`) auto-detects Nemotron models by checking if "nemotron" appears in the model name. This detection can be overridden via the `LLM_TOOL_CALL_FORMAT` environment variable (set to "auto", "nemotron", or "openai").
+- Nemotron streaming requires careful buffer management: the provider maintains an 11-character buffer window (lines 713-715 of `mcp_direct.py`) to avoid splitting across `<TOOLCALL>` or `</think>` tag boundaries when streaming content character by character.
+- The MCP session is persistent (created at startup, maintained for the lifetime of the backend process) but includes reconnection logic (lines 1013-1023 of `mcp_direct.py`) triggered when tool calls fail with "Session terminated", "404", or "ClosedResourceError". Reconnection calls `initialize()` which creates a new MCP session.
+- The Llama Stack provider handles pod restarts by checking for existing sessions by name (`session-{conversation_id}`) via `client.alpha.agents.session.list()` (lines 216-224 of `llama_stack.py`) before creating new ones. This rebuilds the in-memory `_session_store` cache.
+- The Llama Stack Agents API does not provide an update method for agent instructions. Updating the governance policy requires creating an entirely new agent and clearing all sessions (lines 710-734 of `llama_stack.py`), which is why the provider reports `requires_conversation_restart_on_policy_update() == True`.
+- Conversation state is stored in an in-memory dict (`conversation_store` in `service.py`), meaning all conversations are lost on backend pod restart. The code comments note this should be replaced with Redis or a database in production (line 159 of `service.py`).
+- The MCP-Direct provider appends `"/mcp"` to the configured `mcp_server_url` (line 114 of `mcp_direct.py`) because pg-airman-mcp serves MCP at the `/mcp` endpoint when using streamable-http transport. The Llama Stack provider instead appends `"/sse"` for SSE transport fallback (line 103 of `llama_stack.py`).
+- Tool validation is only applied in MCP-Direct mode. The Llama Stack provider delegates all tool execution to Llama Stack, which does not perform the same allowlist or Pydantic validation (there is no equivalent security layer in the Llama Stack path).
+- The copilot-backend Helm chart sets `failureThreshold: 30` on the liveness probe and `failureThreshold: 60` on the readiness probe (lines 114-124 of `copilot-backend/values.yaml`), allowing up to 5 minutes of health check failures before restart -- necessary because long-running multi-tool-call queries can block the event loop and make the `/health` endpoint unresponsive.
+
+### Related Architectures
+
+- [mcp-tool-integration](mcp-tool-integration.md) -- Both providers consume pg-airman-mcp tools, with MCP-Direct using a persistent session and Llama Stack using toolgroup registration
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Multi-Runner Dispatch) | Approach B (Hierarchical LangGraph DAG) |
-|----------|-----------------------------------|----------------------------------------|
-| Use case | Interactive chat with configurable AI agents | Automated event-driven data processing pipeline |
-| User interaction | Real-time chat with SSE streaming | No user interaction during processing; results viewed after |
-| Agent framework | Pluggable (LlamaStack, LangGraph, CrewAI) | LangGraph only, with LangChain tool-calling agent |
-| Graph definition | Configurable via database (runner_type, graph_config) | Fixed Python code, compiled at module load |
-| Context retrieval | RAG via file_search tool (transparent to prompt) | RAG as explicit graph node + Loki log retrieval subgraph |
-| Processing model | One request at a time per chat session | Batch processing with log clustering for deduplication |
-| LLM routing | Not used (dispatch is by runner_type config) | LLM structured output drives conditional graph edges |
-| Complexity | Higher (multi-framework, SSE normalization) | Moderate (single framework, hierarchical subgraphs) |
+| Criteria | Approach A (Multi-Runner Dispatch) | Approach B (Hierarchical LangGraph DAG) | Approach C (Dual-Provider Factory) |
+|----------|-----------------------------------|----------------------------------------|-----------------------------------|
+| Use case | Interactive chat with configurable AI agents | Automated event-driven data processing pipeline | Interactive copilot with deployment-mode flexibility |
+| User interaction | Real-time chat with SSE streaming | No user interaction during processing; results viewed after | Real-time chat with SSE streaming |
+| Agent framework | Pluggable (LlamaStack, LangGraph, CrewAI) | LangGraph only, with LangChain tool-calling agent | MCP-Direct (custom loop) or Llama Stack (delegated) |
+| Graph definition | Configurable via database (runner_type, graph_config) | Fixed Python code, compiled at module load | Not applicable (simple tool-calling loop, no graph) |
+| Framework selection | Runtime (per-agent, stored in database) | Hardcoded | Deployment-time (environment variable) |
+| Context retrieval | RAG via file_search tool (transparent to prompt) | RAG as explicit graph node + Loki log retrieval subgraph | Not applicable (tools query database directly) |
+| Processing model | One request at a time per chat session | Batch processing with log clustering for deduplication | One request at a time per chat session |
+| LLM routing | Not used (dispatch is by runner_type config) | LLM structured output drives conditional graph edges | Not applicable (single sequential loop) |
+| Tool security | Framework-managed tool registration | No explicit validation | Hard-coded allowlist + Pydantic schema validation (MCP-Direct only) |
+| Model format support | Standard OpenAI tool calling | Standard OpenAI tool calling | Auto-detects Nemotron TOOLCALL tags vs OpenAI format |
+| Policy management | Per-agent shields via LlamaStack safety API | Not applicable | Runtime policy injection into system prompt |
+| Complexity | Higher (multi-framework, SSE normalization) | Moderate (single framework, hierarchical subgraphs) | Moderate (two providers, shared interface) |
