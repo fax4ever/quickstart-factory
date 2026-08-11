@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/f5-ai-guardrails"
     notes: "3 remote ai-architecture-charts deps (pgvector, llm-service, llama-stack) in RAG umbrella chart at deploy/helm/rag/"
     approach: "A"
+  - quickstart: "f5-api-security"
+    repo: "https://github.com/rh-ai-quickstart/F5-API-Security"
+    notes: "3 remote ai-architecture-charts deps (pgvector 0.1.0, llm-service 0.5.10, llama-stack 0.8.6) in RAG umbrella chart at deploy/helm/rag/ with local UI deployment template"
+    approach: "A"
 ---
 
 # Helm Umbrella with All-Remote ai-architecture-charts Dependencies

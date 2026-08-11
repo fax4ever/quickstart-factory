@@ -1,7 +1,7 @@
 ---
 name: llm-service
 description: "Helm subchart for deploying LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI"
-summary: "Deploys LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI via the llm-service Helm subchart (v0.5.9 from ai-architecture-charts), with LlamaStack orchestrating inference between backend and model servers across three runner types -- LlamaStack (via LLAMASTACK_URL), LangGraph (direct OpenAI-compat API, falls back to LlamaStack /v1), and CrewAI (LiteLLM routing requiring `openai/`-prefixed model names via `_to_litellm_model()`). Use when deploying GPU-backed LLM inference on RHOAI/OpenShift AI (24GB+ VRAM, HF_TOKEN for gated models) with multi-device support (cpu/gpu/hpu via DEVICE variable); pre-existing model URLs skip InferenceService creation, `rawDeploymentMode` bypasses KServe for non-KServe clusters, and local dev uses Ollama via LlamaStack's `remote::ollama` provider with silent fallback to first available model. Models configured entirely through `global.models.<name>.enabled/id/url/apiToken/tolerations` at `helm install` via install_with_env.sh or Makefile with rag-values.yaml catalog (values.yaml only has commented examples), GPU tolerations passed as `--set-json`, safety/shield models use same mechanism with separate SAFETY parameter and `registerShield: true` flag (filtered from `/api/v1/llama-stack/llms`), per-model `device`/`accelerators` overrides, and dynamic provider registration patches the LlamaStack ConfigMap at runtime with deployment restart. Gotchas: no explicit `llm-service:` block in ai-virtual-agent values.yaml (f5-ai-guardrails has one with `secret.enabled` for HF token validation; check install script or `helm get values`), LLM (YAML-safe config key) vs LLM_ID (model identifier) distinction where LLM_ID defaults to LLM, LlamaStack API breaks between 0.3.x and 0.6.1 handled by multi-attribute fallback helpers, init container waits for LlamaStack not llm-service causing 10-30min startup for large model downloads, HPU models need different vLLM args (`--max-num-seqs 32`) and max-model-len than GPU counterparts, and CrewAI install script auto-prepends `openai/` prefix for LiteLLM routing."
+summary: "Deploys LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI via the llm-service Helm subchart (v0.5.9+ from ai-architecture-charts), with LlamaStack orchestrating inference between backend and model servers across three runner types -- LlamaStack (via LLAMASTACK_URL), LangGraph (direct OpenAI-compat API, falls back to LlamaStack /v1), and CrewAI (LiteLLM routing requiring `openai/`-prefixed model names via `_to_litellm_model()`). Use when deploying GPU-backed LLM inference on RHOAI/OpenShift AI (24GB+ VRAM, HF_TOKEN for gated models) with multi-device support (cpu/gpu/hpu/xeon via DEVICE variable); pre-existing model URLs skip InferenceService creation, `rawDeploymentMode` bypasses KServe for non-KServe clusters, and local dev uses Ollama via LlamaStack's `remote::ollama` provider with silent fallback to first available model. Models configured entirely through `global.models.<name>.enabled/id/url/apiToken/tolerations` at `helm install` via install_with_env.sh or Makefile with rag-values.yaml catalog (values.yaml only has commented examples), GPU tolerations passed as `--set-json`, safety/shield models use separate SAFETY parameter and `registerShield: true` flag (filtered from `/api/v1/llama-stack/llms`), per-model `device`/`accelerators` overrides with tool-call-parser/vision model `args` for function-calling models, and dynamic provider registration patches the LlamaStack ConfigMap at runtime with deployment restart. Gotchas: no explicit `llm-service:` block in ai-virtual-agent values.yaml (f5-ai-guardrails has one with `secret.enabled` for HF token validation; check install script or `helm get values`), LLM (YAML-safe config key) vs LLM_ID (model identifier) distinction where LLM_ID defaults to LLM, LlamaStack API breaks between 0.3.x and 0.6.1 handled by multi-attribute fallback helpers, init container waits for LlamaStack not llm-service causing 10-30min startup for large model downloads, HPU/Xeon models need different vLLM args (`--max-num-seqs 32`) and max-model-len than GPU counterparts, Chart.yaml vs Chart.lock version drift resolved by `make depend`, and CrewAI install script auto-prepends `openai/` prefix for LiteLLM routing."
 metadata:
   type: component
 tags:
@@ -17,6 +17,10 @@ source_examples:
   - quickstart: "f5-ai-guardrails"
     repo: "https://github.com/rh-ai-quickstart/f5-ai-guardrails"
     notes: "Makefile-driven llm-service deployment with multi-device support (cpu/gpu/hpu), values-file model catalog, rawDeploymentMode, and registerShield for safety models"
+    approach: "A"
+  - quickstart: "f5-api-security"
+    repo: "https://github.com/rh-ai-quickstart/f5-api-security"
+    notes: "llm-service v0.5.10 subchart with Xeon device support, vision/multimodal model catalog entries, and tool-call-parser vLLM args"
     approach: "A"
 ---
 
@@ -118,6 +122,39 @@ Per-model device and accelerator count can also be set in the model entry:
 #       enabled: true
 #       device: "hpu"
 #       accelerators: "1"
+```
+
+### Intel Xeon Device Support (from f5-api-security)
+
+In addition to cpu/gpu/hpu, the llm-service subchart supports Intel Xeon processors via `device: "xeon"`. Xeon deployments require explicit `--max-model-len` and `--max-num-seqs` vLLM args:
+
+```yaml
+# From deploy/helm/rag-values.yaml.example (f5-api-security)
+    llama-3-2-3b-instruct:
+      id: meta-llama/Llama-3.2-3B-Instruct
+      enabled: true
+      device: "xeon"
+      args:
+      - --max-model-len
+      - "14336"
+      - --max-num-seqs
+      - "32"
+```
+
+### Tool-Call and Vision Model Args (from f5-api-security)
+
+Models requiring tool-call parsing or vision capabilities need additional vLLM args. The values.yaml shows per-model `args` for enabling auto tool choice with model-specific parsers:
+
+```yaml
+# From deploy/helm/rag/values.yaml (commented examples)
+#     granite-vision-3-2-2b:
+#       id: ibm-granite/granite-vision-3.2-2b
+#       enabled: true
+#       device: "gpu"
+#       args:
+#       - --enable-auto-tool-choice
+#       - --tool-call-parser
+#       - granite
 ```
 
 ### Safety Model Shield Registration (from f5-ai-guardrails)
@@ -287,6 +324,10 @@ def _get_model_type(model):
 - **HPU models need different args than GPU (from f5-ai-guardrails):** Intel Gaudi HPU models require HPU-specific vLLM args (e.g., `--max-num-seqs 32`) and have different `--max-model-len` values than their GPU counterparts. The values.yaml commented examples show the same model (`Llama-3.2-3B-Instruct`) configured differently for GPU vs HPU, including different max model lengths (`30444` for GPU vs `14336` for HPU).
 
 - **Explicit llm-service block for secrets (from f5-ai-guardrails):** Unlike ai-virtual-agent where the `llm-service:` block is absent from values.yaml, f5-ai-guardrails has an explicit block with `secret.hf_token` and `secret.enabled: true`. The Makefile validation parses `hf_token` from this block with `grep -A 40 "^llm-service:" $(VALUES_FILE) | grep "hf_token:"` and prompts interactively if empty.
+
+- **Xeon device requires explicit memory limits (from f5-api-security):** Unlike GPU deployments where vLLM can auto-detect available memory, Xeon (`device: "xeon"`) deployments need explicit `--max-model-len` and `--max-num-seqs` args. The same model (`Llama-3.2-3B-Instruct`) uses `--max-model-len 14336 --max-num-seqs 32` on Xeon, matching HPU defaults but differing from GPU where `30444` is used.
+
+- **Chart.yaml vs Chart.lock version drift (from f5-api-security):** Chart.yaml declares `llm-service` version `0.5.10` but Chart.lock pins `0.5.2`. This happens when `helm dependency update` has not been re-run after a Chart.yaml version bump. Running `make depend` (which calls `helm dependency update`) resolves the drift.
 
 ## Testing Notes
 

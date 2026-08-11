@@ -26,6 +26,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/f5-ai-guardrails"
     notes: "Frontend-only Streamlit RAG using LlamaStack rag_tool APIs for retrieval and manual prompt context injection, with direct pgvector access for document management"
     approach: "D"
+  - quickstart: "f5-api-security"
+    repo: "https://github.com/rh-ai-quickstart/f5-api-security"
+    notes: "Frontend-only Streamlit RAG using OpenAI-compatible vector_stores.search API (LlamaStack 0.6.1+) for retrieval, files.create/vector_stores.files.create for document ingestion, manual prompt context injection, direct pgvector access, and optional F5 XC endpoint routing for inference"
+    approach: "D"
 ---
 
 # RAG Pipeline

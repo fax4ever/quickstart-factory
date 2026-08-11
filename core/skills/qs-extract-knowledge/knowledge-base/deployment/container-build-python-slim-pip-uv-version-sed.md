@@ -1,7 +1,7 @@
 ---
 name: container-build-python-slim-pip-uv-version-sed
 description: python:3.12-slim Containerfile with pip-installed uv and sed-based LlamaStack version injection at build time
-summary: "Builds a Streamlit frontend container using single-stage python:3.12-slim with pip-installed uv and sed-based build-time version injection, replacing a __LLAMASTACK_VERSION__ placeholder in pyproject.toml via ARG before uv sync. Use for dev/demo Streamlit apps where UBI compliance is not required -- prefer container-build-ubi-uv-python-multistage.md for production needing pinned uv (COPY --from=ghcr.io/astral-sh/uv:<version>) and UBI base; CI passes the version via docker/build-push-action@v5 build-args to Quay.io. Critical config: sed -i \"s/__LLAMASTACK_VERSION__/${LLAMASTACK_VERSION}/g\" pyproject.toml runs before conditional uv sync --frozen (or uv sync if no lockfile); UV_CACHE_DIR=/app/.uv-cache and XDG_CACHE_HOME=/app/.cache redirect caches, chown -R 1001:0 with chmod -R g+rwX handles OpenShift arbitrary UID, port 8501 exposed. Common gotcha: the committed pyproject.toml contains __LLAMASTACK_VERSION__ placeholder (not a valid version) so uv sync fails without the sed step; cache directories require chmod 777 regardless of running UID; pip install uv pulls the latest unpinned version at build time; python:3.12-slim may not meet production compliance mandating UBI."
+summary: "Builds a single-stage Streamlit frontend container from python:3.12-slim with pip-installed uv (unpinned latest) and sed-based build-time version injection, replacing a __LLAMASTACK_VERSION__ placeholder in pyproject.toml via ARG (default 0.6.0) before conditional uv sync --frozen or fresh uv sync. Use for dev/demo Streamlit apps where UBI compliance is not required -- prefer container-build-ubi-uv-python-multistage.md for production needing pinned uv (COPY --from=ghcr.io/astral-sh/uv:<version>) and UBI base; CI passes the version via docker/build-push-action@v5 build-args to Quay.io. Critical config: sed -i \"s/__LLAMASTACK_VERSION__/${LLAMASTACK_VERSION}/g\" pyproject.toml runs before sync; UV_CACHE_DIR=/app/.uv-cache and XDG_CACHE_HOME=/app/.cache redirect caches; chown -R 1001:0 with chmod -R g+rwX handles OpenShift arbitrary UID; port 8501 exposed with uv run streamlit entrypoint that resolves the venv on each container start. Common gotcha: the committed pyproject.toml contains __LLAMASTACK_VERSION__ placeholder (not a valid version) so uv sync fails without the sed step; cache directories require chmod 777 regardless of running UID; pip install uv pulls the latest unpinned version at build time; python:3.12-slim may not meet production compliance mandating UBI."
 metadata:
   type: deployment-pattern
 tags:
@@ -12,6 +12,10 @@ source_examples:
   - quickstart: "f5-ai-guardrails"
     repo: "https://github.com/rh-ai-quickstart/f5-ai-guardrails"
     notes: "python:3.12-slim base, uv via pip, sed replaces __LLAMASTACK_VERSION__ in pyproject.toml, OpenShift UID 1001 ownership"
+    approach: "A"
+  - quickstart: "f5-api-security"
+    repo: "https://github.com/rh-ai-quickstart/F5-API-Security"
+    notes: "Same python:3.12-slim + uv + sed pattern, LLAMASTACK_VERSION=0.6.1, Streamlit UI for F5 API Security RAG chatbot"
     approach: "A"
 ---
 

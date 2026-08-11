@@ -1,7 +1,7 @@
 ---
 name: github-actions-single-image-chart-version-tag
 description: Single GitHub Actions workflow building one container image with version tag extracted from a nested Chart.yaml
-summary: "Automates building and pushing a single container image to Quay.io with version tags extracted from a nested Helm Chart.yaml in a GitHub Actions workflow triggered on main push or workflow_dispatch. Use for single-image quickstarts with one Containerfile where the version lives in a subchart (deploy/helm/rag/Chart.yaml); prefer github-actions-multi-image-release-pipeline for projects needing multiple images, five-workflow CI, or Buildx registry caching. Version extraction uses `grep '^version:' deploy/helm/rag/Chart.yaml | awk '{print $2}'` passed via $GITHUB_OUTPUT with a repository guard (`if: github.repository == 'rh-ai-quickstart/...'`) preventing fork pushes to the upstream registry -- requires QUAY_USERNAME and QUAY_PASSWORD secrets. The `grep '^version:'` pattern assumes version is a top-level YAML key (not indented), LLAMASTACK_VERSION build arg is hardcoded at 0.6.0 independent of chart version requiring dual updates in pyproject.toml and the workflow file, and no Buildx cache-from/cache-to is configured unlike the multi-image pattern."
+summary: "Automates building and pushing a single container image to Quay.io with dual tags (version + latest) extracted from a nested Helm Chart.yaml in a GitHub Actions workflow triggered on main push or workflow_dispatch. Use for single-image quickstarts with one Containerfile where the version lives in a subchart (deploy/helm/rag/Chart.yaml); prefer github-actions-multi-image-release-pipeline for projects needing multiple images, five-workflow CI, or Buildx registry caching. Version extraction uses `grep '^version:' deploy/helm/rag/Chart.yaml | awk '{print $2}'` passed via $GITHUB_OUTPUT; build context is frontend/ with frontend/Containerfile, guarded by `if: github.repository == 'rh-ai-quickstart/...'` to prevent fork pushes -- requires QUAY_USERNAME and QUAY_PASSWORD secrets. The `grep '^version:'` pattern assumes version is a top-level YAML key (not indented), LLAMASTACK_VERSION build arg is hardcoded at 0.6.0 independent of chart version requiring dual updates in pyproject.toml and the workflow file, and no Buildx cache-from/cache-to is configured unlike the multi-image pattern."
 metadata:
   type: deployment-pattern
 tags:
@@ -12,6 +12,10 @@ source_examples:
   - quickstart: "f5-ai-guardrails"
     repo: "https://github.com/rh-ai-quickstart/f5-ai-guardrails"
     notes: "Single workflow, one Containerfile, version from deploy/helm/rag/Chart.yaml, dual tags (version + latest)"
+    approach: "A"
+  - quickstart: "f5-api-security"
+    repo: "https://github.com/rh-ai-quickstart/F5-API-Security"
+    notes: "Same single-workflow pattern, version from deploy/helm/rag/Chart.yaml, LLAMASTACK_VERSION=0.6.1 build-arg, repo guard on rh-ai-quickstart/F5-API-Security"
     approach: "A"
 ---
 
