@@ -1,7 +1,7 @@
 ---
 name: llm-service
 description: "Helm subchart for deploying LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI"
-summary: "Deploys LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI via the llm-service Helm subchart (v0.5.9+ from ai-architecture-charts), with LlamaStack orchestrating inference between backend and model servers across three runner types -- LlamaStack (via LLAMASTACK_URL), LangGraph (direct OpenAI-compat API, falls back to LlamaStack /v1), and CrewAI (LiteLLM routing requiring `openai/`-prefixed model names via `_to_litellm_model()`). Use when deploying GPU-backed LLM inference on RHOAI/OpenShift AI (24GB+ VRAM, HF_TOKEN for gated models) with multi-device support (cpu/gpu/hpu/xeon via DEVICE variable); pre-existing model URLs skip InferenceService creation, `rawDeploymentMode` bypasses KServe for non-KServe clusters, and local dev uses Ollama via LlamaStack's `remote::ollama` provider with silent fallback to first available model. Models configured entirely through `global.models.<name>.enabled/id/url/apiToken/tolerations/maxTokens` at `helm install` via install_with_env.sh or Makefile with rag-values.yaml catalog (values.yaml only has commented examples), GPU tolerations passed as `--set-json`, safety/shield models use separate SAFETY parameter and `registerShield: true` flag (filtered from `/api/v1/llama-stack/llms`), per-model `device`/`accelerators` overrides with tool-call-parser/vision model `args` for function-calling models, dynamic provider registration patches the LlamaStack ConfigMap at runtime with deployment restart, and LlamaStack client port resolution uses LLAMASTACK_CLIENT_PORT > LLAMASTACK_SERVICE_PORT > 8321 to avoid K8s `tcp://` format in LLAMASTACK_PORT. Gotchas: no explicit `llm-service:` block in ai-virtual-agent values.yaml (f5-ai-guardrails has one with `secret.enabled` for HF token validation; check install script or `helm get values`), LLM (YAML-safe config key) vs LLM_ID (model identifier) distinction where LLM_ID defaults to LLM, LlamaStack API breaks between 0.3.x and 0.6.1 handled by multi-attribute fallback helpers, init container waits for LlamaStack not llm-service causing 10-30min startup for large model downloads, HPU/Xeon models need different vLLM args (`--max-num-seqs 32`) and max-model-len than GPU counterparts, post-init replica scaling requires dedicated RBAC (ServiceAccount/Role/RoleBinding) for `kubectl scale` hook Job, `maxTokens` is server-side only (Responses API lacks per-request support, default 2048 via LLM_MAX_TOKENS), Chart.yaml vs Chart.lock version drift resolved by `make depend`, and CrewAI install script auto-prepends `openai/` prefix for LiteLLM routing."
+summary: "Deploys LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI via the llm-service Helm subchart (v0.5.9+ from ai-architecture-charts), with LlamaStack orchestrating inference between backend and model servers across three runner types -- LlamaStack (via LLAMASTACK_URL), LangGraph (direct OpenAI-compat API, falls back to LlamaStack /v1), and CrewAI (LiteLLM routing requiring `openai/`-prefixed model names via `_to_litellm_model()`). Use when deploying GPU-backed LLM inference on RHOAI/OpenShift AI (24GB+ VRAM, HF_TOKEN for gated models) with multi-device support (cpu/gpu/hpu/xeon via DEVICE variable); pre-existing model URLs skip InferenceService creation, `rawDeploymentMode` bypasses KServe for non-KServe clusters, `llm-service.enabled: false` disables the subchart entirely for MaaS/remote-only paths (with `skipModelWait: true` and empty `initContainers`), and local dev uses Ollama via LlamaStack's `remote::ollama` provider with silent fallback to first available model. Models configured entirely through `global.models.<name>.enabled/id/url/apiToken/tolerations/maxTokens` at `helm install` via install_with_env.sh or Makefile with rag-values.yaml catalog (values.yaml only has commented examples), GPU tolerations passed as `--set-json`, safety/shield models use separate SAFETY parameter and `registerShield: true` flag (filtered from `/api/v1/llama-stack/llms`), per-model `device`/`accelerators` overrides with tool-call-parser/vision model `args` for function-calling models, dynamic provider registration patches the LlamaStack ConfigMap at runtime with deployment restart, and LlamaStack client port resolution uses LLAMASTACK_CLIENT_PORT > LLAMASTACK_SERVICE_PORT > 8321 to avoid K8s `tcp://` format in LLAMASTACK_PORT. Gotchas: no explicit `llm-service:` block in ai-virtual-agent values.yaml (f5-ai-guardrails has one with `secret.enabled` for HF token validation; check install script or `helm get values`), LLM (YAML-safe config key) vs LLM_ID (model identifier) distinction where LLM_ID defaults to LLM, LlamaStack API breaks between 0.3.x and 0.6.1 handled by multi-attribute fallback helpers, init container waits for LlamaStack not llm-service causing 10-30min startup for large model downloads, HPU/Xeon models need different vLLM args (`--max-num-seqs 32`) and max-model-len than GPU counterparts, post-init replica scaling requires dedicated RBAC (ServiceAccount/Role/RoleBinding) for `kubectl scale` hook Job, `maxTokens` is server-side only (Responses API lacks per-request support, default 2048 via LLM_MAX_TOKENS), Chart.yaml vs Chart.lock version drift resolved by `make depend`, and CrewAI install script auto-prepends `openai/` prefix for LiteLLM routing."
 metadata:
   type: component
 tags:
@@ -25,6 +25,10 @@ source_examples:
   - quickstart: "it-self-service-agent"
     repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
     notes: "llm-service v0.5.6 subchart with server-side maxTokens per model, LlamaStack post-init replica scaling, and Kubernetes service discovery for LlamaStack client"
+    approach: "A"
+  - quickstart: "RAG"
+    repo: "https://github.com/rh-ai-quickstart/RAG"
+    notes: "llm-service v0.5.10 subchart with conditional enablement, remote LLM as first-class deployment path (LLM=remotellm), MaaS-only e2e testing, FP8/vision model catalog, and tenant bootstrap with llm-service disabled"
     approach: "A"
 ---
 
@@ -254,6 +258,118 @@ inference_providers.append(new_provider)
 core_v1.patch_namespaced_config_map(CONFIGMAP_NAME, namespace, configmap)
 ```
 
+### Conditional Subchart Enablement (from RAG)
+
+The llm-service subchart can be entirely disabled via `llm-service.enabled` in values. Chart.yaml wires this through a `condition:` field so Helm skips all llm-service templates when disabled:
+
+```yaml
+# From deploy/helm/rag/Chart.yaml
+dependencies:
+  - name: llm-service
+    version: 0.5.10
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+    condition: llm-service.enabled
+```
+
+This is used in the e2e test values to run without GPUs or KServe CRDs:
+
+```yaml
+# From tests/e2e/values-e2e.yaml
+llm-service:
+  enabled: false
+```
+
+### Remote LLM as First-Class Deployment Path (from RAG)
+
+RAG documents `LLM=remotellm` as a dedicated deployment path that skips local vLLM deployment entirely. The Makefile wires `LLM_URL`, `LLM_API_TOKEN`, and `LLM_ID` through `global.models`:
+
+```bash
+# From README.md installation steps
+make install NAMESPACE=llama-stack-rag \
+  LLM=remotellm \
+  LLM_URL=https://my-model-endpoint.example.com/v1 \
+  LLM_API_TOKEN=my-api-token \
+  LLM_ID=llm_model_id
+```
+
+The same can be set declaratively in the values file:
+
+```yaml
+# From deploy/helm/rag/values.yaml (README example)
+global:
+  models:
+    remotellm:
+      id: meta-llama/Llama-3.3-70B-Instruct
+      url: https://llm-gateway.com/v1
+      apiToken: api-token
+      enabled: true
+```
+
+### MaaS-Only E2E Testing Pattern (from RAG)
+
+For CI (GitHub Actions on Kind), llm-service is disabled and models are injected via `helm --set` from workflow environment variables. This avoids GPU requirements in CI:
+
+```yaml
+# From tests/e2e/values-e2e.yaml
+global:
+  models: {}
+    # Populated by workflow:
+    # llama-3-2-3b:
+    #   url: "https://maas-endpoint/v1"
+    #   id: "llama-3-2-3b"
+    #   enabled: true
+    #   apiToken: "secret-key"
+
+llm-service:
+  enabled: false
+
+llama-stack:
+  enabled: true
+  skipModelWait: true
+  initContainers: []
+```
+
+The e2e workflow creates stub KServe CRDs (`InferenceService`, `ServingRuntime`) so Helm template rendering succeeds even though no real KServe operator is present.
+
+### Tenant Bootstrap with Remote Models (from RAG)
+
+The tenant bootstrap Helm chart provides a GitOps-ready configuration that defaults to remote models with llm-service disabled:
+
+```yaml
+# From tenant/bootstrap/values.yaml
+rag:
+  values:
+    llm-service:
+      enabled: false
+      secret:
+        hf_token: ""
+    global:
+      models:
+        remotellm:
+          enabled: false
+          apiToken: "paste-your-token-here"
+          url: "paste-your-url-here"
+          id: "paste-your-model-id-here"
+```
+
+### FP8-Dynamic and Vision Model Catalog Entries (from RAG)
+
+The values.yaml model catalog includes FP8-quantized and vision models with model-specific vLLM args:
+
+```yaml
+# From deploy/helm/rag/values.yaml (commented examples)
+#     qwen25-vl-7b-instruct-fp8-dynamic:
+#       id: RedHatAI/Qwen2.5-VL-7B-Instruct-FP8-Dynamic
+#       enabled: true
+#       resources:
+#         limits:
+#           nvidia.com/gpu: "1"
+#       args:
+#       - --distributed-executor-backend=mp
+#       - --dtype=auto
+#       - --max-model-len=8000
+```
+
 ### Server-Side Max Tokens per Model (from it-self-service-agent)
 
 The `maxTokens` parameter can be set per model via `global.models.<name>.maxTokens` at install time. This controls server-side max output tokens (useful when the Responses API does not support per-request max_tokens). The Makefile exposes `LLM_MAX_TOKENS` (default 2048):
@@ -356,6 +472,20 @@ def _get_model_type(model):
   - `llamastack.openaiBasePath` - Base path for OpenAI-compatible API (default `/v1/openai/v1`)
   - `llamastack.timeout` - Request timeout in seconds (default 120)
 
+- **Additional Helm values (from RAG):**
+  - `llm-service.enabled` - Conditional subchart enablement (default `true`); set to `false` for MaaS or remote-only deployments
+  - `global.models.<name>.url` - Remote model endpoint URL (skips InferenceService creation)
+  - `global.models.<name>.apiToken` - Authentication token for remote model endpoints
+  - `global.models.<name>.resources.limits` - Resource limits including `nvidia.com/gpu` count
+  - `global.models.<name>.args` - Per-model vLLM CLI args (e.g., `--distributed-executor-backend=mp`, `--dtype=auto`)
+  - `llama-stack.skipModelWait` - Skip waiting for local model servers (for MaaS deployments)
+
+- **Makefile variables (from RAG):**
+  - `INTERACTIVE` - Enable/disable interactive prompts (default `true`)
+  - `LLM_TOLERATION` / `SAFETY_TOLERATION` - Per-model GPU toleration keys
+  - `RAW_DEPLOYMENT` - Use raw Deployments instead of KServe InferenceServices (applied to both `llm-service` and `llama-stack`)
+  - `EXTRA_HELM_ARGS` - Passthrough for additional Helm arguments
+
 - **Additional Helm values (from f5-ai-guardrails):**
   - `llm-service.secret.enabled` - Enable secret creation for HF token (default `true`)
   - `llm-service.device` - Global device type (`cpu`, `gpu`, `hpu`; default `gpu`)
@@ -396,6 +526,14 @@ def _get_model_type(model):
 
 - **Chart.yaml vs Chart.lock version drift (from f5-api-security):** Chart.yaml declares `llm-service` version `0.5.10` but Chart.lock pins `0.5.2`. This happens when `helm dependency update` has not been re-run after a Chart.yaml version bump. Running `make depend` (which calls `helm dependency update`) resolves the drift.
 
+- **`llm-service.enabled` must be explicitly set for MaaS/remote-only (from RAG):** When using external models via MaaS or `LLM=remotellm`, the llm-service subchart should be disabled with `llm-service.enabled: false`. If left enabled (the default), Helm will render KServe InferenceService resources that require KServe CRDs and GPU nodes even when no local models are configured. The e2e tests demonstrate this pattern in `tests/e2e/values-e2e.yaml`.
+
+- **`skipModelWait` and empty `initContainers` for MaaS (from RAG):** When using external MaaS models, LlamaStack must be configured with `skipModelWait: true` and `initContainers: []` to prevent init containers from waiting for local model servers that will never start. From `tests/e2e/values-e2e.yaml`: these two settings together bypass the model-readiness checks.
+
+- **Predictor pod readiness: 2/2 vs 3/3 containers (from RAG):** KServe model server pods show as `component=predictor`. They should show `2/2` Ready when `RAW_DEPLOYMENT` is used (default), or `3/3` when `RAW_DEPLOYMENT=false` (full KServe with queue-proxy sidecar). From README: `Look for 2/2 (or 3/3 when RAW_DEPLOYMENT=false) under the Ready column`.
+
+- **Interactive vs non-interactive Makefile mode (from RAG):** The Makefile `INTERACTIVE ?= true` variable controls whether the install process pauses for user input (HF token, TAVILY key, values file review). Set `INTERACTIVE=false` for CI/unattended deployments. Non-interactive mode skips prompts and logs warnings for missing values instead.
+
 ## Testing Notes
 
 - Use `make list-models` to verify available model definitions before installation
@@ -409,6 +547,9 @@ def _get_model_type(model):
 
 - In it-self-service-agent, `make helm-list-models` enumerates available models: `helm template dummy-release helm --set llm-service._debugListModels=true | grep ^model:`
 - The init job waits for LlamaStack readiness then runs `python3 -m agent_service.scripts.register_assets` to register agents and knowledge bases
+- In RAG, verify KServe model servers via `oc get pods -l component=predictor` and wait for 2/2 (raw mode) or 3/3 (full KServe) Ready containers
+- RAG e2e tests on Kind disable llm-service entirely and use MaaS models injected via GitHub Actions `helm --set`, with stub KServe CRDs installed to satisfy Helm template rendering
+- Use `make validate-config` to check HF token and TAVILY key configuration without installing; `make configure-keys` prompts interactively for both keys
 
 ## Related Patterns
 

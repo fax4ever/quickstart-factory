@@ -1,12 +1,12 @@
 ---
 name: evaluations
 description: "DeepEval-based conversation evaluation framework for AI agent testing with LLM-as-judge metrics"
-summary: "DeepEval-based conversation evaluation framework for AI agents that orchestrates a three-step subprocess pipeline — run predefined conversation flows, generate conversations via ConversationSimulator (with live agent model callback through OpenShift oc exec) or export from API (--conversation-source generate|export), then evaluate with ConversationalGEval LLM-as-judge metrics — using a flow registry that auto-discovers pluggable flows/ subdirectories each containing flow.py (scenarios, chatbot role) and metrics.py (per-flow evaluation criteria). Use when validating deployed AI agents end-to-end on OpenShift with both LLM-judged quality metrics (via RetryableConversationalGEval that auto-retries below-threshold scores addressing judge non-determinism) and deterministic metadata evaluation for state machine transitions without LLM; supports negative testing via --check flag verifying known-bad conversations all fail as expected. Configure with LLM_API_TOKEN/LLM_URL/NAMESPACE env vars; CustomLLM adapter wraps any OpenAI-compatible endpoint as judge with optional instructor structured output (--use-structured-output); OpenShift chat client parses :DONE terminators and TOKEN_SUMMARY: lines from oc exec subprocess for conversation recording and app token tracking. DeepEval's wrap_up_test_run is monkey-patched to no-op preventing online login prompts, GPT-OSS-120b requires workaround for malformed JSON wrapping output in {\"final\": ...}, DeepEval ConversationalTestCase.context type hint says Optional[str] but runtime expects List[str], and --concurrency N cannot exceed the count of authoritative_user_ids since workers get disjoint user partitions."
+summary: "DeepEval-based evaluation framework for validating deployed AI agents and RAG applications end-to-end through LLM-as-judge conversation metrics, with Approach A testing conversational agents via oc exec subprocess pipeline with pluggable flow registry auto-discovery (flows/ containing flow.py + metrics.py) and Approach B testing RAG apps via Playwright browser automation against Streamlit UIs with two-stage evaluation (response quality + retrieval chunk quality). Use Approach A when validating agent state-machine behavior with ConversationSimulator generation via live model callback (--conversation-source generate|export), RetryableConversationalGEval addressing judge non-determinism, and deterministic metadata evaluation for state transitions without LLM; use Approach B when evaluating RAG retrieval quality with Stage 1 ConversationalGEval response metrics (with ground truth context injection) and Stage 2 chunk metrics (ChunkCountMetric, ChunkDeduplicationMetric via Jaccard >= 0.8, ContextualPrecision, ContextualRelevancy, Faithfulness); both support negative testing via --check (--expect-failures for Approach B). Both approaches require LLM_API_TOKEN/LLM_URL env vars and CustomLLM adapter wrapping any OpenAI-compatible endpoint as judge with optional instructor structured output; Approach A uses multiprocessing with disjoint authoritative_user_ids partitions and parses :DONE terminators and TOKEN_SUMMARY: lines for token tracking, while Approach B uses asyncio.Semaphore (--max-concurrent-calls default 16) and endpoint auto-detection (RAG_UI_ENDPOINT > oc get route > localhost). DeepEval's wrap_up_test_run must be monkey-patched to no-op preventing login prompts, GPT-OSS-120b requires workaround for malformed JSON wrapping in {\"final\": ...}, ConversationalTestCase.context type hint says Optional[str] but runtime expects List[str], --concurrency N cannot exceed authoritative_user_ids count, Streamlit chunk extraction requires three DOM fallback strategies across versions, and DEEPEVAL_PER_TASK_TIMEOUT_SECONDS_OVERRIDE defaults to 600s because the default is too short for RAG evaluations."
 metadata:
   type: component
 tags:
-  tech_stack: [python, deepeval, openai, instructor, pydantic]
-  ai_pattern: [evaluation, agents, guardrails]
+  tech_stack: [python, deepeval, openai, instructor, pydantic, playwright, pytest, markdownify, streamlit]
+  ai_pattern: [evaluation, agents, guardrails, rag, vector-search]
   platform: [openshift]
   data_layer: []
 source_examples:
@@ -14,6 +14,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
     notes: "Full conversation evaluation pipeline with flow registry, LLM-as-judge metrics, conversation generation, and known-bad validation"
     approach: "A"
+  - quickstart: "RAG"
+    repo: "https://github.com/rh-ai-quickstart/RAG"
+    notes: "Playwright-based RAG evaluation with two-stage pipeline (conversational quality + retrieval chunk metrics), custom chunk deduplication/count metrics, and UI-driven conversation capture"
+    approach: "B"
 ---
 
 # Evaluations
@@ -220,3 +224,249 @@ class ConversationMetadataDeterministicEval(BaseConversationalMetric):
 - `shared-clients` -- shared API clients used by `export_conversations_from_api.py`
 - `shared-models` -- shared data models referenced via workspace dependency
 - `request-manager` -- the agent pod targeted by `oc exec` in the OpenShift chat client
+
+---
+
+## Approach B: Playwright-Based RAG Evaluation (from RAG)
+
+### When to Use
+
+When evaluating a RAG application that has a Streamlit web UI, where both response quality and retrieval chunk quality need separate assessment. Unlike Approach A's agent-focused testing via `oc exec`, this approach drives a browser against the live UI to capture both the assistant's response and the actual retrieved chunks, then runs a two-stage evaluation pipeline.
+
+### Differences from Approach A
+
+- **Conversation generation:** Playwright browser automation against a Streamlit UI instead of `oc exec` subprocess into an agent pod
+- **Evaluation stages:** Two distinct stages -- Stage 1 (ConversationalGEval for response quality) and Stage 2 (LLMTestCase-based metrics for retrieval chunk quality) -- instead of a single-stage flow-based evaluation
+- **Test data format:** JSON files in `conversations/` subdirectories (organized by domain, e.g., `hr/`, `legal/`) with `expected_rag_content` and `expected_output` fields, rather than a flow registry with `flow.py`/`metrics.py` plugins
+- **Custom non-LLM metrics:** ChunkCountMetric and ChunkDeduplicationMetric (Jaccard similarity) that run without an LLM judge, in addition to LLM-based metrics
+- **RAG-specific LLM metrics:** Chunk Alignment (GEval), ContextualPrecision, ContextualRelevancy, Faithfulness -- all operating on `retrieval_context` vs `context` fields
+- **No flow registry:** Static JSON test definitions instead of pluggable flow directories
+- **No conversation generation via simulator:** Tests are predefined; conversations are captured by replaying them through the UI, not generated by DeepEval's ConversationSimulator
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Python >=3.11
+- **Key dependencies:** deepeval>=1.2.6, pytest>=8.3.0, pytest-playwright>=0.5.0, playwright>=1.48.0, instructor>=1.7.0, openai>=1.0.0, markdownify>=0.11.0
+- **Build system:** pyproject.toml (standalone, no workspace dependencies)
+
+### Pipeline Orchestrator
+
+The `evaluate.py` wrapper chains two steps: (1) run pytest to capture conversations through the UI, (2) run `deep_eval_rag.py` to evaluate them. A `--check` mode skips conversation generation and evaluates known-bad conversations instead.
+
+```python
+# evaluate.py -- two-step pipeline
+if check_mode:
+    cmd = [sys.executable, str(EVALUATIONS_DIR / "deep_eval_rag.py")]
+    # Override --results-dir to bad-conversations/
+    if "--results-dir" not in " ".join(deep_eval_extra):
+        deep_eval_extra += ["--results-dir", str(KNOWN_BAD_DIR)]
+    if "--expect-failures" not in deep_eval_extra:
+        deep_eval_extra += ["--expect-failures"]
+else:
+    # Step 1: pytest captures conversations via Playwright
+    pytest_cmd = [sys.executable, "-m", "pytest",
+                  str(EVALUATIONS_DIR / "test_conversations_ui.py"), "-v", "-s"]
+    # Step 2: evaluate captured conversations
+    deep_eval_cmd = [sys.executable, str(EVALUATIONS_DIR / "deep_eval_rag.py")]
+```
+
+### Playwright UI Conversation Capture
+
+The `ConversationTestRunner` class drives Playwright against the Streamlit RAG UI. It configures mode (direct/agent), selects vector databases via Streamlit's multiselect widget, sends messages, waits for streaming responses to stabilize, and extracts actual RAG chunks from search result expanders.
+
+```python
+# test_conversations_ui.py -- ConversationTestRunner
+def send_message(self, content: str) -> tuple[str, Optional[Dict[str, Any]]]:
+    chat_input = self.page.get_by_placeholder("Ask a question...", exact=False)
+    chat_input.fill(content)
+    chat_input.press("Enter")
+    self.page.wait_for_load_state("networkidle")
+    response_text = self._wait_for_assistant_response(content)
+    actual_rag_content = self._extract_actual_rag_content()
+    return response_text, actual_rag_content
+```
+
+### RAG Chunk Extraction from UI
+
+The `_extract_actual_rag_content` method locates Streamlit expanders containing search results, attempts three extraction strategies (data-value attribute, React props via JS evaluation, text parsing with regex), and returns the chunks as a list of strings.
+
+```python
+# test_conversations_ui.py -- chunk extraction strategies
+json_data_attr = json_element.get_attribute("data-value")
+if json_data_attr:
+    search_results = json.loads(json_data_attr)
+elif json_element.get_attribute("data-json"):
+    search_results = json.loads(json_element.get_attribute("data-json"))
+else:
+    raw_json = json_element.evaluate("""(element) => {
+        const key = Object.keys(element).find(k => k.startsWith('__react'));
+        if (key && element[key] && element[key].memoizedProps) {
+            const props = element[key].memoizedProps;
+            if (props.src) return JSON.stringify(props.src);
+        }
+        return null;
+    }""")
+```
+
+### Two-Stage Evaluation Metrics
+
+Stage 1 uses ConversationalGEval metrics for response quality (Response Accuracy, Response Completeness, Answer Relevance). Stage 2 uses LLMTestCase-based metrics for retrieval quality (ChunkCountMetric, ChunkDeduplicationMetric, Chunk Alignment GEval, ContextualPrecision, ContextualRelevancy, Faithfulness).
+
+```python
+# get_rag_metrics.py -- Stage 1 conversational metrics
+metrics.append(ConversationalGEval(
+    name="Response Accuracy",
+    criteria="Every factual claim must be verifiable against retrieval_context...",
+    evaluation_params=[TurnParams.CONTENT, TurnParams.ROLE, TurnParams.RETRIEVAL_CONTEXT],
+    threshold=0.7, model=custom_model,
+))
+# Stage 2 retrieval metrics
+metrics.append(ChunkCountMetric(max_chunks=max_chunks, threshold=1.0))
+metrics.append(ChunkDeduplicationMetric(similarity_threshold=0.8, threshold=1.0))
+metrics.append(ContextualPrecisionMetric(threshold=0.7, model=custom_model))
+```
+
+### Custom Chunk Deduplication Metric
+
+A non-LLM metric that detects near-duplicate chunks using word-level Jaccard similarity. Compares all pairs of retrieved chunks; any pair with similarity >= 0.8 is flagged as a duplicate.
+
+```python
+# get_rag_metrics.py -- ChunkDeduplicationMetric
+@staticmethod
+def _jaccard_similarity(set1: set, set2: set) -> float:
+    if not set1 and not set2:
+        return 1.0
+    union = set1 | set2
+    return len(set1 & set2) / len(union) if union else 0.0
+
+def measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+    chunks = test_case.retrieval_context or []
+    tokenized = [self._tokenize(chunk) for chunk in chunks]
+    for i in range(len(tokenized)):
+        for j in range(i + 1, len(tokenized)):
+            sim = self._jaccard_similarity(tokenized[i], tokenized[j])
+            if sim >= self.similarity_threshold:
+                duplicate_pairs.append((i + 1, j + 1, sim))
+```
+
+### Custom LLM with Concurrency Control
+
+The CustomLLM adapter adds an asyncio.Semaphore to limit total concurrent API calls across all metrics and test cases. DeepEval fires approximately 15 calls per test case simultaneously across all metrics; the semaphore prevents server overload.
+
+```python
+# helpers/custom_llm.py -- concurrency control
+class CustomLLM(DeepEvalBaseLLM):
+    def __init__(self, ..., max_concurrent_calls: int = 4):
+        self._semaphore = asyncio.Semaphore(max_concurrent_calls)
+        self.instructor_client = instructor.from_openai(
+            self.client, mode=instructor.Mode.JSON
+        )
+
+    async def a_generate(self, prompt, schema=None):
+        async with self._semaphore:
+            # ... API call with concurrency limit
+```
+
+### Endpoint Auto-Detection
+
+The `helpers/endpoint.py` module auto-detects the RAG UI endpoint through a priority chain: explicit `RAG_UI_ENDPOINT` env var, OpenShift route lookup via `NAMESPACE` env var, current `oc project` context, or localhost fallback.
+
+```python
+# helpers/endpoint.py
+def get_rag_ui_endpoint() -> str:
+    if os.getenv("RAG_UI_ENDPOINT"):
+        return os.getenv("RAG_UI_ENDPOINT")
+    namespace = os.getenv("NAMESPACE")
+    if namespace:
+        result = subprocess.run(
+            ["oc", "get", "route", "rag", "-n", namespace,
+             "-o", "jsonpath={.spec.host}"], ...)
+```
+
+### Conversation Test Data Format
+
+JSON files define conversations with expected RAG content (ground truth chunks) and expected output for each user message. The evaluator compares actual retrieved chunks against expected chunks.
+
+```json
+{
+  "metadata": { "description": "Test EAP query against HR Benefits document" },
+  "config": { "mode": "direct", "vector_dbs": ["hr-vector-db-v1-0"] },
+  "messages": [{
+    "role": "user",
+    "content": "What is the employee assistance program?",
+    "expected_output": "While FantaCo does not have a traditional EAP...",
+    "expected_rag_content": {
+      "chunks": ["The \"Cry Closet\" (Actually a \"Champagne..."]
+    }
+  }]
+}
+```
+
+### Ground Truth Context Injection
+
+The evaluator injects ground truth context into ConversationalGEval scenarios with explicit instructions that the judge must treat the content as real, regardless of how unusual it appears.
+
+```python
+# deep_eval_rag.py -- ground truth prompt
+context.append("IMPORTANT: The following chunks are the EXACT, ACTUAL content from the source")
+context.append("document. Regardless of how unusual, whimsical, or unrealistic this content may")
+context.append("appear, it IS the real ground truth content that was retrieved by the RAG system.")
+context.append("You MUST evaluate the assistant's response based SOLELY on whether it accurately")
+context.append("reflects THIS content, not on whether the content seems realistic or plausible.")
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `OPENAI_API_KEY` or `LLM_API_TOKEN` -- API key for the evaluator LLM judge
+  - `OPENAI_API_BASE` or `LLM_URL` -- Base URL for the LLM endpoint
+  - `LLM_ID` or `LLM` -- Model identifier (defaults to `gpt-4`)
+  - `RAG_UI_ENDPOINT` -- Explicit Streamlit UI URL override
+  - `NAMESPACE` -- OpenShift namespace for auto-detecting the UI route
+  - `DEEPEVAL_PER_TASK_TIMEOUT_SECONDS_OVERRIDE` -- Per-task timeout (defaults to 600s)
+- **CLI arguments:** `--api-endpoint`, `--api-key`, `--results-dir`, `--output-dir`, `--max-limited-chunks` (default 10), `--max-tokens`, `--sequential`, `--max-concurrent` (default 4), `--max-concurrent-calls` (default 16), `--stage 1|2|both`, `--check`, `--expect-failures`, `--debug`, `--subdir` (pytest filter for conversation subdirectory)
+
+### Known Gotchas
+
+- DeepEval's `global_test_run_manager.wrap_up_test_run` is monkey-patched to a no-op (same pattern as Approach A) to prevent online login prompts.
+- The `DEEPEVAL_PER_TASK_TIMEOUT_SECONDS_OVERRIDE` environment variable is set to 600 seconds by default in `deep_eval_rag.py` if not already present, because the default timeout is too short for RAG evaluations with many chunks.
+- Playwright browsers are installed to a project-local `evaluations/bin/` directory via `ensure_playwright_browsers()` rather than the system-wide default, controlled by `PLAYWRIGHT_BROWSERS_PATH`.
+- Extracting RAG chunks from Streamlit's `st.json` expanders requires three fallback strategies because the DOM structure varies between Streamlit versions (data-value attribute, React fiber props via JS evaluation, regex text parsing).
+- The `_wait_for_assistant_response` method checks for both the Streamlit "Running..." indicator disappearing and response text stabilization (5 consecutive identical reads at 1-second intervals) to handle streaming responses.
+- The `--max-concurrent-calls` flag (default 16) caps total in-flight API requests via an asyncio.Semaphore because DeepEval fires approximately 15 calls per test case simultaneously across all metrics, which can overload the LLM server.
+- Stage 2 retrieval evaluation can fail if the LLM truncates its response (`finish_reason=length`). The error message suggests `--max-tokens 8192` and the pipeline continues with Stage 1 results only rather than aborting.
+- ContextualRecallMetric is commented out in `get_rag_metrics.py` with the note "Not working with current judge LLMs" -- left for possible future inclusion.
+- The `conftest.py` resets chat state before each test by clicking "Clear Chat & Reset Config" in the Streamlit UI, handling the case where the button may not exist.
+- Bad-conversation JSON files use the `conversation` key (pre-captured results) while normal test files use `messages` key (to be played through the UI), handled by different code paths.
+
+### Testing Notes
+
+- Run full pipeline (generate + evaluate): `python evaluate.py`
+- Run evaluation only on existing results: `python deep_eval_rag.py`
+- Validate metrics catch known-bad conversations: `python evaluate.py --check`
+- Run only Stage 1 (conversational quality): `python deep_eval_rag.py --stage 1`
+- Run only Stage 2 (retrieval quality): `python deep_eval_rag.py --stage 2`
+- Filter to a specific conversation subdirectory: `python evaluate.py --subdir hr`
+- Requires a running RAG Streamlit UI accessible via route, port-forward, or localhost
+
+### Related Patterns
+
+- `streamlit-frontend` -- the RAG UI that Playwright drives for conversation capture
+- `pgvector` -- the vector database backend whose retrieval quality is evaluated
+- `rag-service` -- the backend RAG service producing the chunks being assessed
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (it-self-service-agent) | Approach B (RAG) |
+|----------|-----------------------------------|-------------------|
+| **Application type** | Conversational agent with state machine (ticket lifecycle) | RAG chatbot with document retrieval |
+| **Conversation generation** | DeepEval ConversationSimulator with live agent via `oc exec` | Predefined JSON conversations replayed through Playwright UI |
+| **UI interaction** | None (CLI-based agent pod) | Streamlit web UI via Playwright browser automation |
+| **Evaluation focus** | Response quality + deterministic metadata (state transitions) | Response quality + retrieval chunk quality (two stages) |
+| **Custom metrics** | RetryableConversationalGEval, ConversationMetadataDeterministicEval | ChunkCountMetric, ChunkDeduplicationMetric (Jaccard), Chunk Alignment GEval |
+| **Test organization** | Pluggable flow registry (`flows/` with `flow.py` + `metrics.py`) | Static JSON files in `conversations/` subdirectories by domain |
+| **Concurrency model** | Multiprocessing workers with disjoint user ID partitions | asyncio.Semaphore limiting total in-flight LLM API calls |
+| **RAG chunk assessment** | Not applicable | Full retrieval evaluation (precision, relevancy, faithfulness, deduplication) |
+| **Known-bad validation** | `--check` flag verifies all bad conversations fail | `--check` with `--expect-failures` inverts exit code logic |

@@ -1,13 +1,13 @@
 ---
 name: rag-chatbot
 description: "Conversational AI app that answers questions using retrieval-augmented generation over user documents"
-summary: "Grounds LLM responses in user-uploaded documents via chunking, embedding into a vector store (pgvector or GPU-accelerated Milvus), and similarity search at query time for source-grounded conversational Q&A on RHOAI/OpenShift. Choose over agentic-app when core value is document-grounded Q&A without tool calls or multi-step reasoning, over model-serving-app when retrieval beyond direct inference is needed — Approach A (ai-virtual-agent, f5-api-security) suits lightweight custom RAG with FastAPI+LlamaStack, pgvector, K8s Job ingestion, MinIO/S3, React/PatternFly or Streamlit, and 1-2 GPUs; Approach B (aml-rag-nvidia) suits enterprise document-heavy RAG using NVIDIA RAG Blueprint with NV-Ingest (OCR, table/graphic detection, VLM captioning), GPU-accelerated Milvus, 4 KServe/vLLM models (Nemotron-Super-49B-FP8, VLM, embedding, reranking), embedding/ranking translation proxies, Redis task queue, ODF ObjectBucketClaim, OpenTelemetry+Grafana+Tempo observability, and 3-5 H100/A100 GPUs with optional MIG partitioning; Approach C (f5-ai-guardrails) suits security-focused RAG with LlamaStack+pgvector via ai-architecture-charts subcharts (llm-service, llama-stack, pgvector), F5 AI Guardrails (Calypso AI) Moderator proxy for prompt injection/PII/toxicity/topic enforcement, OLM-managed F5 operator (SecurityOperator CR ai.security.f5.com/v1alpha1, certified-operators catalog) across 5 namespaces with Prefect workflow orchestration, Llama-3.2-1B-Instruct + all-MiniLM-L6-v2, dual-panel Streamlit UI (guardrailed vs direct), and Calypso AI Red Team for adversarial testing. Approach B requires `APP_VECTORSTORE_ENABLEGPUINDEX: \"True\"` and `APP_VECTORSTORE_ENABLEGPUSEARCH: \"True\"` in charts/ingest/values.yaml for GPU Milvus, plus embedding/ranking translation proxies bridging NVIDIA NIM API formats to vLLM; Approach C routes requests through the F5 Moderator endpoint which evaluates against active guardrail policies before forwarding to LlamaStack, blocking violations with a `cai_error` response containing `scanner_results`. Approach B requires an NGC API key for cloud-hosted NV-Ingest NIMs (document detection/OCR not locally served); Approach C requires F5 license key + private registry credentials (harbor.calypsoai.app), anyuid SCC bindings for F5 namespaces plus pre-applied inference model SCC (`openshift-inference-models-scc.yaml`), Helm retry logic for operator namespace races (`F5_HELM_MAX_ATTEMPTS=8`, `F5_HELM_RETRY_SLEEP=6`), and persists guardrail state (URL + API token) to emptyDir JSON file (`F5_GUARDRAILS_STATE_FILE=/data/guardrails_state.json`) — lost on pod replacement, use PVC for persistence."
+summary: "Grounds LLM responses in user-uploaded documents via chunking, embedding into a vector store (pgvector or GPU-accelerated Milvus), and similarity search at query time for source-grounded conversational Q&A on RHOAI/OpenShift. Choose over agentic-app when core value is document-grounded Q&A without tool calls or multi-step reasoning, over model-serving-app when retrieval beyond direct inference is needed -- four approaches: A (ai-virtual-agent, f5-api-security) lightweight custom RAG with FastAPI+LlamaStack, pgvector, K8s Job ingestion, React/PatternFly or Streamlit, 1-2 GPUs; B (aml-rag-nvidia) NVIDIA RAG Blueprint with NV-Ingest (OCR/table/VLM captioning), GPU-accelerated Milvus, 4 KServe/vLLM models (Nemotron-Super-49B-FP8, VLM, embedding, reranking), embedding/ranking translation proxies, ODF, OpenTelemetry+Grafana+Tempo, 3-5 H100/A100 GPUs with MIG; C (f5-ai-guardrails) security-focused RAG with LlamaStack+pgvector via ai-architecture-charts subcharts, F5 AI Guardrails Moderator proxy for prompt injection/PII/toxicity/topic via OLM operator (SecurityOperator CR ai.security.f5.com/v1alpha1, certified-operators) across 5 namespaces, Llama-3.2-1B-Instruct + all-MiniLM-L6-v2, dual-panel Streamlit UI, Calypso AI Red Team; D (RAG) enterprise RAG with Kubeflow Pipelines multi-source ingestion (5 domains), Docling+inline PyPDF document processing, multi-device serving (GPU/HPU/Xeon/CPU), dual Direct/Agent-based modes with MCP+Tavily, LlamaStack safety shields (Llama Guard), DeepEval evaluation (faithfulness/contextual precision/relevancy/ConversationalGEval), ArgoCD multi-tenant bootstrap. Approach B requires `APP_VECTORSTORE_ENABLEGPUINDEX: \"True\"` and `APP_VECTORSTORE_ENABLEGPUSEARCH: \"True\"` in charts/ingest/values.yaml for GPU Milvus plus embedding/ranking translation proxies bridging NVIDIA NIM API to vLLM; Approach C routes requests through F5 Moderator evaluating active guardrail policies before forwarding to LlamaStack, blocking violations with `cai_error` response containing `scanner_results`; Approach D configures device type via `global.models` with device-specific args and toggles 6 ai-architecture-charts subcharts via condition flags in umbrella chart. Approach B requires NGC API key for cloud-hosted NV-Ingest NIMs (document detection/OCR not locally served); Approach C requires F5 license key + private registry credentials (harbor.calypsoai.app), anyuid SCC bindings plus pre-applied inference model SCC (`openshift-inference-models-scc.yaml`), Helm retry logic (`F5_HELM_MAX_ATTEMPTS=8`, `F5_HELM_RETRY_SLEEP=6`) for namespace races, and persists guardrail state to emptyDir JSON file (`F5_GUARDRAILS_STATE_FILE=/data/guardrails_state.json`) lost on pod replacement -- use PVC for persistence; Approach D requires min 16vCPU/64GB RAM for Xeon CPU-only deployment."
 metadata:
   type: archetype
 tags:
-  tech_stack: [fastapi, react, patternfly, postgresql, python, nvidia-rag-blueprint, redis, streamlit, llama-stack, ansible]
-  ai_pattern: [rag, embeddings, vector-search, model-serving, multimodal, guardrails]
-  platform: [rhoai, openshift, vllm, kserve]
+  tech_stack: [fastapi, react, patternfly, postgresql, python, nvidia-rag-blueprint, redis, streamlit, llama-stack, ansible, docling, deepeval, kubeflow-pipelines]
+  ai_pattern: [rag, embeddings, vector-search, model-serving, multimodal, guardrails, evaluation, data-pipeline, agents]
+  platform: [rhoai, openshift, vllm, kserve, hpu, xeon]
   data_layer: [pgvector, milvus]
 source_examples:
   - quickstart: "ai-virtual-agent"
@@ -26,6 +26,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/f5-api-security"
     notes: "LlamaStack RAG chatbot (Streamlit + pgvector + vLLM) with F5 Distributed Cloud XC network-layer API security (WAF, API spec enforcement, rate limiting) -- RAG stack is same basic LlamaStack+pgvector pattern"
     approach: "A"
+  - quickstart: "RAG"
+    repo: "https://github.com/rh-ai-quickstart/RAG"
+    notes: "Enterprise RAG chatbot with Kubeflow Pipelines for multi-source data ingestion, Docling document processing, dual Direct/Agent-based modes, MCP server integration, DeepEval evaluation framework, multi-device model serving (GPU/HPU/Xeon/CPU), LlamaStack safety shields, and ArgoCD-based multi-tenant bootstrap"
+    approach: "D"
 ---
 
 # RAG Chatbot
@@ -56,6 +60,7 @@ A RAG chatbot combines a large language model with a retrieval system to answer 
 | aml-rag-nvidia | NVIDIA RAG Blueprint adapted for RHOAI -- NV-Ingest enterprise document processing, GPU-accelerated Milvus vector search, 4-model KServe/vLLM serving (LLM, VLM, embedding, reranking), and built-in observability |
 | f5-ai-guardrails | LlamaStack RAG chatbot secured by F5 AI Guardrails (Calypso AI) -- Moderator proxy intercepts prompts and responses for policy evaluation (prompt injection, PII, toxicity, topic), with dual-panel Streamlit UI comparing guardrailed vs direct model access |
 | f5-api-security | LlamaStack RAG chatbot for financial services secured by F5 Distributed Cloud (XC) WAAP at the network layer -- WAF for XSS/SQL injection, API spec enforcement against shadow APIs, and rate limiting for DoS prevention, with Streamlit UI supporting configurable XC URL endpoint |
+| RAG | Enterprise RAG chatbot connecting employees to internal documentation (HR, procurement, sales, IT, legal) via Streamlit chat, with Kubeflow Pipelines for multi-source data ingestion, Docling PDF processing, dual Direct/Agent-based modes with MCP tool support, DeepEval evaluation, multi-device model serving (GPU/HPU/Xeon/CPU), and ArgoCD multi-tenant bootstrap |
 
 ## Decision Criteria
 
@@ -128,18 +133,57 @@ When the primary objective is demonstrating or enforcing AI-layer security on mo
 
 ---
 
+## Approach D: Enterprise RAG with Kubeflow Pipelines and Multi-Device Serving (from RAG)
+
+### When to Use
+
+When the RAG application requires automated multi-source document ingestion via Kubeflow Pipelines, supports multiple hardware backends (NVIDIA GPU, Intel Gaudi HPU, Intel Xeon CPU), includes a built-in evaluation framework, and offers both Direct (manual RAG) and Agent-based (automatic tool calling with MCP) interaction modes out of the box.
+
+### Differences from Approach A
+
+- **Ingestion pipeline:** Approach A uses a Kubernetes Job or background task for simple document chunking; Approach D uses Kubeflow Pipelines via ai-architecture-charts `ingestion-pipeline` subchart (0.7.5) and `configure-pipeline` subchart (0.5.9) for automated multi-source ingestion from GitHub repos, S3/MinIO buckets, and direct URLs, with per-domain pipeline configuration in `deploy/helm/rag/values.yaml` -- five pre-configured pipelines (HR, legal, sales, procurement, techsupport) each with independent `source`, `embedding_model`, `vector_store_name`, and source-specific parameters
+- **Document processing:** Approach A uses basic chunking; Approach D includes a standalone `ingestion-service/` using Docling (`docling>=2.0.0`, `docling-core>=2.0.0`) for PDF processing with `DocumentConverter`, `PdfPipelineOptions` (picture image generation), and `HybridChunker` for intelligent chunking (`ingestion-service/ingest.py`), plus LlamaStack's inline PyPDF file processor (`llama-stack.fileProcessors.providers` with `provider_type: inline::pypdf` in `deploy/helm/rag/values.yaml`)
+- **Multi-device model serving:** Approach A targets GPU-only deployment; Approach D supports four device types via the `global.models` configuration: `gpu` (NVIDIA, default), `hpu` (Intel Gaudi, requires drivers), `xeon` (Intel Xeon CPU, optimized for SPR/EMR/GNR, requires min 16vCPU and 64GB RAM), and `cpu` (generic CPU) -- each device type has documented model configuration examples with device-specific `args` in `deploy/helm/rag/values.yaml`
+- **Interaction modes:** Approach A provides a single chat interface; Approach D offers dual modes toggled in the Streamlit UI (`frontend/llama_stack_ui/distribution/ui/page/playground/chat.py`) -- "Direct" mode for manual RAG with explicit vector store selection and file search, and "Agent-based" mode that uses LlamaStack Responses API with automatic tool calling, including `builtin::rag` (file_search), `web_search` (Tavily), and MCP tool integration
+- **MCP server integration:** Approach A does not include MCP; Approach D deploys MCP servers as an ai-architecture-charts subchart (`mcp-servers` 0.5.18 in `deploy/helm/rag/Chart.yaml`, `mcp-servers.enabled: true` in values.yaml), accessible from Agent-based mode as `mcp::` prefixed toolgroups that are auto-discovered from the LlamaStack toolgroups API (`frontend/llama_stack_ui/distribution/ui/page/playground/agent.py`)
+- **Safety shields:** Approach A has no built-in safety; Approach D integrates LlamaStack safety shields with UI-selectable input and output shields (`render_guardrails_selection` in `chat.py`) -- shield models (e.g., Llama-Guard-3-8B with `registerShield: true`) are automatically excluded from the chat model list and can be configured via `global.models` in values.yaml
+- **Evaluation framework:** Approach A has no evaluation; Approach D includes a DeepEval-based evaluation suite (`evaluations/`) with `deep_eval_rag.py` using LLM-as-a-judge metrics (`FaithfulnessMetric`, `ContextualPrecisionMetric`, `ContextualRelevancyMetric`, custom `ChunkCountMetric`), conversation-level metrics via `ConversationalGEval`, `get_rag_metrics.py` for retrieval quality assessment, `test_conversations_ui.py` for automated UI conversation generation via pytest, and `evaluate.py` as a wrapper that chains conversation generation with evaluation
+- **Multi-tenant deployment:** Approach A is single-tenant; Approach D includes a `tenant/bootstrap/` Helm chart that creates ArgoCD Applications for per-tenant RAG deployments, configuring namespace, user credentials, Git source, and per-tenant model/API key overrides via `tenant/bootstrap/values.yaml`
+- **Backend:** Approach A includes a custom FastAPI backend; Approach D has no custom backend -- LlamaStack server (ai-architecture-charts `llama-stack` subchart 0.8.7) provides all backend APIs (chat completions, RAG tool queries, vector store management, shield evaluation, MCP tool routing), and the Streamlit frontend communicates directly with LlamaStack via `llama-stack-client` SDK
+- **Frontend:** Approach A uses React/PatternFly; Approach D uses Streamlit (`frontend/llama_stack_ui/`) with pages for chat playground (Direct and Agent-based modes), vector database management, shield configuration, evaluation tasks, dataset management, and model inspection
+- **Helm chart structure:** Approach A uses custom Helm; Approach D uses a single umbrella chart (`deploy/helm/rag/Chart.yaml` version 0.2.46) pulling 6 ai-architecture-charts subcharts: `pgvector` (0.5.6), `llm-service` (0.5.10), `configure-pipeline` (0.5.9), `ingestion-pipeline` (0.7.5), `llama-stack` (0.8.7), and `mcp-servers` (0.5.18), each with a `condition` toggle for selective deployment
+- **Sample data:** Approach D includes pre-configured knowledge bases spanning 5 enterprise domains (HR benefits/policies, legal contracts, sales processes, procurement workflows, tech support) with suggested questions per domain configured in `suggestedQuestions` in `deploy/helm/rag/values.yaml`
+- **Local development:** Approach D includes `deploy/local/podman-compose.yml` for local development with a local `deploy/local/Makefile` and `deploy/local/ingestion-config.yaml` for local ingestion pipeline configuration
+- **Web search:** Approach D integrates Tavily web search via `llama-stack.secrets.TAVILY_SEARCH_API_KEY` in `deploy/helm/rag/values.yaml`, available as a `web_search` tool in Agent-based mode
+- **Client examples:** Approach D includes standalone Python client examples (`client-examples-python/`) for vector DB CRUD operations (`rag-create-vector-db.py`, `rag-use-vector-db.py`, `rag-delete-vector-db.py`, `rag-list-vector-db.py`), shield testing (`test-shield.py`), and web search (`web-search.py`) using `llama-stack-client`
+- **Notebooks:** Approach D includes Jupyter notebooks (`notebooks/data-ingestion-pipeline.ipynb`, `notebooks/query_pgvector.ipynb`) for interactive data ingestion and direct pgvector querying
+
+### Typical Components
+
+- **Model serving:** vLLM via ai-architecture-charts `llm-service` subchart (0.5.10) for LLM inference with multi-device support (GPU, HPU, Xeon, CPU); optional Llama Guard shield model for safety; all-MiniLM-L6-v2 for embedding generation
+- **Backend:** LlamaStack via ai-architecture-charts `llama-stack` subchart (0.8.7) providing chat completions, RAG orchestration, vector store management, shield evaluation, MCP tool routing, and both native and OpenAI-compatible APIs
+- **Frontend:** Streamlit (`frontend/llama_stack_ui/`) with dual Direct/Agent-based chat modes, vector DB management, shield selection, evaluation tasks, and model inspection pages
+- **Data layer:** PostgreSQL + pgvector (ai-architecture-charts `pgvector` subchart 0.5.6) for document embeddings and semantic search; MinIO/S3 for raw document storage
+- **Supporting:** Kubeflow Pipelines (ai-architecture-charts `ingestion-pipeline` 0.7.5 + `configure-pipeline` 0.5.9) for automated multi-source document ingestion; standalone ingestion-service with Docling for PDF processing; MCP servers (ai-architecture-charts `mcp-servers` 0.5.18) for Agent-based tool integration; DeepEval evaluation framework; tenant bootstrap chart for ArgoCD multi-tenancy; Tavily for web search; client example scripts and Jupyter notebooks
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Custom-built) | Approach B (NVIDIA Blueprint) | Approach C (Guardrails-Secured) |
-|----------|--------------------------|-------------------------------|--------------------------------|
-| RAG pipeline | Custom FastAPI + LlamaStack | NVIDIA RAG Server pre-built container | LlamaStack (ai-architecture-charts subchart) |
-| Document processing | Simple chunking pipeline | NV-Ingest with OCR, table/graphic detection, VLM captioning | LlamaStack RAG tool chunking |
-| Vector database | pgvector (CPU) | Milvus (GPU-accelerated) | pgvector (CPU) |
-| Models required | 1-2 (LLM + optional embedding) | 4 (LLM, VLM, embedding, reranking) | 1 LLM + 1 embedding (Llama-3.2-1B + MiniLM) |
-| GPU requirements | Low (1-2 GPUs) | High (3-5 H100/A100 GPUs, MIG optional) | Low (1 GPU for LLM) + dedicated GPU for F5 guardrail scanners |
-| AI security | None | None | F5 AI Guardrails (prompt injection, PII, toxicity, topic) |
-| External dependencies | None | NGC API key for cloud-hosted NV-Ingest NIMs | F5 license key + private registry credentials |
-| Namespace topology | Single namespace | Single namespace | 5 namespaces (RAG + 4 F5 operator-managed) |
-| Frontend | React/PatternFly | React (NVIDIA Blueprint UI) | Streamlit (dual-panel guardrailed vs direct) |
-| Observability | Not included | Full stack (OpenTelemetry, Grafana, Tempo) | F5 Moderator dashboard (allowed/blocked counts, audit logs) |
-| Best for | Lightweight RAG within a broader app | Enterprise document-heavy RAG with GPU resources | Demonstrating AI-layer security for model inference endpoints |
+| Criteria | Approach A (Custom-built) | Approach B (NVIDIA Blueprint) | Approach C (Guardrails-Secured) | Approach D (Enterprise RAG with Pipelines) |
+|----------|--------------------------|-------------------------------|--------------------------------|-------------------------------------------|
+| RAG pipeline | Custom FastAPI + LlamaStack | NVIDIA RAG Server pre-built container | LlamaStack (ai-architecture-charts subchart) | LlamaStack (ai-architecture-charts subchart) with Kubeflow Pipelines for ingestion |
+| Document processing | Simple chunking pipeline | NV-Ingest with OCR, table/graphic detection, VLM captioning | LlamaStack RAG tool chunking | Kubeflow Pipelines multi-source ingestion + Docling PDF processing + LlamaStack inline PyPDF |
+| Vector database | pgvector (CPU) | Milvus (GPU-accelerated) | pgvector (CPU) | pgvector (CPU) |
+| Models required | 1-2 (LLM + optional embedding) | 4 (LLM, VLM, embedding, reranking) | 1 LLM + 1 embedding (Llama-3.2-1B + MiniLM) | 1 LLM + 1 embedding (configurable) + optional safety shield |
+| GPU requirements | Low (1-2 GPUs) | High (3-5 H100/A100 GPUs, MIG optional) | Low (1 GPU for LLM) + dedicated GPU for F5 guardrail scanners | Flexible (1 GPU, or HPU, or Xeon CPU, or CPU-only) |
+| AI security | None | None | F5 AI Guardrails (prompt injection, PII, toxicity, topic) | LlamaStack safety shields (Llama Guard, configurable input/output shields) |
+| External dependencies | None | NGC API key for cloud-hosted NV-Ingest NIMs | F5 license key + private registry credentials | Tavily API key (optional, for web search) |
+| Namespace topology | Single namespace | Single namespace | 5 namespaces (RAG + 4 F5 operator-managed) | Single namespace (multi-tenant via ArgoCD bootstrap) |
+| Frontend | React/PatternFly | React (NVIDIA Blueprint UI) | Streamlit (dual-panel guardrailed vs direct) | Streamlit (dual Direct/Agent-based modes with MCP tools) |
+| Observability | Not included | Full stack (OpenTelemetry, Grafana, Tempo) | F5 Moderator dashboard (allowed/blocked counts, audit logs) | Not included (evaluation framework for offline quality assessment) |
+| Evaluation | Not included | Not included | Not included | DeepEval (faithfulness, contextual precision/relevancy, chunk count, conversational G-Eval) |
+| Agent capabilities | None | None | None | LlamaStack Agent mode with MCP tools, web search, file search |
+| Multi-device support | GPU only | GPU only (NVIDIA H100/A100) | GPU only | GPU, Intel Gaudi HPU, Intel Xeon CPU, generic CPU |
+| Multi-tenancy | Not included | Not included | Not included | ArgoCD-based tenant bootstrap chart |
+| Best for | Lightweight RAG within a broader app | Enterprise document-heavy RAG with GPU resources | Demonstrating AI-layer security for model inference endpoints | Full-featured enterprise RAG reference implementation with pipeline-based ingestion, multi-device flexibility, and built-in evaluation |

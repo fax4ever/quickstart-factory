@@ -1,19 +1,23 @@
 ---
 name: notebooks
 description: "Jupyter notebooks for data ingestion, model download-to-S3, and Llama Stack testing in RHOAI workbenches"
-summary: "Jupyter notebooks in RHOAI workbenches cover three concerns for AI quickstarts: CSV-to-PostgreSQL ingestion via pandas+psycopg2 execute_batch with star-schema tables and SQL governance artifacts (COMMENT ON for certified/deprecated views enabling AI copilot reasoning), HuggingFace model download via snapshot_download with boto3 upload to MinIO using AWS_* env vars from workbench data connections, and Llama Stack 0.3.5 integration testing covering MCP toolgroup registration and agent-based tool calling via client.alpha.agents. Use when notebooks must prepare data, stage 14-16 GB models to S3, or validate Llama Stack deployments — these run manually in RHOAI workbenches (not deployed via Helm); data ingestion uses hardcoded localhost:5432 requiring port-forwarding. Critical: Llama Stack requires SSE transport (/sse not /mcp) for MCP, the Agents API for tool calling (chat.completions lacks tool_groups support), model IDs with provider prefix format vllm-inference/<model-name>, and S3 credentials sourced from RHOAI workbench data connection environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_ENDPOINT, AWS_S3_BUCKET). Gotchas: MCP service names need -service suffix (pg-airman-mcp-service not pg-airman-mcp), toolgroup registration requires correct provider_id extracted dynamically from provider list (e.g., mcp-tools not model-context-protocol), gated models require notebook_login() for HF auth, and workbench PVC must accommodate 14-16 GB per model download."
+summary: "Jupyter notebooks in RHOAI workbenches handle AI quickstart data preparation and validation via two approaches: Approach A (data-governance-co-pilot) runs manually for CSV-to-PostgreSQL star-schema ingestion with SQL governance artifacts (COMMENT ON for certified/deprecated views), HuggingFace model download via snapshot_download with boto3 S3 upload using AWS_* workbench env vars, and Llama Stack 0.3.5 MCP/agent integration testing via client.alpha.agents; Approach B (RAG) automates repeatable PDF ingestion through KFP pipelines using docling DocumentConverter + HybridChunker (TEXT/PARAGRAPH filtering), storing into pgvector via Llama Stack vector_dbs.register with all-MiniLM-L6-v2 (384 dims) and rag_tool.insert, backed by ingestion-pipeline Helm subchart v0.7.5 and DSPA. Use Approach A for one-time data prep, model staging to MinIO, and Llama Stack validation in workbenches (no Helm); use Approach B when repeatable production RAG document ingestion is needed with DSPA + MinIO + Llama Stack + pgvector infrastructure -- notebooks/ directory serves dual purpose holding .ipynb files and source PDF subdirectories. Critical: Llama Stack requires SSE transport (/sse not /mcp) for MCP, Agents API for tool calling (chat.completions lacks tool_groups), model IDs with provider prefix vllm-inference/<model-name>, dynamically extracted provider_id (mcp-tools not model-context-protocol), and Approach B compiles KFP pipelines to YAML submitted to ds-pipeline-dspa:8888 with env vars captured at compilation time not pod runtime. Gotchas: MCP service names require -service suffix (pg-airman-mcp-service), data ingestion uses hardcoded localhost:5432 requiring port-forwarding, gated models need notebook_login(), workbench PVC must hold 14-16 GB per model, Approach B has vector_db_id mismatch between register (\"rag-db\") and insert (\"test\"), hardcoded pgvector credentials (postgres/rag_password), SSL verification disabled for MinIO and KFP clients, and vector table naming follows vector_store_<db_id>_v<version> convention."
 metadata:
   type: component
 tags:
-  tech_stack: [jupyter, python, pandas, psycopg2, boto3, huggingface-hub, llama-stack-client]
-  ai_pattern: [data-pipeline, model-serving, agents]
-  platform: [rhoai, openshift, vllm]
-  data_layer: [postgresql, minio]
+  tech_stack: [jupyter, python, pandas, psycopg2, boto3, huggingface-hub, llama-stack-client, kfp, docling, docling-core]
+  ai_pattern: [data-pipeline, model-serving, agents, rag, embeddings]
+  platform: [rhoai, openshift, vllm, kserve]
+  data_layer: [postgresql, minio, pgvector]
 source_examples:
   - quickstart: "data-governance-co-pilot"
     repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
     notes: "Data ingestion, model prep, and Llama Stack integration test notebooks run from RHOAI workbenches"
     approach: "A"
+  - quickstart: "RAG"
+    repo: "https://github.com/rh-ai-quickstart/RAG"
+    notes: "Kubeflow Pipeline notebook for PDF ingestion via docling into pgvector, plus pgvector verification notebook"
+    approach: "B"
 ---
 
 # Notebooks
@@ -175,3 +179,173 @@ agent_response = agents_api.create(
 - See `pgvector.md` or `postgresql` patterns for database component details
 - See `mcp-servers.md` for the MCP server (pg-airman-mcp) that the test notebook connects to
 - See `minio.md` for S3-compatible storage used as the model upload target
+
+---
+
+## Approach B: Kubeflow Pipeline PDF Ingestion + pgvector Verification (from RAG)
+
+### When to Use
+
+Use this approach when the quickstart requires automated, repeatable document ingestion from S3/MinIO into a vector database via Kubeflow Pipelines (KFP), rather than manual one-time data loading. This is the pattern for RAG-style applications where PDFs are chunked, embedded, and stored in pgvector through a pipeline orchestrated by OpenShift AI Data Science Pipelines.
+
+### Differences from Approach A
+
+- **Execution model:** Compiled KFP pipeline (automated, repeatable) vs manual notebook execution in an RHOAI workbench
+- **Data source:** PDF documents fetched from MinIO/S3 buckets vs local CSV files
+- **Processing:** docling-based PDF parsing and hybrid chunking vs pandas DataFrame loading
+- **Storage target:** pgvector via Llama Stack client (`vector_dbs.register` + `tool_runtime.rag_tool.insert`) vs direct PostgreSQL inserts with psycopg2
+- **Deployment:** Backed by a Helm subchart (`ingestion-pipeline` v0.7.5) and a `DataSciencePipelinesApplication` (DSPA) vs no Helm integration
+- **Directory dual purpose:** The `notebooks/` directory contains both the `.ipynb` files and subdirectories of source PDF documents (hr, legal, sales, procurement, techsupport) used by the ingestion pipelines
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Python 3.12 (KFP component base image)
+- **Container image:** `python:3.12` (specified in `@component` decorator)
+- **Key dependencies:**
+  - `kfp` -- Kubeflow Pipelines SDK for pipeline definition, compilation, and submission
+  - `docling`, `docling-core` -- PDF document conversion and hybrid chunking
+  - `llama-stack-client==0.2.22` -- vector DB registration and document insertion
+  - `boto3` -- MinIO/S3 file retrieval
+  - `psycopg2`, `pandas`, `tabulate` -- pgvector verification notebook
+- **Helm subchart:** `ingestion-pipeline` v0.7.5 from `ai-architecture-charts`
+
+### Key Patterns
+
+#### KFP Pipeline-as-Notebook for PDF Ingestion
+
+The `data-ingestion-pipeline.ipynb` notebook defines a single KFP component that performs the entire ingestion in one step: fetch PDFs from MinIO, chunk with docling, store in pgvector via Llama Stack. The pipeline is compiled to YAML and submitted to the KFP server.
+
+```python
+@component(
+    base_image="python:3.12",
+    packages_to_install=[
+        "boto3",
+        "llama-stack-client==0.2.22",
+        "docling",
+        "docling-core"
+    ])
+def fetch_from_minio_docling_process_store(
+    bucket_name: str,
+    minio_endpoint: str,
+    minio_access_key: str,
+    minio_secret_key: str,
+    llamastack_base_url: str):
+```
+
+The component bundles all dependencies inside the `@component` decorator so KFP installs them in the pipeline pod at runtime.
+
+#### Docling PDF Parsing and Hybrid Chunking
+
+Documents are converted using docling's `DocumentConverter` with PDF pipeline options, then chunked using `HybridChunker`. Only text/paragraph chunks are retained for embedding.
+
+```python
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling_core.transforms.chunker.hybrid_chunker import HybridChunker
+from docling_core.types.doc.labels import DocItemLabel
+
+pipeline_options = PdfPipelineOptions()
+pipeline_options.generate_picture_images = True
+converter = DocumentConverter(
+    format_options={
+        InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+    }
+)
+chunker = HybridChunker()
+```
+
+Chunks are filtered to only include `DocItemLabel.TEXT` and `DocItemLabel.PARAGRAPH` items before being wrapped as `LlamaStackDocument` objects.
+
+#### Vector DB Registration and Insertion via Llama Stack
+
+The notebook uses Llama Stack client to register a pgvector-backed vector database and insert chunked documents. The embedding model (`all-MiniLM-L6-v2`, 384 dimensions) is specified at registration time.
+
+```python
+client = LlamaStackClient(base_url=llamastack_base_url)
+client.vector_dbs.register(
+    vector_db_id="rag-db",
+    embedding_model="all-MiniLM-L6-v2",
+    embedding_dimension=384,
+    provider_id="pgvector",
+)
+client.tool_runtime.rag_tool.insert(
+    documents=llama_documents,
+    vector_db_id="test",
+    chunk_size_in_tokens=512,
+)
+```
+
+#### KFP Pipeline Compilation and Submission
+
+The pipeline is compiled to a YAML file and submitted to the Data Science Pipelines Application (DSPA) running in-cluster. The KFP client connects to the DSPA endpoint with SSL verification disabled.
+
+```python
+compiler.Compiler().compile(
+    pipeline_func=full_pipeline,
+    package_path=pipeline_yaml
+)
+client = Client(
+    host="https://ds-pipeline-dspa:8888",
+    verify_ssl=False
+)
+uploaded_pipeline = client.upload_pipeline(
+    pipeline_package_path=pipeline_yaml,
+    pipeline_name="fetch-docling-process-store-pipeline"
+)
+```
+
+#### pgvector Verification Notebook
+
+The `query_pgvector.ipynb` notebook provides a debugging/verification tool for inspecting the vector database after ingestion. It connects directly to PostgreSQL, lists tables, describes schemas, and queries stored documents with optional vector column exclusion.
+
+```python
+DB_HOST = 'pgvector.llama-stack-rag.svc.cluster.local'
+DB_PORT = '5432'
+DB_NAME = 'rag_blueprint'
+DB_USER = 'postgres'
+DB_PASSWORD = 'rag_password'
+TABLE_NAME = 'vector_store_demo_rag_vector_db_v1_0'
+```
+
+### Configuration
+
+- **Environment variables (pipeline notebook):**
+  - `MINIO_ENDPOINT` -- MinIO API endpoint URL
+  - `MINIO_ACCESS_KEY` -- MinIO access key
+  - `MINIO_SECRET_KEY` -- MinIO secret key
+  - `LLAMASTACK_BASE_URL` -- Llama Stack server URL for vector DB operations
+- **Environment variables (verification notebook):** None (all values hardcoded in notebook cells)
+- **Helm values:** `ingestion-pipeline.enabled`, `ingestion-pipeline.serviceAccount.name`, per-pipeline `source`, `embedding_model`, `vector_store_name`, and `GITHUB.url`/`path`/`branch` for each document collection
+- **Ingestion config (local):** `deploy/local/ingestion-config.yaml` defines pipeline configs with source type (GITHUB/S3/URL), vector DB names, and embedding settings
+
+### Known Gotchas
+
+- **vector_db_id mismatch in insert call:** The notebook registers the vector DB as `"rag-db"` but inserts documents into `"test"` -- this is a discrepancy in the source code that would cause the insert to target a different (or non-existent) vector database at runtime.
+- **Pipeline environment variables accessed at definition time:** The `full_pipeline()` function reads `os.environ` at pipeline definition time inside the `@pipeline` decorator, but these values need to be available when the notebook cell executes (compilation time), not when the pipeline pod runs. KFP pipeline parameters would be the correct mechanism for runtime values.
+- **Hardcoded pgvector credentials in verification notebook:** The `query_pgvector.ipynb` notebook has `DB_PASSWORD = 'rag_password'` and `DB_USER = 'postgres'` hardcoded in a cell. These must be updated to match the actual deployment credentials.
+- **KFP client uses hardcoded DSPA endpoint:** The pipeline client connects to `https://ds-pipeline-dspa:8888` which assumes the DSPA service name and namespace. The DSPA must be configured with MinIO credentials before the pipeline can run.
+- **`notebooks/` directory serves dual purpose:** The directory contains both `.ipynb` notebook files and subdirectories of source PDF documents (hr/, legal/, sales/, procurement/, techsupport/, zippity-zoo/) that are referenced by the ingestion pipeline configurations via GitHub URLs.
+- **SSL verification disabled:** Both the MinIO S3 client (`verify=False`) and the KFP client (`verify_ssl=False`) disable SSL verification, which works for in-cluster self-signed certificates but would need adjustment for production.
+
+### Testing Notes
+
+- Configure a DataSciencePipelinesApplication (DSPA) in the namespace before running the pipeline notebook
+- Get MinIO credentials from the `minio` secret: `oc get secret minio -o jsonpath='{.data.username}' | base64 --decode`
+- After running the pipeline, verify embeddings using the `query_pgvector.ipynb` notebook or direct SQL: `oc exec -it pgvector-0 -- psql -d rag_blueprint -U postgres -c "SELECT COUNT(*) FROM vector_store_demo_rag_vector_db_v1_0;"`
+- The table name `vector_store_demo_rag_vector_db_v1_0` follows the Llama Stack naming convention: `vector_store_<db_id>_v<version>`
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (Manual Workbench) | Approach B (KFP Pipeline) |
+|----------|-------------------------------|---------------------------|
+| Execution model | Manual notebook run in RHOAI workbench | Automated KFP pipeline compiled from notebook |
+| Data source | Local CSV files | PDFs from MinIO/S3 buckets |
+| Document processing | pandas DataFrame loading | docling PDF conversion + hybrid chunking |
+| Storage method | Direct psycopg2 `execute_batch` inserts | Llama Stack client `vector_dbs.register` + `rag_tool.insert` |
+| Repeatability | One-time manual execution | Repeatable pipeline runs via KFP |
+| Helm integration | None | `ingestion-pipeline` subchart v0.7.5 |
+| Infrastructure required | RHOAI workbench only | DSPA + MinIO + Llama Stack + pgvector |
+| Best for | Data preparation and integration testing | Production RAG document ingestion |

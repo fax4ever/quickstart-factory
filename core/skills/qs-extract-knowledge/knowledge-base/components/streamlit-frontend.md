@@ -1,12 +1,12 @@
 ---
 name: streamlit-frontend
 description: Streamlit chat UI with dual-panel guardrail comparison, LlamaStack/OpenAI SDK integration, and RAG document management
-summary: "Provides Streamlit chat UI patterns in two approaches: Approach A (f5-ai-guardrails) delivers a dual-panel comparison sending the same prompt via OpenAI Python SDK to both an F5 Guardrails Moderator proxy and direct LlamaStack with cai_error.scanner_results parsing and Moderator API scanner name resolution; Approach B (f5-api-security) delivers a single-panel RAG chat with dynamic XC URL configuration in the UI, LlamaStackClient SDK for vector store operations (always queried locally, not via XC), python-docx local .docx extraction, and version-independent model helpers. Use Approach A when building a side-by-side guardrail evaluation interface with F5 Moderator integration, custom httpx transport for OpenShift TLS, and JSON state file persistence (F5_GUARDRAILS_STATE_FILE); use Approach B when building a RAG chatbot with dynamic backend switching and build-arg versioned dependencies via __LLAMASTACK_VERSION__ sed replacement in pyproject.toml -- both approaches query pgvector directly via asyncpg (table convention vs_{id.replace('-','_')}) since LlamaStack lacks document enumeration, inject RAG context by prepending to user prompts, use st.navigation for multi-page routing, and support RAG_QUESTION_SUGGESTIONS via ConfigMap. Critical patterns: LlamaStack URL normalization strips legacy /v1/openai/v1 suffixes for 0.6+ compatibility; repetition_penalty extra_body is sent only to direct LlamaStack, not through the Moderator proxy; Approach B validates endpoints by attempting model listing and returns structured error tuples. Gotchas: OpenShift edge routes return HTML on http:// (start.sh auto-detects TLS), llama-stack-client maps HTTP 5xx to misleading InternalServerError (format_api_connection_error generates OpenShift debugging hints), Streamlit password inputs return empty on early frames corrupting stored tokens, emptyDir-backed guardrail state is lost on pod replacement (use PVC on /data), emptyDir /.streamlit required for non-root under restricted SCC, and DOCX extraction only handles paragraphs and tables (no headers/footers/text boxes)."
+summary: "Provides Streamlit chat UI patterns in three approaches: Approach A (f5-ai-guardrails) delivers dual-panel comparison sending the same prompt via OpenAI Python SDK to both an F5 Moderator proxy and direct LlamaStack with cai_error.scanner_results parsing and Moderator API scanner name resolution; Approach B (f5-api-security) delivers single-panel RAG chat with dynamic XC URL in the UI, LlamaStackClient SDK for vector stores (always queried locally, not via XC), python-docx .docx extraction, and build-arg __LLAMASTACK_VERSION__ sed replacement; Approach C (RAG) delivers dual-mode chat toggling Direct (manual RAG with completions API) and Agent-based (Responses API streaming with file_search/web_search/MCP tool calling), LlamaStack shields for input/output guardrails, conversation tracking via conversations.create(), file citation stripping during streaming, and multi-provider API keys (Fireworks/Together/SambaNova/OpenAI/Tavily). Use Approach A for side-by-side guardrail evaluation with F5 Moderator integration, custom httpx for OpenShift TLS, and JSON state file persistence (F5_GUARDRAILS_STATE_FILE); Approach B for RAG chatbot with dynamic backend switching and endpoint validation via model listing returning structured error tuples; Approach C for full-featured RAG with agent-based tool calling, LlamaStack safety shields, MCP server integration, openpyxl .xlsx extraction, and document management via vector_stores.files API instead of direct asyncpg -- all approaches share pgvector asyncpg queries (table convention vs_{id.replace('-','_')}), st.navigation multi-page routing, RAG context injection by prepending to user prompts, and RAG_QUESTION_SUGGESTIONS ConfigMap. Critical patterns: LlamaStack URL normalization strips legacy /v1/openai/v1 suffixes for 0.6+ compatibility; repetition_penalty extra_body sent only to direct LlamaStack not through Moderator proxy; Approach B validates endpoints by attempting model listing; Approach C initializes LlamaStackClient with 600s timeout for large uploads and uses ResponseState container pattern for streaming UI with chunk-type dispatch. Gotchas: OpenShift edge routes return HTML on http:// (start.sh auto-detects TLS), llama-stack-client maps HTTP 5xx to misleading InternalServerError (format_api_connection_error generates OpenShift debugging hints), Streamlit password inputs return empty on early frames corrupting stored tokens, emptyDir-backed guardrail state is lost on pod replacement (use PVC on /data), emptyDir /.streamlit required for non-root under restricted SCC, DOCX extraction only handles paragraphs and tables (no headers/footers/text boxes), XLSX extraction converts all cells to strings losing date/formula formatting, and Approach C must strip file citation markers (<|file-...) during streaming to prevent UI flashing."
 metadata:
   type: component
 tags:
-  tech_stack: [streamlit, python, openai, llama-stack, pandas, asyncpg, httpx, uv, python-docx]
-  ai_pattern: [rag, guardrails, vector-search]
+  tech_stack: [streamlit, python, openai, llama-stack, pandas, asyncpg, httpx, uv, python-docx, openpyxl]
+  ai_pattern: [rag, guardrails, vector-search, agents]
   platform: [openshift, kubernetes, rhoai]
   data_layer: [pgvector]
 source_examples:
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/f5-api-security"
     notes: "Streamlit single-panel RAG chat with dynamic XC URL configuration, LlamaStack client SDK, and local docx extraction"
     approach: "B"
+  - quickstart: "RAG"
+    repo: "https://github.com/rh-ai-quickstart/RAG"
+    notes: "Streamlit RAG chat with dual processing modes (Direct manual RAG + Agent-based Responses API), LlamaStack shields guardrails, MCP tool support, and conversation management"
+    approach: "C"
 ---
 
 # Streamlit Frontend
@@ -400,13 +404,305 @@ ENTRYPOINT ["uv", "run", "streamlit", "run", "/app/llama_stack_ui/distribution/u
 
 | Criteria | Approach A (f5-ai-guardrails) | Approach B (f5-api-security) |
 |----------|-------------------------------|------------------------------|
-| Chat layout | Dual-panel side-by-side comparison | Single-panel standard chat |
-| Guardrail integration | F5 Moderator proxy with scanner result parsing | None |
-| Primary SDK | OpenAI Python SDK for both panels | LlamaStackClient SDK + OpenAI-compatible for inference |
-| Endpoint configuration | Environment variables + JSON state file | Dynamic UI-based XC URL with session state |
-| HTTP transport | Custom httpx with OpenShift TLS handling | Standard LlamaStackClient |
-| Document upload | Via LlamaStack RAG tools API | Via LlamaStack files + vector_stores.files API (0.6.1) |
-| Local file extraction | Not present | python-docx for .docx files |
-| LlamaStack API version | 0.6.0 | 0.6.1 |
-| State persistence | JSON file on emptyDir/PVC | Session state only (no persistence across pod restarts) |
-| Use case | Guardrail evaluation and comparison | RAG chatbot with dynamic backend switching |
+| Chat layout | Dual-panel side-by-side comparison | Single-panel standard chat | Single-panel with mode toggle |
+| Guardrail integration | F5 Moderator proxy with scanner result parsing | None | LlamaStack shields API (input + output) |
+| Primary SDK | OpenAI Python SDK for both panels | LlamaStackClient SDK + OpenAI-compatible for inference | LlamaStackClient SDK for all operations |
+| Endpoint configuration | Environment variables + JSON state file | Dynamic UI-based XC URL with session state | Environment variable only (LLAMA_STACK_ENDPOINT) |
+| HTTP transport | Custom httpx with OpenShift TLS handling | Standard LlamaStackClient | Standard LlamaStackClient with configurable timeout |
+| Document upload | Via LlamaStack RAG tools API | Via LlamaStack files + vector_stores.files API (0.6.1) | Via LlamaStack files + vector_stores.files API with dual extraction (local + provider) |
+| Local file extraction | Not present | python-docx for .docx files | python-docx for .docx + openpyxl for .xlsx |
+| LlamaStack API version | 0.6.0 | 0.6.1 | 0.6.0 |
+| State persistence | JSON file on emptyDir/PVC | Session state only (no persistence across pod restarts) | Session state only (no persistence across pod restarts) |
+| Use case | Guardrail evaluation and comparison | RAG chatbot with dynamic backend switching | Full-featured RAG chatbot with agent-based tool calling and safety shields |
+| Processing modes | Single (OpenAI chat completions) | Single (OpenAI chat completions) | Dual: Direct (manual RAG) + Agent-based (Responses API with tool calling) |
+| Tool support | None | None | file_search, web_search, MCP servers, function tools |
+| Conversation tracking | None | None | LlamaStack conversations API |
+
+---
+
+## Approach C: Dual-Mode RAG Chat with Agent Tool Calling (from RAG)
+
+### When to Use
+
+When building a full-featured RAG chat interface that offers both manual RAG (Direct mode with chat completions API) and automatic tool calling (Agent-based mode with LlamaStack Responses API). This approach is appropriate when the application needs LlamaStack-native safety shields, MCP tool integration, conversation tracking, and the flexibility for users to switch between manual and agent-driven processing at runtime.
+
+### Differences from Approach A
+
+- **No F5 Moderator integration** -- guardrails use LlamaStack shields API instead of F5 proxy
+- **No dual-panel comparison** -- single chat panel with mode toggle (Direct vs Agent-based)
+- **LlamaStackClient SDK exclusively** -- no OpenAI Python SDK dependency
+- **Agent-based mode** uses `client.responses.create()` with streaming tool calling (file_search, web_search, MCP, function tools)
+- **Conversation tracking** via `client.conversations.create()` and `conversation` parameter
+- **No custom httpx transport** -- standard LlamaStackClient handles all HTTP
+- **No guardrail state file** -- no F5 endpoint persistence needed
+
+### Differences from Approach B
+
+- **Dual processing modes** vs single mode -- users toggle between Direct and Agent-based
+- **LlamaStack shields** for input/output guardrails vs no guardrail support
+- **MCP tool support** in agent mode for connecting to external MCP servers
+- **No dynamic endpoint URL** -- uses fixed `LLAMA_STACK_ENDPOINT` environment variable
+- **No XC URL / F5 Distributed Cloud integration**
+- **xlsx extraction** via openpyxl in addition to docx extraction
+- **Hardcoded dependency versions** in pyproject.toml (no build-arg sed replacement)
+- **Provider API keys** passed to LlamaStackClient for multi-provider support (Fireworks, Together, SambaNova, OpenAI, Tavily)
+- **Document management via LlamaStack API** (vector_stores.files.list/delete) instead of direct asyncpg queries
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Python 3.12, Streamlit framework
+- **Container image:** `quay.io/rh-ai-quickstart/llamastack-dist-ui` (built from `python:3.12-slim`)
+- **Key dependencies:** `llama-stack-client==0.6.0`, `llama-stack==0.6.0`, `pandas`, `asyncpg`, `streamlit-option-menu`, `fire`, `python-docx`, `openpyxl`, `requests`
+- **Helm subchart:** Deployed via `deploy/helm/rag/` chart (v0.2.46) with `pgvector` (0.5.6), `llm-service` (0.5.10), `llama-stack` (0.8.7), `mcp-servers` (0.5.18), `configure-pipeline` (0.5.9), and `ingestion-pipeline` (0.7.5) subcharts from `ai-architecture-charts`
+
+### Key Patterns
+
+#### Dual Processing Mode Toggle
+
+The sidebar provides a radio toggle between Direct and Agent-based modes. Direct mode manually retrieves context from vector stores and injects it into the prompt before calling the completions API. Agent-based mode uses the Responses API with automatic tool calling:
+
+```python
+# chat.py
+processing_mode = st.radio(
+    "Processing mode",
+    ["Direct", "Agent-based"],
+    index=0,
+    captions=[
+        "Passes vector store search results as context to LLM",
+        "Uses Responses API with tool calling",
+    ],
+    on_change=reset_agent,
+)
+```
+
+#### Agent-Based Mode with Responses API Streaming
+
+Agent mode streams responses from `client.responses.create()` and dispatches chunks by type for tool calls, reasoning, and message content:
+
+```python
+# agent.py
+request_kwargs = {
+    "model": config.model,
+    "instructions": config.system_prompt,
+    "input": prompt,
+    "conversation": config.conversation_id,
+    "temperature": config.sampling.temperature,
+    "max_infer_iters": config.sampling.max_infer_iters,
+    "stream": True,
+    "max_output_tokens": config.sampling.max_tokens,
+}
+if tools:
+    request_kwargs["tools"] = tools
+response = llama_stack_api.client.responses.create(**request_kwargs)
+```
+
+Chunk types are dispatched in `process_chunk_by_type`:
+
+```python
+# agent.py
+if chunk_type == "response.file_search_call.in_progress":
+    handle_agent_file_search_chunk(state, selected_vector_dbs)
+elif chunk_type == "response.reasoning_text.delta":
+    state.update_reasoning(chunk.delta)
+elif chunk_type == "response.output_text.delta":
+    state.update_message(chunk.delta, display_fn=strip_file_citations_streaming)
+elif chunk_type == "response.output_item.done":
+    handle_agent_output_item_done(chunk, state)
+```
+
+#### Tool Building for Responses API
+
+Selected toolgroups are converted to Responses API tool format. RAG uses `file_search` with vector store IDs, search tools become `web_search`, and MCP servers are passed with their endpoint URIs:
+
+```python
+# agent.py
+def build_response_tools(toolgroup_selection, selected_vector_dbs, top_k, client):
+    agent_tools = []
+    for toolgroup_name in toolgroup_selection:
+        if toolgroup_name == "builtin::rag":
+            agent_tools.append({
+                "type": "file_search",
+                "max_num_results": top_k,
+                "vector_store_ids": list(vector_db_ids),
+            })
+        elif "web_search" in toolgroup_name:
+            agent_tools.append({"type": "web_search"})
+        elif toolgroup_name.startswith("mcp::"):
+            agent_tools.append({
+                "type": "mcp",
+                "server_label": toolgroup.args.get("name", ...),
+                "server_url": toolgroup.mcp_endpoint.uri,
+            })
+    return agent_tools
+```
+
+#### LlamaStack Safety Shields for Input/Output Guardrails
+
+The UI fetches available shields from the LlamaStack server and offers input and output guardrail multiselects. Shields are run before sending the prompt (input) and after receiving the response (output):
+
+```python
+# utils.py
+def run_input_shields(client, shield_ids, user_message):
+    for shield_id in shield_ids:
+        shield_response = client.safety.run_shield(
+            shield_id=shield_id,
+            messages=[{"role": "user", "content": user_message}],
+            params={},
+        )
+        if hasattr(shield_response, "violation") and shield_response.violation:
+            violation_msg = getattr(
+                shield_response.violation, "user_message",
+                "Content blocked by safety guardrail"
+            )
+            return True, violation_msg, shield_id
+    return False, None, None
+```
+
+#### LlamaStackClient with Provider API Keys and Configurable Timeout
+
+The API module initializes `LlamaStackClient` with a 600-second timeout for large document uploads and passes multiple provider API keys for multi-provider model access:
+
+```python
+# api.py
+class LlamaStackApi:
+    def __init__(self):
+        timeout = float(os.environ.get("LLAMA_STACK_TIMEOUT", "600"))
+        self.client = LlamaStackClient(
+            base_url=os.environ.get("LLAMA_STACK_ENDPOINT", "http://localhost:8321"),
+            timeout=timeout,
+            provider_data={
+                "fireworks_api_key": os.environ.get("FIREWORKS_API_KEY", ""),
+                "together_api_key": os.environ.get("TOGETHER_API_KEY", ""),
+                "sambanova_api_key": os.environ.get("SAMBANOVA_API_KEY", ""),
+                "openai_api_key": os.environ.get("OPENAI_API_KEY", ""),
+                "tavily_search_api_key": os.environ.get("TAVILY_SEARCH_API_KEY", ""),
+            },
+        )
+```
+
+#### File Citation Stripping for Streaming Display
+
+The Responses API file_search tool injects citation markers into response text. A streaming-aware stripper removes complete markers and trims trailing partial patterns to prevent citation fragments from flashing in the UI:
+
+```python
+# utils.py
+def strip_file_citations_streaming(text):
+    text = strip_file_citations(text)
+    # Trim trailing partial patterns that haven't fully arrived
+    text = re.sub(r'<\|(?:f(?:i(?:l(?:e(?:-[^|]*)?)?)?)?)?\s*$', '', text)
+    text = re.sub(r'<\|[0-9a-fA-F-]*$', '', text)
+    text = re.sub(r'\bfile<[^>]*$', '', text)
+    text = re.sub(r'【[^】]*$', '', text)
+    return text
+```
+
+#### Dual Document Extraction Methods
+
+The upload page offers two extraction methods: "LlamaStack Provider" sends files directly to the server (supports .txt, .pdf, .md), and "Docling" extracts text locally before upload (supports .docx, .xlsx):
+
+```python
+# local_extractors.py
+LOCAL_SUPPORTED_EXTENSIONS = [".docx", ".xlsx"]
+PROVIDER_SUPPORTED_EXTENSIONS = [".txt", ".pdf", ".md"]
+
+def extract_text_from_xlsx(file) -> str:
+    wb = load_workbook(file, read_only=True)
+    parts = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        parts.append(f"Sheet: {sheet_name}")
+        for row in ws.iter_rows(values_only=True):
+            row_text = "\t".join(
+                str(cell) if cell is not None else "" for cell in row
+            )
+            parts.append(row_text)
+    wb.close()
+    return "\n".join(parts)
+```
+
+#### Document Management via LlamaStack Files API
+
+Unlike Approach A (direct asyncpg), this approach uses the LlamaStack `vector_stores.files` API for listing and deleting documents, and `files.create` for uploading:
+
+```python
+# upload.py
+file_response = llama_stack_api.client.files.create(
+    file=file_to_upload,
+    purpose="assistants"
+)
+llama_stack_api.client.vector_stores.files.create(
+    vector_store_id=actual_db_id,
+    file_id=file_response.id,
+)
+```
+
+#### Conversation Tracking via LlamaStack API
+
+Each chat session creates a conversation object on the server. The conversation ID is passed to the Responses API to maintain context across turns:
+
+```python
+# chat.py
+def initialize_session_state():
+    if "conversation_id" not in st.session_state:
+        conversation = llama_stack_api.client.conversations.create()
+        st.session_state["conversation_id"] = conversation.id
+```
+
+#### ResponseState Container Pattern for Streaming UI
+
+A `ResponseState` class manages UI containers for tool status, tool results, reasoning, and message content during streaming. Both Direct and Agent modes share this pattern:
+
+```python
+# chat.py
+class ResponseState:
+    def __init__(self):
+        self.containers = Containers()
+        self.reasoning_text = ""
+        self.full_response = ""
+        self.tool_results = []
+        self.guardrail_blocked = None
+
+    def update_reasoning(self, delta_text):
+        self.reasoning_text += delta_text
+        if not self.has_reasoning:
+            with self.containers.reasoning.container():
+                reasoning_expander = st.expander("Reasoning", expanded=True)
+                self.reasoning_placeholder = reasoning_expander.empty()
+        self.reasoning_placeholder.markdown(self.reasoning_text + "cursor")
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `LLAMA_STACK_ENDPOINT` - LlamaStack server URL (default: `http://localhost:8321`)
+  - `LLAMA_STACK_TIMEOUT` - Client timeout in seconds (default: `600`); set high for large document uploads
+  - `FIREWORKS_API_KEY`, `TOGETHER_API_KEY`, `SAMBANOVA_API_KEY`, `OPENAI_API_KEY` - Provider API keys passed to LlamaStack via `provider_data`
+  - `TAVILY_SEARCH_API_KEY` - API key for web search tool; injected from `llama-stack` subchart secrets in Helm deployment template
+  - `PGVECTOR_HOST`, `PGVECTOR_PORT`, `PGVECTOR_USER`, `PGVECTOR_PASSWORD`, `PGVECTOR_DB` - Direct pgvector connection injected from `pgvector` subchart secret values in Helm deployment template
+  - `RAG_QUESTION_SUGGESTIONS` - JSON map of vector DB name/ID to suggested question lists, injected via ConfigMap
+- **Helm values:**
+  - `image.repository: quay.io/rh-ai-quickstart/llamastack-dist-ui` / `image.tag: 0.2.46`
+  - `service.port: 8501`
+  - `livenessProbe` / `readinessProbe` - HTTP GET on `/` port `http` with 60s/30s initial delays
+  - `volumes` / `volumeMounts` - emptyDir for `/.streamlit` (Streamlit config directory, required for non-root)
+  - `suggestedQuestions` - Map rendered into ConfigMap as `RAG_QUESTION_SUGGESTIONS` env var
+
+### Known Gotchas
+
+- **Default 60-second timeout is too short for large document uploads.** A comment in `api.py` states: "Timeout of 600 seconds (10 minutes) for large document uploads. Default is 60 seconds which is too short for large PDFs." The `LLAMA_STACK_TIMEOUT` env var overrides this.
+- **Shield models appear in the model list and must be filtered.** The `fetch_models_and_tools` function in `chat.py` fetches shields first and excludes matching model IDs from the model dropdown to prevent users from selecting guardrail models for chat.
+- **Vector store search results are fetched via fallback after agent streaming.** A comment in `agent.py` explains: the Responses API stream does not always include file_search results (common on subsequent conversation turns), so `search_vector_stores_fallback` explicitly searches each selected vector store after streaming completes.
+- **File citation patterns must be stripped from both complete and streaming text.** The `strip_file_citations_streaming` function handles partial citation markers (`<|file-...`) that appear during streaming before the full pattern arrives, preventing fragments from briefly flashing in the UI.
+- **emptyDir for `/.streamlit` is required for non-root.** Same as Approach B: Streamlit writes config and cache to `/.streamlit`, which fails on OpenShift's read-only root filesystem under restricted SCC.
+- **DOCX extraction only handles paragraphs and tables.** Same limitation as Approach B: `extract_text_from_docx` does not extract text from headers, footers, text boxes, or embedded images.
+- **XLSX extraction treats all cell values as strings.** The `extract_text_from_xlsx` function in `local_extractors.py` converts all cell values with `str(cell)`, which means dates, formulas, and numeric formatting are lost.
+- **Containerfile installs uv at build time then uninstalls it.** The Containerfile runs `pip install uv` then `uv pip install --system` then `pip uninstall -y uv` to use uv's faster resolver without leaving it in the final image.
+
+### Testing Notes
+
+- After Helm install, get the UI URL: `oc get route -n <namespace>`
+- Verify Direct mode: select a vector DB, ask a question, confirm file search results appear in expander and context is used in the response
+- Verify Agent-based mode: switch to Agent-based, select builtin::rag toolgroup, ask a question, confirm file_search tool status appears and results are fetched
+- Verify shields: if Llama Guard or other shield models are deployed, enable input/output guardrails in the sidebar and test with a prompt that triggers a violation
+- Verify MCP tools: if MCP servers are registered on the LlamaStack server, confirm they appear as selectable pills in the sidebar toolgroup section
+- Test document upload with both extraction methods: upload a .docx (local extraction) and a .pdf (provider extraction) and verify both appear in the documents table
