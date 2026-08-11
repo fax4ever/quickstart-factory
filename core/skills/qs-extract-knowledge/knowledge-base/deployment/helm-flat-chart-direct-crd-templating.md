@@ -1,7 +1,7 @@
 ---
 name: helm-flat-chart-direct-crd-templating
 description: Single Helm chart with no dependencies or subcharts, directly templating operator CRDs as raw templates
-summary: "Deploys an entire quickstart from a single flat Helm chart with no dependencies block or subchart directories, directly templating operator CRDs (KServe InferenceService, ServingRuntime, TrustyAI GuardrailsOrchestrator, Kubeflow Notebook) as 11 individual template files producing 14 Kubernetes resources for full field-level control. Use over umbrella charts (helm-umbrella-all-remote-ai-arch-deps) or independent subcharts (helm-independent-subcharts-no-umbrella) when full control over every CRD field is needed without shared chart abstraction; installation is a single `helm install` with no `helm dependency update` step, requiring KServe, TrustyAI operator, and Kubeflow Notebook controller pre-installed on the cluster. Configuration uses a flat values.yaml with top-level keys (mainLLM, detectors, orchestrator, workbench, clusterdomainurl) — detectors default to CPU (`useGpu: false`), workbench is enabled by default, and the LLM requires 1 GPU; Chart.yaml contains only name, version, and description with no dependencies block. Without subcharts, common pattern changes (e.g., InferenceService structure) cannot be inherited from a shared chart, all 14 resources upgrade atomically in a single release making partial upgrades impossible, and no Makefile is provided for pre-install validation checks, wait loops, or phased deployment."
+summary: "Deploys an entire quickstart from a single flat Helm chart with no dependencies block or subchart directories, directly templating operator CRDs (KServe InferenceService, ServingRuntime, TrustyAI GuardrailsOrchestrator, Kubeflow Notebook) as individual template files for full field-level control without subchart abstraction layers. Use over umbrella charts (helm-umbrella-all-remote-ai-arch-deps) or independent subcharts (helm-independent-subcharts-no-umbrella) when full CRD field control is needed; Approach A (guardrailing-llms) uses one CRD per file with `_helpers.tpl`, 11 files producing 14 resources including 3 orchestrator ConfigMaps, while Approach B (lemonade-stand-assistant) adds `helm.sh/weight` ordering (MinIO at -5/-4, runtimes at 0, InferenceServices at 1), bundles multiple resources per file, and conditionally skips the entire LLM stack via `{{ if not .Values.model }}` producing 20+ resources -- choose A for simpler organization, B when resource ordering or conditional deployment is needed. Configuration uses a flat values.yaml with top-level keys (mainLLM, detectors, orchestrator, workbench, clusterdomainurl); Chart.yaml contains only name, version, and description with no dependencies block; installation is a single `helm install` with no `helm dependency update`, requiring KServe, TrustyAI operator, and Kubeflow Notebook controller pre-installed; detectors default to CPU (`useGpu: false`) and the LLM requires 1 GPU. Without subcharts, common pattern changes (e.g., InferenceService structure) cannot be inherited from a shared chart, all resources upgrade atomically in a single release making partial upgrades impossible, and neither approach provides a Makefile for pre-install validation checks, wait loops, or phased deployment."
 metadata:
   type: deployment-pattern
 tags:
@@ -13,6 +13,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/guardrailing-llms"
     notes: "Flat chart directly templates InferenceService, ServingRuntime, GuardrailsOrchestrator, and Notebook CRDs with no subcharts or remote dependencies"
     approach: "A"
+  - quickstart: "lemonade-stand-assistant"
+    repo: "https://github.com/rh-ai-quickstart/lemonade-stand-assistant"
+    notes: "Flat chart with helm.sh/weight ordering, conditional LLM bypass, MinIO init container, and multi-resource template files"
+    approach: "B"
 ---
 
 # Helm Flat Chart with Direct CRD Templating
@@ -81,7 +85,69 @@ helm install ${PROJECT} helm/ --namespace ${PROJECT}
 - The chart deploys 11 template files producing 14 Kubernetes resources in a single release, making partial upgrades impossible -- every resource is upgraded together (see `helm/templates/` listing)
 - No Makefile is provided, so there are no pre-install validation checks, wait loops, or phased deployment -- the user must manually verify pod readiness via `oc get pod` (see README.md install instructions)
 
+---
+
+## Approach B: Flat Chart with Helm Weight Ordering and Conditional Resources (from lemonade-stand-assistant)
+
+### When to Use
+
+When a flat chart needs ordered resource creation (storage before model servers) and conditional resource inclusion (skip GPU-bound LLM when external model endpoint is available).
+
+### Differences from Approach A
+
+- Uses `helm.sh/weight` annotations to enforce resource creation order (MinIO at `-5`/`-4`, ServingRuntimes at `0`, InferenceServices at `1`) whereas Approach A has no weight annotations
+- Template files contain multiple resources per file (e.g., `minio-storage-models.yaml` has Service + PVC + Deployment + Secret) whereas Approach A uses one CRD per file
+- Conditionally deploys the local LLM via `{{ if not .Values.model }}` -- entire ServingRuntime + InferenceService gated on a single values key
+- Each detector InferenceService is in its own template file (one per detector) rather than combined into a single template
+- No Makefile, no workbench, no `_helpers.tpl` -- even simpler than Approach A
+
+### Implementation
+
+```
+chart/templates/
+  chunker.yaml                    # Deployment + Service
+  configmap_auxiliary_images.yaml  # ConfigMap (regex/gateway images)
+  dashboard-configmap.yaml         # Conditional OpenShift Console dashboard
+  fms-orchestr8-config-nlp.yaml   # Orchestrator NLP config
+  guardrails-orchestrator.yaml    # GuardrailsOrchestrator CRD
+  ibm-hap-detector.yaml           # ServingRuntime + InferenceService
+  lemonade-stand-app.yaml         # ConfigMap + Deployment + Service + Route + Secret + ServiceMonitor
+  lingua.yaml                     # Deployment + Service
+  llm-llama32.yaml                # Conditional ServingRuntime + InferenceService
+  minio-storage-models.yaml       # Service + PVC + Deployment + Secret (weighted)
+  prompt-injection-detector.yaml  # ServingRuntime + InferenceService
+  shiny-dashboard.yaml            # Deployment + Service + Route
+```
+
+### Helm Weight Ordering
+
+```yaml
+# chart/templates/minio-storage-models.yaml (weight -5 for service/PVC/secret, -4 for deployment)
+annotations:
+  helm.sh/weight: "-5"
+---
+# chart/templates/ibm-hap-detector.yaml (weight 0 for runtime, 1 for inference service)
+annotations:
+  helm.sh/weight: "0"   # ServingRuntime
+  helm.sh/weight: "1"   # InferenceService
+```
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A | Approach B |
+|----------|-----------|-----------|
+| Resource ordering | No ordering mechanism | `helm.sh/weight` annotations for phased deployment |
+| Resources per file | One CRD per template file | Multiple related resources per file |
+| Conditional resources | `workbench.enabled` toggle | `{{ if not .Values.model }}` for entire LLM stack |
+| Helper templates | `_helpers.tpl` present | No helper templates |
+| Total template files | 11 files producing 14 resources | 12 files producing 20+ resources |
+| Makefile | Not provided | Not provided |
+
 ## Related Patterns
 
 - `helm-umbrella-all-remote-ai-arch-deps.md` -- the opposite approach: all dependencies sourced from remote ai-architecture-charts
 - `helm-independent-subcharts-no-umbrella.md` -- separate charts installed independently rather than a single flat chart
+- `helm-minio-initcontainer-hf-model-download.md` -- the MinIO init container pattern used in Approach B
+- `helm-conditional-llm-bypass-external-model.md` -- the conditional LLM bypass pattern used in Approach B

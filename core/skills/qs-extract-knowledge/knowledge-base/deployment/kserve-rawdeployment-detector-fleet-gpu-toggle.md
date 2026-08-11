@@ -1,7 +1,7 @@
 ---
 name: kserve-rawdeployment-detector-fleet-gpu-toggle
 description: Multiple KServe InferenceServices with shared TrustyAI detector runtime and conditional GPU via single toggle
-summary: "Deploys a fleet of KServe RawDeployment InferenceServices — three TrustyAI HF safety detectors (gibberish, prompt-injection/deberta-v3, HAP/granite-guardian) plus one vLLM LLM — with a single Helm toggle (`detectors.useGpu`) that conditionally adds `nvidia.com/gpu` resources to all detectors, enabling the same chart to target CPU-only or GPU clusters. Use when deploying multiple guardrail detectors sharing one runtime image alongside a GPU-bound LLM; for MIG GPU slicing across models see `kserve-multi-model-mig-gpu-slicing.md`; for orchestrator wiring through these detectors see `helm-trustyai-orchestrator-configmap-detector-wiring.md`. Each detector loads weights via OCI modelcar URIs (`oci://quay.io/...`) with per-detector `threshold` values, all services pinned at `minReplicas: 1`/`maxReplicas: 1` with `automountServiceAccountToken: false`, and `/dev/shm` emptyDir (`medium: Memory`, `sizeLimit: 2Gi`) on each ServingRuntime for PyTorch inference. Three identical ServingRuntimes (same image digest) must be defined separately (one per detector) rather than shared; vLLM args in `inferenceservice-llm.yaml` (e.g., `--max-model-len=20000`) silently override conflicting values from `values.yaml` (`maxModelLen: 32768`); LLM tolerations are configurable via `mainLLM.tolerations` but detector node affinity is not templated."
+summary: "Deploys a fleet of KServe RawDeployment InferenceServices — TrustyAI HF safety detectors (gibberish, prompt-injection/deberta-v3, HAP/granite-guardian) plus a vLLM LLM — with conditional GPU allocation enabling the same Helm chart to target CPU-only or GPU clusters. Approach A uses a single `detectors.useGpu` toggle with OCI modelcar URIs and all detectors in one template (pinned image digests); Approach B provides per-detector `detectors.<name>.useGpu` toggles with MinIO S3 storage (`storage.key`+`storage.path`), separate template files with `helm.sh/weight` ordering, per-detector resource limits, and tag-based images — for MIG GPU slicing see `kserve-multi-model-mig-gpu-slicing.md`, for orchestrator wiring see `helm-trustyai-orchestrator-configmap-detector-wiring.md`. All detectors share the same TrustyAI HF runtime image with per-detector `threshold` values, services pinned at `minReplicas: 1`/`maxReplicas: 1` with `automountServiceAccountToken: false`, and `/dev/shm` emptyDir (`medium: Memory`, `sizeLimit: 2Gi`) on each ServingRuntime for PyTorch inference. Three identical ServingRuntimes (same image digest) must be defined separately (one per detector) rather than shared; vLLM args in `inferenceservice-llm.yaml` (e.g., `--max-model-len=20000`) silently override conflicting values from `values.yaml` (`maxModelLen: 32768`); LLM tolerations are configurable via `mainLLM.tolerations` but detector node affinity is not templated."
 metadata:
   type: deployment-pattern
 tags:
@@ -13,6 +13,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/guardrailing-llms"
     notes: "3 detector InferenceServices (gibberish, prompt injection, HAP) sharing the same TrustyAI HF runtime image with optional GPU toggle, plus 1 vLLM LLM InferenceService"
     approach: "A"
+  - quickstart: "lemonade-stand-assistant"
+    repo: "https://github.com/rh-ai-quickstart/lemonade-stand-assistant"
+    notes: "2 detector InferenceServices (HAP, prompt injection) with per-detector GPU toggles, MinIO S3 storage instead of OCI modelcar, separate template files per detector"
+    approach: "B"
 ---
 
 # KServe RawDeployment Detector Fleet with GPU Toggle
@@ -168,7 +172,115 @@ spec:
 - The `/dev/shm` emptyDir with `medium: Memory` and `sizeLimit: 2Gi` is defined on each ServingRuntime to provide shared memory for model inference -- this is a common KServe pattern for PyTorch-based models (see `helm/templates/servingruntime-detectors.yaml`)
 - All services use `serving.kserve.io/deploymentMode: RawDeployment` which bypasses Knative/serverless scaling and deploys as standard Kubernetes Deployments (see annotations on all InferenceService resources)
 
+---
+
+## Approach B: Per-Detector GPU Toggles with MinIO S3 Storage (from lemonade-stand-assistant)
+
+### When to Use
+
+When each detector needs independent GPU control (one on GPU, another on CPU) and detector model weights are served from MinIO via S3 data connection rather than OCI modelcar URIs.
+
+### Differences from Approach A
+
+- Per-detector GPU toggles (`detectors.hap.useGpu`, `detectors.promptInjection.useGpu`) instead of a single global `detectors.useGpu`
+- Per-detector resource configuration in values.yaml (separate CPU/memory for each detector) instead of shared defaults
+- Models loaded from MinIO S3 storage (`storage.key` + `storage.path`) instead of OCI modelcar URIs (`storageUri: oci://...`)
+- Each detector is in a separate template file (`ibm-hap-detector.yaml`, `prompt-injection-detector.yaml`) instead of combined
+- Each template contains both ServingRuntime and InferenceService (2 resources per file) instead of separate runtime and service files
+- Only 2 detectors (HAP and prompt injection) instead of 3 (no gibberish detector)
+- LLM InferenceService is conditionally deployed via `{{ if not .Values.model }}`
+- Uses `helm.sh/weight` annotations for resource ordering (weight `0` for ServingRuntimes, `1` for InferenceServices)
+
+### Per-Detector GPU Toggle
+
+```yaml
+# chart/templates/ibm-hap-detector.yaml (InferenceService excerpt)
+spec:
+  predictor:
+    model:
+      resources:
+        limits:
+          cpu: {{ .Values.detectors.hap.resources.limits.cpu }}
+          memory: {{ .Values.detectors.hap.resources.limits.memory }}
+          {{- if .Values.detectors.hap.useGpu }}
+          nvidia.com/gpu: '1'
+          {{- end }}
+        requests:
+          cpu: {{ .Values.detectors.hap.resources.requests.cpu }}
+          memory: {{ .Values.detectors.hap.resources.requests.memory }}
+          {{- if .Values.detectors.hap.useGpu }}
+          nvidia.com/gpu: '1'
+          {{- end }}
+      runtime: guardrails-detector-runtime-hap
+      storage:
+        key: minio-data-connection-detector-models
+        path: granite-guardian-hap-125m
+    {{- if .Values.detectors.hap.useGpu }}
+    tolerations:
+      - effect: NoSchedule
+        key: nvidia.com/gpu
+        operator: Exists
+    {{- end }}
+```
+
+### Per-Detector Values Structure
+
+```yaml
+# chart/values.yaml
+detectors:
+  hap:
+    useGpu: false
+    resources:
+      requests:
+        cpu: '1'
+        memory: 4Gi
+      limits:
+        cpu: '2'
+        memory: 8Gi
+  promptInjection:
+    useGpu: false
+    resources:
+      requests:
+        cpu: '4'
+        memory: 16Gi
+      limits:
+        cpu: '8'
+        memory: 24Gi
+```
+
+### MinIO S3 Storage Reference
+
+Detectors reference models via an S3 data connection Secret and path, not OCI URIs:
+
+```yaml
+# chart/templates/ibm-hap-detector.yaml
+storage:
+  key: minio-data-connection-detector-models
+  path: granite-guardian-hap-125m
+
+# chart/templates/prompt-injection-detector.yaml
+storage:
+  key: minio-data-connection-detector-models
+  path: deberta-v3-base-prompt-injection-v2
+```
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A | Approach B |
+|----------|-----------|-----------|
+| GPU control | Single `detectors.useGpu` for all detectors | Per-detector `hap.useGpu`, `promptInjection.useGpu` |
+| Model storage | OCI modelcar URIs (`storageUri: oci://...`) | MinIO S3 (`storage.key` + `storage.path`) |
+| Resource config | Shared defaults across detectors | Per-detector CPU/memory in values.yaml |
+| Template layout | All detectors in one template file | One template file per detector |
+| Number of detectors | 3 (gibberish, prompt injection, HAP) | 2 (HAP, prompt injection) |
+| Runtime images | Pinned digest (`@sha256:...`) | Tag-based (`quay.io/trustyai/guardrails-detector-huggingface-runtime:latest`) |
+| Resource ordering | No weight annotations | `helm.sh/weight` for phased deployment |
+
 ## Related Patterns
 
 - `helm-trustyai-orchestrator-configmap-detector-wiring.md` -- the orchestrator that routes traffic through these detectors
 - `kserve-multi-model-mig-gpu-slicing.md` -- alternative pattern using a range loop and MIG GPU slicing for multi-model KServe deployment
+- `helm-minio-initcontainer-hf-model-download.md` -- the MinIO storage that provides model weights for Approach B
+- `helm-conditional-llm-bypass-external-model.md` -- the conditional LLM deployment used alongside Approach B

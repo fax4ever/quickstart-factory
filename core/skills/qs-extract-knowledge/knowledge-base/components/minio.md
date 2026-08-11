@@ -1,13 +1,13 @@
 ---
 name: minio
-description: "S3-compatible object storage for file attachments, optional via compose profiles and feature flags"
-summary: "MinIO (quay.io/minio/minio:latest or pinned release) provides S3-compatible object storage for quickstarts, handling chat attachment uploads (Approach A), serving as shared infrastructure for RAG index persistence, ML model storage, Loki log backend, and document seeding (Approach B), providing infrastructure-only S3 storage with automated bucket provisioning and ODH dashboard integration (Approach C), or backing Langfuse v3 observability with per-feature event/export/media buckets (Approach D). Use Approach A (boto3, configure-pipeline subchart v0.5.6, ATTACHMENTS_BUCKET_* env vars) when MinIO is a single-purpose optional service gated by compose `attachments` profile and inverted DISABLE_ATTACHMENTS flag; use Approach B (minio Python SDK >=7.2.17, standalone minio subchart v0.1.0 as StatefulSet with 50Gi PVC, MINIO_* env vars with shared K8s Secret) when MinIO is always-on with multiple consumers (backend, clustering, rag, Loki); use Approach C (in-repo helm/minio/ chart as Deployment with 100Gi PVC, Makefile DEPLOY_MINIO flag, post-install minio/mc bucket Job, opendatahub.io/dashboard: 'true' labels) when MinIO is infrastructure-only with no Python SDK integration; use Approach D (parent chart-embedded StatefulSet with 10Gi PVC, pinned RELEASE.2024-12-18T13-15-44Z, langfuse.enabled gate, OpenShift restricted SCC with runAsNonRoot/drop ALL/seccomp RuntimeDefault) when MinIO is Langfuse-dedicated with init container bucket provisioning using MC_HOST_ pattern and MC_CONFIG_DIR=/tmp/.mc. Approach A uses lazy _get_s3() with module-level globals and auto-bucket via head_bucket/create_bucket storing attachments under session-scoped keys ({session_id}/{attachment_id}{ext}); Approach B uses centralized get_minio_client() factory (secure=False hardcoded, config priority: params > env vars > defaults), LATEST.json pointer tracking RAG index status (BUILDING/READY/FAILED), joblib serialization for ML model storage, and OpenShift Routes with TLS edge termination; Approach C uses Helm post-install hook Job with minio/mc:latest CLI connecting via in-cluster DNS (backoffLimit: 3, hook-delete-policy: hook-succeeded) and Makefile credential validation enforcing minimum length requirements; Approach D uses init container with mc CLI polling `mc ls` until ready then creating three buckets with anonymous download policy, and LANGFUSE_S3_* per-feature env vars requiring FORCE_PATH_STYLE: \"true\" for path-style S3 addressing. The start-dev.sh script bridges ENABLE_ATTACHMENTS to the inverted DISABLE_ATTACHMENTS flag, compose backend must declare MinIO with `required: false` to avoid blocking startup, Loki deploys its own separate MinIO with anyuid SCC for minio-sa, the minio subchart is packaged as .tgz requiring extraction to inspect templates, Approach C's Secret template is noted as not production-hardened (should use ExternalSecret/Vault), the post-install bucket Job has no explicit wait-for-ready logic, clustering model_loader.py duplicates client logic bypassing the shared factory, session-scoped authorization remains unimplemented (TODO), Approach D's mc:latest init image is unpinned while the server is pinned creating potential version mismatch, S3 region is hardcoded to us-east-1 in Langfuse consumer env vars, and anonymous download policy on Langfuse buckets allows any namespace pod to read contents without credentials."
+description: "S3-compatible object storage for attachments, models, RAG indexes, Langfuse, and KServe model serving"
+summary: "Provides S3-compatible object storage for chat attachments, RAG index and ML model persistence, Loki logging backend, Langfuse v3 observability, and KServe guardrail detector model serving across five approaches with different deployment kinds, Python SDK choices, and optionality patterns. Choose A (boto3, compose profiles, DISABLE_ATTACHMENTS feature flag, configure-pipeline subchart) for optional single-consumer attachment uploads with lazy _get_s3() and session-scoped keys; B (minio Python SDK, standalone subchart, always-on StatefulSet 50Gi PVC) for multi-consumer RAG/ML/Loki with LATEST.json index status tracking, joblib model serialization, and centralized client factory; C (in-repo Helm chart, Deployment 100Gi PVC, post-install mc CLI bucket Job) for infrastructure-only with Makefile DEPLOY_MINIO gating, credential validation, and ODH dashboard labels; D (embedded StatefulSet 10Gi PVC, init container mc provisioning, MC_CONFIG_DIR=/tmp/.mc) for Langfuse-dedicated S3 gated by langfuse.enabled with full OpenShift restricted SCC and per-feature LANGFUSE_S3_*_FORCE_PATH_STYLE env vars; E (TrustyAI image, HuggingFace CLI init container, RHOAI data connection Secret with opendatahub.io/connection-type: s3) for KServe InferenceService detector models with helm.sh/weight ordering. Env var naming differs per approach -- ATTACHMENTS_BUCKET_* (A), MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY with secure=False (B), minio.userId/password Helm values (C), LANGFUSE_S3_*_FORCE_PATH_STYLE: \"true\" required for path-style addressing (D), AWS_* keys in data connection Secret (E) -- and Python SDK splits between boto3 lazy initialization for test compatibility (A) and minio SDK centralized client factory with config priority params > env > defaults (B). Feature flag uses inverted DISABLE_ATTACHMENTS logic bridged by start script (A); Loki deploys its own separate MinIO instance requiring anyuid SCC via minio-sa ServiceAccount (B); post-install bucket Job lacks wait-for-ready with backoffLimit: 3 and mc:latest unpinned (C); MC_CONFIG_DIR=/tmp/.mc required because default ~/.mc is not writable under restricted SCC, and anonymous download policy exposes all three buckets namespace-wide (D); credentials hardcoded as plain-text THEACCESSKEY/THESECRETKEY in Deployment template, init container creates unused /mnt/models/llms/ directory, and TrustyAI image has different update cadence than standard quay.io/minio/minio (E)."
 metadata:
   type: component
 tags:
-  tech_stack: [minio, python, boto3, fastapi, joblib, faiss, helm, langfuse]
-  ai_pattern: [rag, embeddings, vector-search, data-pipeline, evaluation]
-  platform: [openshift, rhoai, opendatahub]
+  tech_stack: [minio, python, boto3, fastapi, joblib, faiss, helm, langfuse, kserve, huggingface]
+  ai_pattern: [rag, embeddings, vector-search, data-pipeline, evaluation, guardrails, model-serving]
+  platform: [openshift, rhoai, opendatahub, kserve]
   data_layer: [minio]
 source_examples:
   - quickstart: "ai-virtual-agent"
@@ -26,6 +26,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
     notes: "Langfuse-dedicated MinIO StatefulSet with init container bucket provisioning, OpenShift-hardened security context, pinned image version"
     approach: "D"
+  - quickstart: "lemonade-stand-assistant"
+    repo: "https://github.com/rh-ai-quickstart/lemonade-stand-assistant"
+    notes: "MinIO Deployment for guardrail detector model storage with HuggingFace init container download, KServe InferenceService consumption via RHOAI data connection Secret"
+    approach: "E"
 ---
 
 # MinIO
@@ -855,20 +859,200 @@ MinIO health probes use the standard MinIO health endpoints (`/minio/health/live
 
 ---
 
+## Approach E: Guardrail Detector Model Storage with HuggingFace Init Container (from lemonade-stand-assistant)
+
+### When to Use
+
+When MinIO serves as S3-compatible storage specifically for guardrail detector models consumed by KServe InferenceServices. Models are downloaded from HuggingFace Hub via an init container and served to KServe through an RHOAI data connection Secret. This approach is suited for quickstarts that deploy multiple small detector models (HAP, prompt injection) alongside a guardrails orchestrator.
+
+### Differences from Approaches A, B, C, and D
+
+- **Purpose:** Dedicated to serving HuggingFace guardrail detector models to KServe InferenceServices, not general storage/attachments/Langfuse
+- **Container image:** Uses `quay.io/trustyai/modelmesh-minio-examples:latest` (TrustyAI image), not the standard `quay.io/minio/minio` used in all other approaches
+- **Model loading:** Init container uses `quay.io/rgeada/llm_downloader:latest` with `huggingface-cli download` to pull models before MinIO starts
+- **Consumer pattern:** KServe InferenceService `storage.key` pointing to an RHOAI data connection Secret (not env vars, not Python SDK, not Langfuse S3 config)
+- **Secret format:** RHOAI data connection Secret with `opendatahub.io/connection-type: s3` annotation and AWS_* key names (`AWS_ACCESS_KEY_ID`, `AWS_S3_BUCKET`, etc.)
+- **Deployment kind:** Kubernetes Deployment with separate PVC (like C), not StatefulSet
+- **No bucket creation step:** Models are written to the PVC by the init container and MinIO serves from that volume directly
+- **Helm ordering:** Uses `helm.sh/weight` annotations (`-5` for Service/PVC/Secret, `-4` for Deployment) for install ordering
+
+### Tech Stack & Dependencies
+- **Runtime:** MinIO server (S3-compatible API via TrustyAI image)
+- **Container image:** `quay.io/trustyai/modelmesh-minio-examples:latest`
+- **Model downloader image:** `quay.io/rgeada/llm_downloader:latest`
+- **Key dependencies:** KServe InferenceServices and ServingRuntimes consume the stored models; guardrails-detector-huggingface-runtime serves them
+- **Helm chart:** Embedded in parent chart `chart/templates/minio-storage-models.yaml` (not a subchart)
+
+### Key Patterns
+
+#### Init Container for HuggingFace Model Download
+
+An init container uses the HuggingFace CLI to download multiple detector models into a shared PVC before the MinIO server starts. The models are stored under `/mnt/models/huggingface/<model-name>`.
+
+```yaml
+# chart/templates/minio-storage-models.yaml (lines 56-79)
+initContainers:
+  - name: download-model
+    image: quay.io/rgeada/llm_downloader:latest
+    command:
+      - bash
+      - -c
+      - |
+        models=(
+          ibm-granite/granite-guardian-hap-125m
+          protectai/deberta-v3-base-prompt-injection-v2
+        )
+        echo "Starting download"
+        mkdir /mnt/models/llms/
+        for model in "${models[@]}"; do
+          echo "Downloading $model"
+          /tmp/venv/bin/huggingface-cli download $model --local-dir /mnt/models/huggingface/$(basename $model)
+        done
+        echo "Done!"
+    resources:
+      limits:
+        memory: "2Gi"
+        cpu: "1"
+    volumeMounts:
+      - mountPath: "/mnt/models/"
+        name: model-volume
+```
+
+#### RHOAI Data Connection Secret
+
+The Secret follows the RHOAI data connection pattern with `opendatahub.io/connection-type: s3` annotation and `opendatahub.io/dashboard: 'true'` plus `opendatahub.io/managed: 'true'` labels. KServe InferenceServices reference this Secret by name via the `storage.key` field to access models from MinIO.
+
+```yaml
+# chart/templates/minio-storage-models.yaml (lines 103-120)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-data-connection-detector-models
+  labels:
+    opendatahub.io/dashboard: 'true'
+    opendatahub.io/managed: 'true'
+  annotations:
+    opendatahub.io/connection-type: s3
+    openshift.io/display-name: Minio Data Connection - Guardrail Detector Models
+data: 
+  AWS_ACCESS_KEY_ID: VEhFQUNDRVNTS0VZ
+  AWS_DEFAULT_REGION: dXMtc291dGg=
+  AWS_S3_BUCKET: aHVnZ2luZ2ZhY2U=
+  AWS_S3_ENDPOINT: aHR0cDovL21pbmlvLXN0b3JhZ2UtZ3VhcmRyYWlsLWRldGVjdG9yczo5MDAw
+  AWS_SECRET_ACCESS_KEY: VEhFU0VDUkVUS0VZ
+type: Opaque
+```
+
+#### KServe InferenceService Model Consumption
+
+Downstream KServe InferenceServices reference the data connection Secret and specify a `path` within the S3 bucket to locate each specific model. The `storage.key` field points to the Secret name.
+
+```yaml
+# chart/templates/prompt-injection-detector.yaml (lines 59-79)
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: guardrails-detector-huggingface
+      runtime: guardrails-detector-runtime-prompt-injection
+      storage:
+        key: minio-data-connection-detector-models
+        path: deberta-v3-base-prompt-injection-v2
+```
+
+```yaml
+# chart/templates/ibm-hap-detector.yaml (lines 57-77)
+spec:
+  predictor:
+    model:
+      runtime: guardrails-detector-runtime-hap
+      storage:
+        key: minio-data-connection-detector-models
+        path: granite-guardian-hap-125m
+```
+
+#### Hardcoded Credentials in Deployment
+
+MinIO credentials are set as plain-text environment variables directly in the Deployment template, not sourced from a Secret.
+
+```yaml
+# chart/templates/minio-storage-models.yaml (lines 85-89)
+containers:
+  - args:
+      - server
+      - /models
+    env:
+      - name: MINIO_ACCESS_KEY
+        value:  THEACCESSKEY
+      - name: MINIO_SECRET_KEY
+        value: THESECRETKEY
+```
+
+#### Helm Weight-Based Install Ordering
+
+Resources use `helm.sh/weight` annotations to control installation order. The Service, PVC, and Secret deploy first (weight `-5`), followed by the MinIO Deployment (weight `-4`), then ServingRuntimes (weight `0`), then InferenceServices (weight `1`).
+
+```yaml
+# chart/templates/minio-storage-models.yaml (lines 5, 22, 35-36, 110-111)
+# Service and PVC at weight -5
+annotations:
+  helm.sh/weight: "-5"
+# Deployment at weight -4
+annotations:
+  helm.sh/weight: "-4"
+```
+
+### Configuration
+- **Environment variables (MinIO container):**
+  - `MINIO_ACCESS_KEY` -- S3 access key (hardcoded: `THEACCESSKEY`)
+  - `MINIO_SECRET_KEY` -- S3 secret key (hardcoded: `THESECRETKEY`)
+- **Data connection Secret (`minio-data-connection-detector-models`):**
+  - `AWS_ACCESS_KEY_ID` -- base64-encoded access key (decoded: `THEACCESSKEY`)
+  - `AWS_SECRET_ACCESS_KEY` -- base64-encoded secret key (decoded: `THESECRETKEY`)
+  - `AWS_S3_BUCKET` -- bucket name (decoded: `huggingface`)
+  - `AWS_S3_ENDPOINT` -- MinIO endpoint (decoded: `http://minio-storage-guardrail-detectors:9000`)
+  - `AWS_DEFAULT_REGION` -- region (decoded: `us-south`)
+- **Helm values:** No values.yaml overrides for MinIO itself; detector resources are configurable via `detectors.hap.resources.*` and `detectors.promptInjection.resources.*`
+- **Models downloaded:** `ibm-granite/granite-guardian-hap-125m`, `protectai/deberta-v3-base-prompt-injection-v2`
+
+### Known Gotchas
+- Credentials are hardcoded as plain-text environment variables in the Deployment template (`MINIO_ACCESS_KEY: THEACCESSKEY`, `MINIO_SECRET_KEY: THESECRETKEY`) and duplicated as base64 in the Secret. These are placeholder values that should be changed for production use.
+- The init container downloads models from HuggingFace Hub at deploy time, which requires internet access from the cluster and can be slow depending on model size and network bandwidth. There is no retry logic or progress tracking beyond stdout logging.
+- The `maistra.io/expose-route: 'true'` label on the pod template (line 49) suggests this was used in a Service Mesh environment, which may cause unexpected route creation if Istio/Maistra is installed.
+- The init container creates a `/mnt/models/llms/` directory (line 68) that is not used by any of the downloaded models -- models are stored under `/mnt/models/huggingface/`. This appears to be a leftover from a previous configuration.
+- The MinIO container mounts the volume at `/models/` while the init container mounts at `/mnt/models/`. The init container writes to `/mnt/models/huggingface/<model>` and MinIO serves from `/models/` -- these are the same PVC, so the HuggingFace models end up under `/models/huggingface/<model>` from MinIO's perspective, matching the `huggingface` bucket name in the data connection Secret.
+- The container uses `quay.io/trustyai/modelmesh-minio-examples:latest` instead of the standard MinIO image. This is a TrustyAI-maintained image that may have different update cadences or configurations.
+- The security context on the MinIO container includes `allowPrivilegeEscalation: false`, `capabilities.drop: ALL`, and `seccompProfile: RuntimeDefault`, but does NOT include `runAsNonRoot` -- unlike Approach D which sets it at both pod and container level.
+
+### Testing Notes
+- Verify MinIO pod is running: `oc get pods -l app=minio-storage-guardrail-detectors`
+- Check that the init container completed model downloads: `oc logs <pod> -c download-model`
+- Verify the data connection Secret exists: `oc get secret minio-data-connection-detector-models`
+- Confirm KServe InferenceServices are ready: `oc get inferenceservices prompt-injection-detector guardrails-detector-ibm-hap`
+- The InferenceServices should show `READY=True` once they successfully load models from the MinIO storage endpoint
+
+### Related Patterns
+- Architecture: Guardrails pipeline with multiple detector models
+- Deployment: KServe InferenceService model storage via RHOAI data connections
+- Deployment: Init containers for model downloading from HuggingFace Hub
+- Deployment: Helm weight annotations for resource ordering
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) |
-|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|
-| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) | Langfuse v3 S3 backend (events, exports, media) |
-| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client | None -- Langfuse handles S3 internally |
-| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) | Embedded in parent chart templates (StatefulSet + VolumeClaimTemplate) |
-| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag | Conditional on `langfuse.enabled` |
-| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart | Two (Langfuse web + worker) |
-| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label | `<release>-minio-secret` with access-key/secret-key fields |
-| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination | Not created (internal-only) |
-| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC via StatefulSet VolumeClaimTemplate |
-| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI | Init container with mc CLI + wait-for-ready loop |
-| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) | No |
-| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) | Embedded in parent chart templates |
-| Image version | latest | latest | latest | Pinned release tag |
-| Security context | Not specified | Not specified | Empty (`{}`) | Full OpenShift restricted SCC (runAsNonRoot, drop ALL, seccomp) |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (lemonade-stand-assistant) |
+|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|---------------------------------------|
+| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) | Langfuse v3 S3 backend (events, exports, media) | Guardrail detector model storage for KServe |
+| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client | None -- Langfuse handles S3 internally | None -- KServe handles S3 via data connection |
+| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) | Embedded in parent chart templates (StatefulSet + VolumeClaimTemplate) | Embedded in parent chart templates (Deployment + separate PVC) |
+| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag | Conditional on `langfuse.enabled` | Always-on required dependency |
+| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart | Two (Langfuse web + worker) | Multiple KServe InferenceServices (HAP, prompt injection detectors) |
+| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label | `<release>-minio-secret` with access-key/secret-key fields | RHOAI data connection Secret with AWS_* keys and `opendatahub.io/connection-type: s3` |
+| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination | Not created (internal-only) | Not created (internal-only) |
+| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC via StatefulSet VolumeClaimTemplate | 50Gi PVC (ReadWriteOnce, separate resource) |
+| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI | Init container with mc CLI + wait-for-ready loop | Init container downloads models directly to PVC |
+| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) | No | Yes (`opendatahub.io/dashboard: 'true'` + `opendatahub.io/managed: 'true'` labels, `opendatahub.io/connection-type: s3` annotation) |
+| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) | Embedded in parent chart templates | Embedded in parent chart templates |
+| Image version | latest | latest | latest | Pinned release tag | latest (TrustyAI image) |
+| Security context | Not specified | Not specified | Empty (`{}`) | Full OpenShift restricted SCC (runAsNonRoot, drop ALL, seccomp) | Partial (drop ALL, seccomp, no runAsNonRoot) |

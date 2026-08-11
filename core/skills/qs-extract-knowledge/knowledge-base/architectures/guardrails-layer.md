@@ -1,14 +1,14 @@
 ---
 name: guardrails-layer
-description: AI safety guardrails via LlamaStack shields, F5 AI Guardrails proxy, or TrustyAI orchestrator
-summary: "Implements AI safety guardrails for LLM inference via four approaches: (A) LlamaStack per-agent input shields executed via `client.safety.run_shield()` in runner code with output refusal handling via Responses API `refusal` content type and shield IDs stored as JSON columns, (B) F5 AI Guardrails (Calypso AI Moderator) as an external commercial reverse proxy intercepting OpenAI-compatible API calls with Block/Audit/Redact enforcement modes and per-project Moderator UI management, (C) TrustyAI GuardrailsOrchestrator (fms-orchestr8) as an RHOAI-native open-source gateway deploying HF detector microservices (gibberish, DeBERTa v3 prompt injection, Granite Guardian HAP, regex PII) as KServe InferenceServices, and (D) NeMo Guardrails as a standalone service with custom Colang flow definitions (config.yaml, rails.co, actions.py in ConfigMap), LLM-based self-check input/output evaluation, optional NemoGuard JailbreakDetect NIM, and global scope across all agents via `USE_NEMO_GUARDRAILS` env var. Choose A for per-agent shield customization within LlamaStack applications (requires runner code integration), B for centralized security-team-managed enforcement with Audit/Redact modes (requires 1-3 extra GPUs, two-pass Helm deployment, anyuid SCC for 7 SAs across 4 namespaces), C for open-source RHOAI-native guardrails with CPU-only detectors, single Helm chart deployment, and per-route detector grouping via ConfigMaps (`/all/` and `/passthrough/` routes), or D for custom domain-specific rail logic via Colang flows with optional jailbreak NIM (optional 1 GPU) and HTTP `/v1/guardrail/checks` endpoint; B and C require no application code changes (change target URL only), while A and D require code integration. A stores shield IDs as JSON columns on the agent model and executes shields sequentially before inference; B requires the Moderator endpoint at `https://<hostname>/openai/<connection-name>/chat/completions` where connection-name is the display name from the Moderator UI (not model ID); C configures detector thresholds in the NLP orchestrator ConfigMap (gibberish at 0.35, others at 0.5) and deploys detectors in RawDeployment mode using OCI-stored models; D calls `NEMO_GUARDRAILS_URL` (default `http://nemo-guardrails/v1/guardrail/checks`) with a 10-second timeout and uses the same inference LLM for self-check evaluations. A is fail-open (shield errors caught and logged but request proceeds without safety validation), B is fail-closed but may false-positive on RAG content injected into prompts and `extra_body` parameters must not be sent through the Moderator, C is fail-closed with its orchestrator pod requiring all three containers healthy (NLP orchestrator port 8032, gateway port 8090, regex detector port 8080) plus a 2Gi shared-memory emptyDir volume per detector for PyTorch model loading, and D is fail-closed with guardrail errors propagating as exceptions — D shares the inference LLM for self-checks (adding latency under load) and `BLOCKED_OUTPUT_PHRASES` are hard-coded in the ConfigMap requiring pod restart to update."
+description: AI safety guardrails via LlamaStack shields, F5 AI Guardrails proxy, TrustyAI orchestrator, or NeMo Guardrails
+summary: "Implements AI safety guardrails for LLM inference via five approaches: (A) LlamaStack per-agent input shields executed via `client.safety.run_shield()` in runner code with output refusal handling via Responses API `refusal` content type and shield IDs stored as JSON columns, (B) F5 AI Guardrails (Calypso AI Moderator) as an external commercial reverse proxy intercepting OpenAI-compatible API calls with Block/Audit/Redact enforcement modes and per-project Moderator UI management, (C) TrustyAI GuardrailsOrchestrator (fms-orchestr8) as an RHOAI-native open-source gateway deploying HF detector microservices (gibberish, DeBERTa v3 prompt injection, Granite Guardian HAP, regex PII) as KServe InferenceServices in RawDeployment mode with CPU-only default, (D) NeMo Guardrails as a standalone service with custom Colang flow definitions (config.yaml, rails.co, actions.py in ConfigMap), LLM-based self-check input/output evaluation, optional NemoGuard JailbreakDetect NIM, and global scope across all agents via `USE_NEMO_GUARDRAILS` env var, and (E) TrustyAI v2 API with inline per-request detector configuration via `/api/v2/chat/completions-detection` (gateway disabled, 2-container pod, direct port 8032 access), application-level multilingual regex pre-filtering in 13 languages, Lingua language detection service, sentence chunker (gRPC port 8085), MinIO-based model storage with HuggingFace CLI download init container, and R Shiny real-time monitoring dashboard with Prometheus `/metrics` endpoint scraped at 3-second intervals. Choose A for per-agent shield customization within LlamaStack applications (requires runner code integration), B for centralized security-team-managed enforcement with Audit/Redact modes (requires 1-3 extra GPUs, two-pass Helm deployment, anyuid SCC for 7 SAs across 4 namespaces), C for open-source RHOAI-native guardrails with CPU-only detectors, single Helm chart deployment, and per-route detector grouping via ConfigMaps (`/all/` and `/passthrough/` routes), D for custom domain-specific rail logic via Colang flows with optional jailbreak NIM (optional 1 GPU) and HTTP `/v1/guardrail/checks` endpoint, or E for per-request detector control with application-level pre-filtering, SSE streaming with duplicate chunk detection, and real-time observability via R Shiny dashboard; B and C require no application code changes (change target URL only), A and D require code integration, and E requires detector payload construction, SSE parsing, local regex pre-filter, and metrics collection. A stores shield IDs as JSON columns on the agent model and executes shields sequentially before inference; B requires the Moderator endpoint at `https://<hostname>/openai/<connection-name>/chat/completions` where connection-name is the display name from the Moderator UI (not model ID); C configures detector thresholds in the NLP orchestrator ConfigMap (gibberish at 0.35, others at 0.5) and deploys detectors in RawDeployment mode using OCI-stored models with 2Gi shared-memory emptyDir volumes per detector; D calls `NEMO_GUARDRAILS_URL` (default `http://nemo-guardrails/v1/guardrail/checks`) with a 10-second timeout and uses the same inference LLM for self-check evaluations; E sends inline `detectors.input` and `detectors.output` maps in each request body, reads system prompt from ConfigMap-mounted file at `/system-prompt/prompt`, and uses Kubernetes-injected service discovery env vars for orchestrator connection. A is fail-open (shield errors caught and logged but request proceeds without safety validation), B is fail-closed but may false-positive on RAG content injected into prompts and `extra_body` parameters must not be sent through the Moderator, C is fail-closed with its orchestrator pod requiring all three containers healthy (NLP orchestrator port 8032, gateway port 8090, regex detector port 8080) plus a 2Gi shared-memory emptyDir volume per detector for PyTorch model loading, D is fail-closed with guardrail errors propagating as exceptions -- D shares the inference LLM for self-checks (adding latency under load) and `BLOCKED_OUTPUT_PHRASES` are hard-coded in the ConfigMap requiring pod restart to update, and E is fail-closed with TLS verification disabled (`ssl.CERT_NONE`) for self-signed orchestrator certificates, a 100-character input limit enforced before any guardrail check, hard-coded MinIO credentials in the deployment template, and the prompt injection detector requiring 4x more resources (4 CPU/16Gi) than other detectors (1 CPU/4Gi)."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, llamastack, python, streamlit, calypso-ai, jupyter, nemo-guardrails, colang]
+  tech_stack: [fastapi, llamastack, python, streamlit, calypso-ai, jupyter, nemo-guardrails, colang, r-shiny, aiohttp, lingua]
   ai_pattern: [guardrails, agents, model-serving]
   platform: [llamastack, rhoai, openshift, kserve, vllm, trustyai]
-  data_layer: [postgresql]
+  data_layer: [postgresql, minio]
 source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
@@ -26,6 +26,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
     notes: "NeMo Guardrails service with NemoGuard JailbreakDetect NIM, custom Colang flows for input/output rail checks, and agent-level guardrail integration via HTTP REST API"
     approach: "D"
+  - quickstart: "lemonade-stand-assistant"
+    repo: "https://github.com/rh-ai-quickstart/lemonade-stand-assistant"
+    notes: "TrustyAI GuardrailsOrchestrator v2 API with inline detector config in request body, application-level regex pre-filtering for 13-language content blocking, Lingua language detection, sentence chunker, Prometheus metrics, and R Shiny real-time monitoring dashboard"
+    approach: "E"
 ---
 
 # Guardrails Layer
@@ -862,21 +866,343 @@ The guardrails evaluation happens entirely before or after the main LLM inferenc
 
 ---
 
+## Approach E: TrustyAI Orchestrator v2 API with Application-Level Pre-Filtering and Monitoring (from lemonade-stand-assistant)
+
+### When to Use
+
+Use this approach when deploying guardrails via the TrustyAI GuardrailsOrchestrator's v2 detection API with application-level control over which detectors run per request, combined with client-side pre-filtering and real-time observability. Unlike Approach C which uses the guardrails gateway with route-based detector grouping from ConfigMaps, this approach disables the gateway entirely and sends detector configuration inline in each request body via `/api/v2/chat/completions-detection`. It suits scenarios where: the application needs per-request control over which detectors apply to input vs output, a client-side pre-filter (e.g., multilingual regex) should short-circuit requests before they reach the orchestrator, real-time guardrail metrics are needed for a live monitoring dashboard, and additional custom detector services (e.g., Lingua language detection) are deployed alongside the standard HF detectors.
+
+### Differences from Approach C
+
+| Aspect | Approach C (TrustyAI Gateway) | Approach E (TrustyAI v2 API + App Pre-Filter) |
+|--------|-------------------------------|-----------------------------------------------|
+| API endpoint | `/<route>/v1/chat/completions` (route-based) | `/api/v2/chat/completions-detection` (inline detectors) |
+| Gateway | Enabled (`enableGuardrailsGateway: true`), 3-container pod | Disabled (`enableGuardrailsGateway: false`), 2-container pod |
+| Detector configuration | ConfigMaps define routes and detector activation | Request body contains `detectors.input` and `detectors.output` maps per request |
+| Application code changes | No (change target URL only) | Yes (builds detector payload, parses detection results, pre-filters requests) |
+| Client-side pre-filtering | None | Local regex pre-filter blocks obvious violations before reaching orchestrator |
+| Additional detectors | None (gibberish, prompt injection, HAP, regex PII) | Lingua language detection service (standard Deployment, not KServe) |
+| Chunker type | `whole_doc_chunker` (built-in) | External `sentence` chunker service (gRPC on port 8085) |
+| Observability | Pod logs, OTEL exporter | Prometheus-format `/metrics` endpoint + R Shiny real-time dashboard |
+| Model storage | OCI artifacts (`oci://` URIs on InferenceService) | MinIO with HuggingFace CLI download init container |
+| System prompt | Sent inline in notebook/client | Mounted from ConfigMap (`lemonade-stand-system-prompt`) at `/system-prompt/prompt` |
+| Streaming | Not shown (notebook uses synchronous POST) | SSE streaming via aiohttp with real-time chunk forwarding and duplicate detection |
+
+### Data Flow
+
+1. User sends a message via the FastAPI chat endpoint (`POST /api/chat`)
+2. The FastAPI app checks message length (max 100 characters) and increments the request counter
+3. **Local regex pre-filter**: The app runs compiled regex patterns against the message, checking for non-lemon fruit names in 13 languages (English, Turkish, Swedish, Finnish, Dutch, French, Spanish, German, Japanese, Russian, Italian, Polish, Chinese, Hindi). If any pattern matches, the request is blocked immediately with a user-friendly message -- the orchestrator is never called
+4. If local regex passes, the app builds a request payload with inline detector configuration: `detectors.input` specifies HAP, language detection, and prompt injection; `detectors.output` specifies HAP, regex competitor (with all 13-language patterns), and language detection
+5. The app sends the payload via aiohttp to the TrustyAI orchestrator at `https://guardrails-orchestrator-service:8032/api/v2/chat/completions-detection` with SSE streaming enabled
+6. The orchestrator routes input detectors: HAP to the Granite Guardian HAP KServe InferenceService, prompt injection to the DeBERTa v3 KServe InferenceService, language detection to the Lingua detector Deployment, and regex to the built-in regex detector (localhost:8080). Each detector uses a sentence chunker service for text splitting
+7. If any input detector triggers (score above threshold), the orchestrator returns an `UNSUITABLE_INPUT` warning in the SSE stream with detection details
+8. If input detectors pass, the orchestrator forwards the request to the vLLM model serving Llama 3.2 3B Instruct
+9. As the LLM generates tokens, the orchestrator streams them back through output detectors (HAP, regex competitor, language detection)
+10. If any output detector triggers, the orchestrator returns an `UNSUITABLE_OUTPUT` warning
+11. The FastAPI app parses each SSE chunk, extracts detection results, records metrics per detector and direction, and either forwards content chunks to the client or returns a styled error message with the triggering detector type
+12. The R Shiny dashboard polls the FastAPI `/metrics` endpoint every 1 second and renders real-time guardrail detection counts by detector type and direction
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| User browser | FastAPI app (lemonade-stand) | HTTPS (OpenShift Route, port 8080) | Chat requests and SSE streaming responses |
+| FastAPI app | TrustyAI orchestrator | HTTPS (port 8032, self-signed certs) | `/api/v2/chat/completions-detection` with inline detectors |
+| Orchestrator | Regex detector (built-in) | HTTP (localhost:8080, sidecar) | Regex pattern matching (competitor fruit names) |
+| Orchestrator | Chunker service | gRPC (port 8085) | Sentence-level text splitting for all detectors |
+| Orchestrator | HAP detector InferenceService | HTTP (port 8000, cluster DNS) | Hate and profanity classification (Granite Guardian HAP 125M) |
+| Orchestrator | Prompt injection detector InferenceService | HTTP (port 8000, cluster DNS) | Prompt injection classification (DeBERTa v3) |
+| Orchestrator | Lingua detector Deployment | HTTP (port 8080, cluster DNS) | Language detection (non-English text blocking) |
+| Orchestrator | Main LLM InferenceService | HTTP (port 8080, cluster DNS) | Forward approved prompts for inference (vLLM Llama 3.2 3B Instruct) |
+| R Shiny dashboard | FastAPI app | HTTP (port 8080, cluster DNS) | Poll `/metrics` endpoint for Prometheus-format guardrail metrics |
+| ServiceMonitor | FastAPI app | HTTP (port 8080) | Prometheus scraping at 3-second intervals |
+| MinIO init container | HuggingFace Hub | HTTPS | Download detector models (granite-guardian-hap-125m, deberta-v3-base-prompt-injection-v2) |
+| KServe InferenceServices | MinIO | HTTP (port 9000) | Load detector models via S3 data connection |
+
+### Key Integration Points
+
+#### v2 Detection API with Inline Detectors
+
+The FastAPI app builds detector configuration inline in the request payload, specifying which detectors apply to input vs output per request. This differs from Approach C where detector grouping is fixed in ConfigMap routes.
+
+```python
+# lemonade-stand-app/app_fastapi.py (lines 380-403)
+payload = {
+    "model": VLLM_MODEL,
+    "messages": [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": message}
+    ],
+    "stream": True,
+    "max_tokens": 200,
+    "temperature": 0,
+    "detectors": {
+        "input": {
+            "hap": {},
+            "language_detection": {},
+            "prompt_injection": {}
+        },
+        "output": {
+            "hap": {},
+            "regex_competitor": {
+                "regex": ALL_REGEX_PATTERNS
+            },
+            "language_detection": {}
+        }
+    }
+}
+```
+
+#### Local Regex Pre-Filter
+
+The app compiles multilingual regex patterns at startup and checks user messages locally before sending to the orchestrator. This reduces orchestrator load by catching obvious violations (fruit names in 13 languages) at the application layer.
+
+```python
+# lemonade-stand-app/app_fastapi.py (lines 86-131)
+ALL_REGEX_PATTERNS = [
+    # English fruits
+    r"\b(?i:oranges?|apples?|cranberr(?:y|ies)|pineapples?|grapes?|...)\b",
+    # Turkish fruits
+    r"\b(?i:portakals?|elmalar?|kızılcık(?:lar)?|...)\b",
+    # ... 11 more language patterns (Swedish, Finnish, Dutch, French, Spanish,
+    #     German, Japanese, Russian, Italian, Polish, Chinese, Hindi)
+]
+
+COMPILED_REGEX_PATTERNS = [re.compile(pattern) for pattern in ALL_REGEX_PATTERNS]
+
+def check_regex_locally(text: str) -> bool:
+    """Pre-filters requests before sending to the orchestrator."""
+    for pattern in COMPILED_REGEX_PATTERNS:
+        if pattern.search(text):
+            return True
+    return False
+```
+
+#### SSE Stream Parsing with Detection Handling
+
+The app parses orchestrator SSE chunks in real-time, extracting both content and detection results. When the orchestrator flags content as `UNSUITABLE_INPUT` or `UNSUITABLE_OUTPUT`, the app maps detector IDs to user-friendly messages with detector-specific CSS classes for styled error display.
+
+```python
+# lemonade-stand-app/app_fastapi.py (lines 424-474)
+warnings_list = chunk_data.get("warnings", [])
+detections = chunk_data.get("detections", {})
+choices = chunk_data.get("choices", [])
+
+# Process detections for metrics
+for det in detections.get("input", []):
+    if isinstance(det, dict):
+        await metrics.add_detections([det], "input", source)
+
+# Check for blocking conditions
+for warning in warnings_list:
+    warning_type = warning.get("type", "")
+    if warning_type in ["UNSUITABLE_INPUT", "UNSUITABLE_OUTPUT"]:
+        direction = "input" if warning_type == "UNSUITABLE_INPUT" else "output"
+        for det in detections.get(direction, []):
+            for result in det.get("results", []):
+                detector_id = result.get("detector_id", "")
+                if detector_id in ["hap", "prompt_injection", "regex_competitor", "language_detection"]:
+                    detector_key = f"{detector_id}_{direction}"
+                    detected_types.append(detector_key)
+```
+
+#### Prometheus Metrics Endpoint
+
+The FastAPI app exposes a `/metrics` endpoint in Prometheus text format with per-detector, per-direction, per-source counters. A ServiceMonitor scrapes at 3-second intervals for OpenShift monitoring integration.
+
+```python
+# lemonade-stand-app/app_fastapi.py (lines 154-245)
+class AsyncMetricsCollector:
+    DETECTOR_NAMES = ["hap", "regex_competitor", "prompt_injection", "language_detection"]
+
+    async def get_prometheus_metrics(self) -> str:
+        # guardrail_requests_total{source="audience"} 42
+        # guardrail_detections_total{detector="hap",direction="input",source="audience"} 3
+        # guardrail_detections_by_detector{detector="prompt_injection",source="audience"} 1
+        # guardrail_detections_by_direction{direction="input",source="audience"} 5
+        ...
+```
+
+```yaml
+# chart/templates/lemonade-stand-app.yaml (lines 169-185)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: lemonade-stand
+spec:
+  selector:
+    matchLabels:
+      app: lemonade-stand
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 3s
+```
+
+#### GuardrailsOrchestrator CR (Gateway Disabled)
+
+Unlike Approach C which enables the guardrails gateway for route-based access, this approach disables the gateway. The app talks directly to the NLP orchestrator (port 8032) via HTTPS with the v2 API.
+
+```yaml
+# chart/templates/guardrails-orchestrator.yaml
+apiVersion: trustyai.opendatahub.io/v1alpha1
+kind: GuardrailsOrchestrator
+metadata:
+  name: guardrails-orchestrator
+spec:
+  enableBuiltInDetectors: true
+  enableGuardrailsGateway: false
+  orchestratorConfig: fms-orchestr8-config-nlp
+  otelExporter:
+    otlpProtocol: grpc
+  replicas: 1
+```
+
+#### NLP Orchestrator ConfigMap with Sentence Chunker and Lingua Detector
+
+The NLP config registers the external sentence chunker service and the Lingua language detection service alongside the standard HF detectors. All detectors use the sentence chunker instead of Approach C's whole_doc_chunker.
+
+```yaml
+# chart/templates/fms-orchestr8-config-nlp.yaml
+chunkers:
+  sentence:
+    type: sentence
+    service:
+        hostname: chunker-service
+        port: 8085
+openai:
+  service:
+    hostname: llama-32-predictor
+    port: 8080
+detectors:
+  regex_competitor:
+    type: text_contents
+    service:
+        hostname: "127.0.0.1"
+        port: 8080
+    chunker_id: sentence
+    default_threshold: 0.5
+  hap:
+    type: text_contents
+    service:
+      hostname: guardrails-detector-ibm-hap-predictor
+      port: 8000
+    chunker_id: sentence
+    default_threshold: 0.5
+  prompt_injection:
+    type: text_contents
+    service:
+      hostname: prompt-injection-detector-predictor
+      port: 8000
+    chunker_id: sentence
+    default_threshold: 0.5
+  language_detection:
+    type: text_contents
+    service:
+      hostname: lingua-detector
+      port: 8080
+    chunker_id: sentence
+    default_threshold: 0.88
+```
+
+#### R Shiny Real-Time Dashboard
+
+The R Shiny dashboard polls the FastAPI `/metrics` endpoint and parses Prometheus-format text to render real-time guardrail detection counts. It displays total requests, input blocked, output blocked, approved requests, and per-detector bar charts.
+
+```r
+# shiny-dashboard/app.R (lines 7-8, 70-83)
+METRICS_URL <- Sys.getenv("METRICS_URL", "http://lemonade-stand:8080/metrics")
+REFRESH_INTERVAL <- as.integer(Sys.getenv("REFRESH_INTERVAL", "1"))
+
+fetch_metrics <- function() {
+  tryCatch({
+    response <- GET(METRICS_URL, timeout(10))
+    if (status_code(response) == 200) {
+      content_text <- content(response, "text", encoding = "UTF-8")
+      return(parse_prometheus_metrics(content_text))
+    }
+  }, error = function(e) {
+    message("Error fetching metrics: ", e$message)
+    return(NULL)
+  })
+}
+```
+
+#### System Prompt ConfigMap Mount
+
+The system prompt is mounted from a ConfigMap into the container at `/system-prompt/prompt` rather than hard-coded in application code. The app reads this file at startup with a fallback default.
+
+```python
+# lemonade-stand-app/app_fastapi.py (lines 62-78)
+PROMPT_FILE = "/system-prompt/prompt"
+if os.path.exists(PROMPT_FILE):
+    with open(PROMPT_FILE, "r") as f:
+        SYSTEM_PROMPT = f.read()
+else:
+    SYSTEM_PROMPT = """You are a helpful assistant specialized in lemons..."""
+```
+
+#### Detector Model Storage via MinIO with Init Container
+
+Unlike Approach C's OCI-based model storage, this approach uses a MinIO deployment with an init container that downloads detector models from HuggingFace Hub at pod startup. KServe InferenceServices load models from MinIO via S3 data connections.
+
+```yaml
+# chart/templates/minio-storage-models.yaml (lines 56-73)
+initContainers:
+  - name: download-model
+    image: quay.io/rgeada/llm_downloader:latest
+    command:
+      - bash
+      - -c
+      - |
+        models=(
+          ibm-granite/granite-guardian-hap-125m
+          protectai/deberta-v3-base-prompt-injection-v2
+        )
+        for model in "${models[@]}"; do
+          /tmp/venv/bin/huggingface-cli download $model \
+            --local-dir /mnt/models/huggingface/$(basename $model)
+        done
+```
+
+### Prompt / Chain Patterns
+
+Guardrails operate outside the prompt chain at two levels. First, the FastAPI app pre-filters user messages with compiled regex patterns -- blocked messages never leave the application. Second, messages that pass the local check are forwarded to the TrustyAI orchestrator with a system prompt (from ConfigMap) and inline detector configuration. The orchestrator evaluates input detectors before forwarding to the LLM and output detectors on the streaming response. The system prompt instructs the LLM to only discuss lemons and refuse non-lemon topics, creating a layered defense: regex blocks competitor fruit names, the orchestrator blocks HAP/injection/non-English content, and the system prompt constrains the model's behavior.
+
+### Gotchas
+
+- The app connects to the orchestrator via HTTPS with TLS verification disabled (`ssl.CERT_NONE` in aiohttp SSL context, line 264-266 of `app_fastapi.py`). The orchestrator uses self-signed certificates. The app creates an `ssl.SSLContext` with `check_hostname = False` and `verify_mode = ssl.CERT_NONE`.
+- The environment variables for the orchestrator connection use Kubernetes-injected service discovery names: `GUARDRAILS_ORCHESTRATOR_SERVICE_SERVICE_HOST` and `GUARDRAILS_ORCHESTRATOR_SERVICE_SERVICE_PORT` (lines 42-43 of `app_fastapi.py`). These are auto-generated by Kubernetes for the `guardrails-orchestrator-service` Service.
+- The app uses `/api/v2/chat/completions-detection` (v2 API), not `/api/v1/chat/completions` (v1 API used by Approach C's gateway). The v2 API accepts inline `detectors` in the request body, while v1 uses route-based detector grouping from ConfigMaps.
+- The local regex pre-filter and the orchestrator's regex detector serve different purposes: the local filter catches fruit names before the request leaves the app (short-circuiting the orchestrator call), while the orchestrator's `regex_competitor` detector catches fruit names in the LLM's output response. The input detectors sent to the orchestrator are HAP, language detection, and prompt injection -- regex is intentionally excluded from input since it's handled locally (lines 388-403 of `app_fastapi.py`, comment at line 379).
+- The `language_detection` detector uses the Lingua language detection service, which is deployed as a standard Kubernetes Deployment (not a KServe InferenceService). It runs on the `quay.io/ckavili/lingua-language-detector:0.0.25` image on port 8080 with a higher default threshold (0.88) than other detectors (0.5).
+- The chunker service (`chunker-service` on port 8085) is deployed as a standard Deployment and provides sentence-level text splitting for all detectors. Approach C uses the built-in `whole_doc_chunker`. The chunker communicates via gRPC (port named `grpc` in the Service spec).
+- The app applies a 100-character input limit (`MAX_INPUT_CHARS = 100`, line 81 of `app_fastapi.py`). Messages exceeding this limit are rejected before any guardrail check runs.
+- The SSE stream parser includes duplicate chunk detection (lines 536-539 of `app_fastapi.py`): the comment notes "upstream orchestrator sometimes sends overlapping chunks." The parser skips chunks whose stripped content matches the end of the accumulated response.
+- The `GuardrailsOrchestrator` CR has `enableGuardrailsGateway: false`, so the orchestrator pod runs only 2 containers (NLP orchestrator on port 8032 + regex detector on port 8080), not 3 as in Approach C. The app must use port 8032 directly.
+- Detector models are stored in MinIO, downloaded from HuggingFace Hub by an init container at pod startup (lines 56-73 of `minio-storage-models.yaml`). This requires internet access during initial deployment, unlike Approach C's OCI-based storage which is pre-packaged. The MinIO credentials (`THEACCESSKEY`/`THESECRETKEY`) are hard-coded in the deployment template.
+- The aiohttp connection pool behavior differs based on deployment mode: internal cluster service mode uses 30-second keepalive, while external route mode uses 5-second keepalive due to OpenShift HAProxy connection timeout behavior (lines 269-288 of `app_fastapi.py`).
+- The R Shiny dashboard polls the FastAPI `/metrics` endpoint at a configurable interval (default 1 second via `REFRESH_INTERVAL` env var) and is deployed as a separate pod with its own OpenShift Route. The dashboard URL (`METRICS_URL`) defaults to `http://lemonade-stand:8080/metrics` using cluster-internal DNS.
+- The prompt injection detector requires significantly more resources than other detectors (4 CPU / 16Gi memory request vs 1 CPU / 4Gi for HAP), as configured in `chart/values.yaml` lines 25-30.
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (LlamaStack Shields) | Approach B (F5 AI Guardrails) | Approach C (TrustyAI Orchestrator) | Approach D (NeMo Guardrails) |
-|----------|-------------------------------|------------------------------|-----------------------------------|------------------------------|
-| Enforcement model | Per-agent shields in runner code | External proxy at network level | RHOAI-native gateway at network level | Standalone service called via HTTP from application code |
-| Application changes needed | Yes (shield IDs in agent config, runner integration) | No (change target URL only) | No (change target URL only) | Yes (input/output shield methods, session manager integration) |
-| Enforcement modes | Block only | Block, Audit, Redact | Block only (empty choices + detections) | Block only (with role-aware blocking messages) |
-| Failure behavior | Fail-open (shield errors logged, request proceeds) | Fail-closed (proxy errors block request) | Fail-closed (detector errors block request) | Fail-closed (guardrail errors propagate as exceptions) |
-| Configuration management | Developer-managed (JSON columns, CRUD API) | Security-team-managed (Moderator UI) | Platform-team-managed (ConfigMaps + Helm values) | Platform-team-managed (ConfigMap with Colang flows + custom actions) |
-| Built-in detector types | Depends on LlamaStack-registered shields | Prompt Injection, PII, EU AI Act, Restricted Topics + custom | Gibberish, Prompt Injection (DeBERTa v3), HAP (Granite Guardian), Regex PII | Self-check input/output (LLM-based), jailbreak detection NIM, custom blocked phrases |
-| Observability | Application logs only | Dashboard, Logs, Reports in Moderator UI | Pod logs, Prometheus metrics, OTEL exporter | Application logs (structured logging via shared_models) |
-| GPU overhead | None (uses existing safety models) | 1-3 GPUs for scanner/red-team models | None by default (CPU); optional 1 GPU per detector | None by default; optional 1 GPU for JailbreakDetect NIM |
-| Scope | Per-agent (different policies per agent) | Per-project (shared policies for a connection) | Per-route (named routes apply different detector sets) | Global (all agents share same guardrails service) |
-| Response scanning | LlamaStack Responses API refusal types | Moderator scans response on return path | Gateway scans response through output-enabled detectors | Agent code calls output shield after receiving LLM response |
-| Licensing | Open source (LlamaStack) | Commercial (F5/Calypso AI) | Open source (TrustyAI/fms-orchestr8) | Open source (NeMo Guardrails) + NVIDIA NIM (JailbreakDetect) |
-| Deployment complexity | N/A (part of application) | Two-pass Helm, OLM Subscription, 4 namespaces, anyuid SCC | Single Helm chart, single namespace, no SCC changes | Single Helm subchart, ConfigMap-driven, optional NIM sidecar |
-| RHOAI integration | External (LlamaStack server) | External (F5 operator) | Native (TrustyAI operator ships with RHOAI) | External (NeMo Guardrails, NemoGuard NIM) |
-| Custom rail logic | Not supported (shield is opaque) | Custom GenAI/Keyword/Regex scanners via Moderator UI | Not supported (fixed detector types) | Full Colang flow definitions + custom Python actions |
+| Criteria | Approach A (LlamaStack Shields) | Approach B (F5 AI Guardrails) | Approach C (TrustyAI Gateway) | Approach D (NeMo Guardrails) | Approach E (TrustyAI v2 API + App Pre-Filter) |
+|----------|-------------------------------|------------------------------|-----------------------------------|------------------------------|-----------------------------------------------|
+| Enforcement model | Per-agent shields in runner code | External proxy at network level | RHOAI-native gateway at network level | Standalone service called via HTTP from application code | RHOAI-native orchestrator with app-level pre-filtering and inline detector config |
+| Application changes needed | Yes (shield IDs in agent config, runner integration) | No (change target URL only) | No (change target URL only) | Yes (input/output shield methods, session manager integration) | Yes (detector payload construction, SSE parsing, local regex pre-filter, metrics collection) |
+| Enforcement modes | Block only | Block, Audit, Redact | Block only (empty choices + detections) | Block only (with role-aware blocking messages) | Block only (detector-specific styled error messages) |
+| Failure behavior | Fail-open (shield errors logged, request proceeds) | Fail-closed (proxy errors block request) | Fail-closed (detector errors block request) | Fail-closed (guardrail errors propagate as exceptions) | Fail-closed (orchestrator errors return HTTP error; local regex is always-on) |
+| Configuration management | Developer-managed (JSON columns, CRUD API) | Security-team-managed (Moderator UI) | Platform-team-managed (ConfigMaps + Helm values) | Platform-team-managed (ConfigMap with Colang flows + custom actions) | Developer-managed (inline detectors in request body, ConfigMap for system prompt and NLP config) |
+| Built-in detector types | Depends on LlamaStack-registered shields | Prompt Injection, PII, EU AI Act, Restricted Topics + custom | Gibberish, Prompt Injection (DeBERTa v3), HAP (Granite Guardian), Regex PII | Self-check input/output (LLM-based), jailbreak detection NIM, custom blocked phrases | HAP (Granite Guardian), Prompt Injection (DeBERTa v3), Lingua language detection, Regex (multilingual fruit names in 13 languages) |
+| Observability | Application logs only | Dashboard, Logs, Reports in Moderator UI | Pod logs, Prometheus metrics, OTEL exporter | Application logs (structured logging via shared_models) | Prometheus `/metrics` endpoint (3s scrape), R Shiny real-time dashboard, OTEL exporter |
+| GPU overhead | None (uses existing safety models) | 1-3 GPUs for scanner/red-team models | None by default (CPU); optional 1 GPU per detector | None by default; optional 1 GPU for JailbreakDetect NIM | None by default (CPU); optional 1 GPU per detector |
+| Scope | Per-agent (different policies per agent) | Per-project (shared policies for a connection) | Per-route (named routes apply different detector sets) | Global (all agents share same guardrails service) | Per-request (different detectors per input vs output, configurable in each request body) |
+| Response scanning | LlamaStack Responses API refusal types | Moderator scans response on return path | Gateway scans response through output-enabled detectors | Agent code calls output shield after receiving LLM response | Orchestrator scans streaming output through detectors specified in `detectors.output` |
+| Licensing | Open source (LlamaStack) | Commercial (F5/Calypso AI) | Open source (TrustyAI/fms-orchestr8) | Open source (NeMo Guardrails) + NVIDIA NIM (JailbreakDetect) | Open source (TrustyAI/fms-orchestr8) |
+| Deployment complexity | N/A (part of application) | Two-pass Helm, OLM Subscription, 4 namespaces, anyuid SCC | Single Helm chart, single namespace, no SCC changes | Single Helm subchart, ConfigMap-driven, optional NIM sidecar | Single Helm chart, single namespace, additional services (chunker, Lingua, MinIO, R Shiny) |
+| RHOAI integration | External (LlamaStack server) | External (F5 operator) | Native (TrustyAI operator ships with RHOAI) | External (NeMo Guardrails, NemoGuard NIM) | Native (TrustyAI operator ships with RHOAI) |
+| Custom rail logic | Not supported (shield is opaque) | Custom GenAI/Keyword/Regex scanners via Moderator UI | Not supported (fixed detector types) | Full Colang flow definitions + custom Python actions | Custom detector services (e.g., Lingua) + application-level regex pre-filter with multilingual patterns |

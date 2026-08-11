@@ -1,7 +1,7 @@
 ---
 name: llama-32-3b-instruct
 description: "KServe vLLM InferenceService for Llama 3.2 3B with OCI modelcar storage and tool-calling for guardrails pipelines"
-summary: "Serves Llama 3.2 3B Instruct via KServe vLLM RawDeployment with OCI modelcar storage (oci://quay.io/redhat-ai-services/modelcar-catalog:llama-3.2-3b-instruct), eliminating HuggingFace token requirements and providing an OpenAI-compatible chat completions backend on port 8080 for TrustyAI GuardrailsOrchestrator safety pipelines. Use when deploying a tool-calling-capable LLM as the chat_generation backend (wired via <name>-predictor.<namespace>.svc.cluster.local) in a TrustyAI multi-detector pipeline with /all/ (regex, hap, prompt_injection, gibberish detectors) and /passthrough/ routes -- requires 1 NVIDIA GPU (24GiB+ vRAM), RHOAI operator with KServe, and the managed vLLM image pinned by digest. Helm values conditionally toggle vLLM args (enableAutoToolChoice, toolCallParser: llama3_json, chatTemplate: /app/data/template/tool_chat_template_llama3.2_json.jinja, maxModelLen: 32768, maxNumSeqs: 8) while the ServingRuntime requires a Memory-backed emptyDir at /dev/shm (2Gi sizeLimit) and HF_HOME=/tmp/hf_home. Critical gotcha: InferenceService template hardcodes --max-model-len=20000, --dtype=half, and --gpu-memory-utilization=0.95 overriding ServingRuntime values.yaml settings, dual vLLM image digests exist between template default and values.yaml fallback, and the chatTemplate path references a Jinja2 file baked into the container -- updating the vLLM image without that template breaks startup."
+summary: "Serves Llama 3.2 3B Instruct via KServe vLLM RawDeployment with OCI modelcar storage (oci://quay.io/redhat-ai-services/modelcar-catalog:llama-3.2-3b-instruct), eliminating HuggingFace token requirements and providing an OpenAI-compatible chat completions backend on port 8080 for TrustyAI GuardrailsOrchestrator safety pipelines with /all/ (regex, hap, prompt_injection, gibberish) and /passthrough/ detector routes. Use Approach A (guardrailing-llms) for production workloads needing tunable Helm-conditional vLLM args (enableAutoToolChoice, enableChunkedPrefill, toolCallParser: llama3_json, chatTemplate, maxModelLen: 32768, maxNumSeqs: 8), digest-pinned images, and always-on replicas wired as chat_generation backend via <name>-predictor.<namespace>.svc.cluster.local; use Approach B (lemonade-stand-assistant) for high-concurrency demos needing conditional self-hosted/MaaS toggle ({{ if not .Values.model }}), scale-to-zero (minReplicas: 0), hardcoded high-throughput args (384 seqs, 4096 context, 12288 batched tokens), tag-based rhoai-2.19-cuda image, and 20Gi memory -- both require 1 NVIDIA GPU (24GiB+ vRAM) and Memory-backed /dev/shm emptyDir (2Gi sizeLimit). A's ServingRuntime drives args from values.yaml with HF_HOME=/tmp/hf_home and chatTemplate: /app/data/template/tool_chat_template_llama3.2_json.jinja baked into the container image; B hardcodes all serving args in the template, splits tool-calling args (--enable-auto-tool-choice, --tool-call-parser=llama3_json) into InferenceService model args, sets VLLM_CONFIG_ROOT=/tmp, and uses served-model-name \"llama32\" vs A's {{.Name}} template variable. A's InferenceService hardcodes --max-model-len=20000, --dtype=half, and --gpu-memory-utilization=0.95 overriding ServingRuntime values.yaml, dual vLLM image digests exist between template default and values.yaml fallback, and chatTemplate Jinja2 path breaks if the vLLM image is updated without it; B's MaaS toggle skips all deployment when any sub-key is set under model without validating required fields, and the tag-based image may drift across RHOAI releases."
 metadata:
   type: component
 tags:
@@ -14,6 +14,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/guardrailing-llms"
     notes: "Llama 3.2 3B Instruct served via KServe vLLM with OCI modelcar storage, tool-calling support, and TrustyAI guardrails orchestrator integration"
     approach: "A"
+  - quickstart: "lemonade-stand-assistant"
+    repo: "https://github.com/rh-ai-quickstart/lemonade-stand-assistant"
+    notes: "Llama 3.2 3B Instruct with conditional self-hosted/MaaS toggle, hardcoded high-throughput vLLM args, scale-to-zero, and tag-based RHOAI vLLM image for guardrails demo"
+    approach: "B"
 ---
 
 # Llama 3.2 3B Instruct Model Server
@@ -169,3 +173,164 @@ The gateway routes determine which detectors apply to input vs output. The `/all
 - TrustyAI GuardrailsOrchestrator for multi-detector safety pipelines (architecture pattern)
 - OCI modelcar images for air-gapped model distribution (deployment pattern)
 - KServe InferenceService with vLLM in RawDeployment mode (see `model-serving.md`)
+
+---
+
+## Approach B: Conditional Self-Hosted/MaaS with High-Throughput Tuning (from lemonade-stand-assistant)
+
+### When to Use
+
+Use this approach when deploying Llama 3.2 3B Instruct as the LLM backend for a high-concurrency demo or event scenario, where the model should be conditionally deployed only when no external MaaS endpoint is configured. The lemonade-stand-assistant quickstart uses this pattern to serve Llama 3.2 behind an fms-orchestr8 guardrails pipeline with scale-to-zero, high batch throughput (384 concurrent sequences), and a short context window (4096 tokens).
+
+### Differences from Approach A
+
+- **Conditional deployment toggle:** The entire template is wrapped in `{{ if not .Values.model }}` -- if a MaaS endpoint is configured in `values.yaml`, the ServingRuntime and InferenceService are not created at all
+- **Hardcoded vLLM args:** All vLLM serving parameters are hardcoded directly in the template YAML rather than driven by Helm values with conditionals
+- **Tag-based image:** Uses `quay.io/modh/vllm:rhoai-2.19-cuda` (tag-based) instead of a digest-pinned image, following RHOAI release cadence
+- **Scale-to-zero:** InferenceService sets `minReplicas: 0` for idle resource savings
+- **High-throughput tuning:** 384 max concurrent sequences and 12288 max batched tokens with 4096 context window, optimized for short-response demo traffic
+- **Split arg placement:** Serving params (dtype, gpu-memory-utilization, chunked-prefill, max-model-len) in ServingRuntime; tool-calling params (enable-auto-tool-choice, tool-call-parser) in InferenceService predictor model args
+- **VLLM_CONFIG_ROOT env var:** Set to `/tmp` in the ServingRuntime container env
+- **Higher memory allocation:** 20Gi memory limit on predictor (vs 8Gi in Approach A)
+
+### Conditional Self-Hosted vs MaaS Toggle
+
+The entire model deployment is conditional on `values.yaml`. When `.Values.model` is populated (with `name`, `endpoint`, `port`, `api_key`), the template is skipped and the application connects to an external model-as-a-service endpoint instead:
+
+```yaml
+# From chart/templates/llm-llama32.yaml
+{{ if not .Values.model }}
+---
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+...
+{{- end }}
+```
+
+```yaml
+# From chart/values.yaml — MaaS configuration (empty = deploy self-hosted)
+model: {}
+  # name: my-model
+  # endpoint: my-maas-instance
+  # port: 443
+  # api_key: my-api-key
+```
+
+The downstream application (`lemonade-stand-app`) uses the same toggle to determine the model name and predictor hostname:
+
+```yaml
+# From chart/templates/lemonade-stand-app.yaml
+- name: VLLM_MODEL
+  value: {{ .Values.model.name | default "llama32" }}
+```
+
+```yaml
+# From chart/templates/fms-orchestr8-config-nlp.yaml
+    openai:
+      service:
+        hostname: {{ .Values.model.endpoint | default "llama-32-predictor" }}
+        port: {{ .Values.model.port | default "8080" }}
+```
+
+### High-Throughput Demo vLLM Configuration
+
+The ServingRuntime is tuned for high-concurrency, short-response demo traffic with all args hardcoded:
+
+```yaml
+# From chart/templates/llm-llama32.yaml (ServingRuntime)
+    - args:
+        - '--dtype=half'
+        - '--gpu-memory-utilization=0.95'
+        - '--enable-chunked-prefill'
+        - '--port=8080'
+        - '--model=/mnt/models'
+        - '--served-model-name=llama32'
+        - '--max-model-len'
+        - '4096'
+        - '--max-num-seqs'
+        - '384'
+        - '--max-num-batched-tokens'
+        - '12288'
+```
+
+Tool-calling args are placed separately in the InferenceService predictor model section, keeping the ServingRuntime focused on serving configuration:
+
+```yaml
+# From chart/templates/llm-llama32.yaml (InferenceService)
+    model:
+      args:
+        - '--enable-auto-tool-choice'
+        - '--tool-call-parser=llama3_json'
+```
+
+### Scale-to-Zero with Resource Allocation
+
+The InferenceService enables scale-to-zero for idle GPU savings, with higher memory allocation than Approach A to accommodate the high batch throughput:
+
+```yaml
+# From chart/templates/llm-llama32.yaml (InferenceService)
+  predictor:
+    maxReplicas: 1
+    minReplicas: 0
+    model:
+      resources:
+        limits:
+          cpu: '4'
+          memory: 20Gi
+          nvidia.com/gpu: '1'
+        requests:
+          cpu: '1'
+          memory: 8Gi
+          nvidia.com/gpu: '1'
+```
+
+### Configuration (Approach B)
+
+- **Environment variables:**
+  - `VLLM_CONFIG_ROOT` - vLLM config directory (set to `/tmp` in ServingRuntime, from `chart/templates/llm-llama32.yaml`)
+
+- **Helm values:**
+  - `model` - Empty object `{}` to deploy self-hosted; populate with `name`, `endpoint`, `port`, `api_key` to use external MaaS (from `chart/values.yaml`)
+
+- **Hardcoded template values (not overridable via values.yaml):**
+  - `--served-model-name=llama32` - Model name for OpenAI-compatible API
+  - `--max-model-len=4096` - Short context window for demo traffic
+  - `--max-num-seqs=384` - High concurrent sequence limit
+  - `--max-num-batched-tokens=12288` - High batch token limit
+  - `--dtype=half` - FP16 precision
+  - `--gpu-memory-utilization=0.95` - Aggressive GPU memory usage
+  - `modelLoadingTimeoutMillis: 90000` - 90-second model loading timeout
+
+### Known Gotchas (Approach B)
+
+- **All vLLM args are hardcoded in the template:** Unlike Approach A which uses Helm conditionals from values.yaml, this approach hardcodes all vLLM serving parameters directly in `chart/templates/llm-llama32.yaml`. Changing max-model-len, max-num-seqs, or dtype requires editing the template file itself, not values.yaml.
+
+- **Served model name mismatch with Approach A:** The served model name is `llama32` (from `--served-model-name=llama32` in the template), while Approach A uses the KServe `{{.Name}}` template variable. The downstream app references this name via `VLLM_MODEL` env var defaulting to `llama32` (from `chart/templates/lemonade-stand-app.yaml`).
+
+- **MaaS toggle uses empty object check:** The conditional `{{ if not .Values.model }}` is true when `model: {}` (the default). Setting any sub-key under `model` (even just `name`) causes the entire self-hosted deployment to be skipped. There is no validation that all required MaaS fields are populated. Found in `chart/templates/llm-llama32.yaml` line 1 and `chart/values.yaml` lines 2-6.
+
+- **Tag-based image may drift across RHOAI releases:** The vLLM image `quay.io/modh/vllm:rhoai-2.19-cuda` uses a release tag rather than a digest pin. Upgrading the RHOAI release requires updating this tag manually in the template. Found in `chart/templates/llm-llama32.yaml` line 36.
+
+### Testing Notes (Approach B)
+
+- Deploy with `helm install lemonade-stand-assistant chart/ --namespace <namespace>` 
+- With default `model: {}`, the ServingRuntime and InferenceService are created; verify with `oc get servingruntime llama-32` and `oc get inferenceservice llama-32`
+- The predictor service is `llama-32-predictor` on port 8080, wired as the default in `fms-orchestr8-config-nlp` ConfigMap
+- To test MaaS mode, set `model.endpoint` in values.yaml and verify that no ServingRuntime or InferenceService resources are created
+- The model server may take time to start due to the 90-second `modelLoadingTimeoutMillis` and OCI image pull
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (guardrailing-llms) | Approach B (lemonade-stand-assistant) |
+|----------|-----------|-----------|
+| vLLM args | Helm-conditional from values.yaml | Hardcoded in template |
+| MaaS fallback | None (always self-hosted) | Conditional toggle via `{{ if not .Values.model }}` |
+| Image pinning | Digest-pinned (`@sha256:...`) | Tag-based (`rhoai-2.19-cuda`) |
+| Scaling | Always-on (`minReplicas: 1`) | Scale-to-zero (`minReplicas: 0`) |
+| Context window | 32768 tokens (or hardcoded 20000) | 4096 tokens |
+| Concurrent seqs | 8 | 384 |
+| Memory limit | 8Gi | 20Gi |
+| Config flexibility | High (values.yaml controls all args) | Low (must edit template to change args) |
+| Best for | Production workloads needing tunable config | High-concurrency demo/event with short responses |
