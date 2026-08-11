@@ -1,13 +1,13 @@
 ---
 name: guardrails-layer
-description: AI safety guardrails via LlamaStack shields or F5 AI Guardrails external proxy
-summary: "Enforces AI safety guardrails on LLM interactions via two approaches: Approach A uses LlamaStack's safety.run_shield API for per-agent input shields with output refusals via Responses API refusal content type; Approach B uses F5 AI Guardrails (Calypso AI Moderator) as an external reverse proxy intercepting OpenAI-compatible requests with OOTB scanners (Prompt Injection, PII, EU AI Act, Restricted Topics) plus custom GenAI/Keyword/Regex scanners. Use Approach A for per-agent developer-managed shields with no extra GPU and fail-open semantics; use Approach B for centralized security-team management via Moderator UI with Block/Audit/Redact enforcement modes, fail-closed behavior, built-in dashboard/reporting/red-team, but requiring F5 AI Security Operator (OLM), two-pass Helm deploy, anyuid SCC for 7 SAs across 4 namespaces, and 1-3 additional GPUs for scanner models. Approach A stores input_shields/output_shields as JSON columns on the agent model and executes shields sequentially via client.safety.run_shield(shield_id=..., messages=[...]) before inference; Approach B requires pointing the OpenAI client base_url to https://<hostname>/openai/<connection-name>/chat/completions where connection-name is the display name from the Moderator UI, not the model ID. Approach A is fail-open (shield errors caught/logged, request proceeds without validation) and only LlamaStackRunner implements shields (LangGraph/CrewAI runners have none); Approach B's Prompt Injection scanner may false-positive on RAG context in prompts, extra_body parameters cause empty responses through the Moderator, and guardrail state on emptyDir volume is lost on pod replacement unless a PVC is mounted."
+description: AI safety guardrails via LlamaStack shields, F5 AI Guardrails proxy, or TrustyAI orchestrator
+summary: "Implements AI safety guardrails for LLM inference via three approaches: (A) LlamaStack per-agent input shields executed via `client.safety.run_shield()` in runner code with output refusal handling via Responses API `refusal` content type and shield IDs stored as JSON columns, (B) F5 AI Guardrails (Calypso AI Moderator) as an external commercial reverse proxy intercepting OpenAI-compatible API calls with Block/Audit/Redact enforcement modes and per-project Moderator UI management, and (C) TrustyAI GuardrailsOrchestrator (fms-orchestr8) as an RHOAI-native open-source gateway deploying HF detector microservices (gibberish, DeBERTa v3 prompt injection, Granite Guardian HAP, regex PII) as KServe InferenceServices. Choose A for per-agent shield customization within LlamaStack applications (requires runner code integration), B for centralized security-team-managed enforcement with Audit/Redact modes (requires 1-3 extra GPUs, two-pass Helm deployment, anyuid SCC for 7 SAs across 4 namespaces), or C for open-source RHOAI-native guardrails with CPU-only detectors, single Helm chart deployment, and per-route detector grouping via ConfigMaps (`/all/` and `/passthrough/` routes); B and C require no application code changes (change target URL only). A stores shield IDs as JSON columns on the agent model and executes shields sequentially before inference; B requires the Moderator endpoint at `https://<hostname>/openai/<connection-name>/chat/completions` where connection-name is the display name from the Moderator UI (not model ID); C configures detector thresholds in the NLP orchestrator ConfigMap (gibberish at 0.35, others at 0.5) and deploys detectors in RawDeployment mode using OCI-stored models. A is fail-open (shield errors caught and logged but request proceeds without safety validation), B is fail-closed but may false-positive on RAG content injected into prompts and `extra_body` parameters must not be sent through the Moderator, and C is fail-closed with its orchestrator pod requiring all three containers healthy (NLP orchestrator port 8032, gateway port 8090, regex detector port 8080) plus a 2Gi shared-memory emptyDir volume per detector for PyTorch model loading."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, llamastack, python, streamlit, calypso-ai]
-  ai_pattern: [guardrails, agents]
-  platform: [llamastack, rhoai, openshift]
+  tech_stack: [fastapi, llamastack, python, streamlit, calypso-ai, jupyter]
+  ai_pattern: [guardrails, agents, model-serving]
+  platform: [llamastack, rhoai, openshift, kserve, vllm, trustyai]
   data_layer: [postgresql]
 source_examples:
   - quickstart: "ai-virtual-agent"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/f5-ai-guardrails"
     notes: "F5 AI Guardrails (Calypso AI Moderator) as external reverse proxy intercepting OpenAI-compatible API calls with scanner-based content inspection, three enforcement modes (Block/Audit/Redact), and custom guardrails (GenAI/Keyword/Regex)"
     approach: "B"
+  - quickstart: "guardrailing-llms"
+    repo: "https://github.com/rh-ai-quickstart/guardrailing-llms"
+    notes: "TrustyAI GuardrailsOrchestrator (fms-orchestr8) gateway with specialized HF detector microservices (gibberish, prompt injection, hate/profanity) as KServe InferenceServices plus built-in regex PII detection"
+    approach: "C"
 ---
 
 # Guardrails Layer
@@ -397,19 +401,268 @@ For the dual-panel chat (chat.py), both the F5-guarded and LlamaStack-direct pat
 
 ---
 
+## Approach C: TrustyAI GuardrailsOrchestrator Gateway (from guardrailing-llms)
+
+### When to Use
+
+Use this approach when deploying guardrails as an RHOAI-native gateway that orchestrates multiple specialized detector microservices. The TrustyAI GuardrailsOrchestrator (fms-orchestr8) is a Kubernetes-native guardrails gateway that deploys each detector as a separate KServe InferenceService using HuggingFace detector models, plus a built-in regex detector for pattern-based PII detection. It suits scenarios where: guardrails must be fully open-source and RHOAI-native with no third-party operator or commercial license, detectors should run on CPU without additional GPUs (configurable), the application uses OpenAI-compatible chat completion APIs, and the guardrails layer is deployed and managed entirely through a single Helm chart alongside the LLM.
+
+### Differences from Approach A and B
+
+| Aspect | Approach A (LlamaStack Shields) | Approach B (F5 AI Guardrails) | Approach C (TrustyAI Orchestrator) |
+|--------|-------------------------------|------------------------------|-----------------------------------|
+| Enforcement location | Application backend runner code | External commercial proxy (network layer) | RHOAI-native gateway pod (network layer) |
+| Integration method | `client.safety.run_shield()` API calls in runner code | Client sends requests to Moderator URL | Client sends requests to orchestrator gateway URL (`/<route>/v1/chat/completions`) |
+| Application code changes | Yes (shield IDs in agent config, runner integration) | No (change target URL only) | No (change target URL only) |
+| Operator dependency | None (LlamaStack built-in) | F5 AI Security Operator (OLM), Calypso AI Moderator | TrustyAI Operator (ships with RHOAI) |
+| Detector deployment | LlamaStack-registered shields | AI scanner models via KubeAI (internal) | Each detector is a separate KServe InferenceService (HF Detector Runtime) |
+| GPU requirements | None (uses existing safety models) | 1-3 GPUs for scanner/red-team models | None by default (`useGpu: false`); optionally 1 GPU per detector |
+| Configuration | Per-agent shield IDs as JSON columns | Moderator UI (projects, packages, modes) | Two ConfigMaps: NLP config (detector endpoints + thresholds) and gateway config (routes + input/output toggles) |
+| Failure behavior | Fail-open (shield errors logged, request proceeds) | Fail-closed (proxy errors block request) | Fail-closed (empty `choices` + `warning`/`detections` fields in response) |
+| Enforcement modes | Block only | Block, Audit, Redact | Block only (returns empty choices with detection details) |
+| Built-in detectors | Depends on LlamaStack-registered shields | Prompt Injection, PII, EU AI Act, Restricted Topics + custom | Gibberish, Prompt Injection (DeBERTa v3), Hate/Profanity (Granite Guardian HAP), Regex PII (email, SSN) |
+| Licensing | Open source (LlamaStack) | Commercial (F5/Calypso AI) | Open source (TrustyAI/fms-orchestr8) |
+| Helm deployment | N/A (part of application chart) | Two-pass Helm (OLM Subscription + SecurityOperator CR) | Single Helm chart deploys LLM + all detectors + orchestrator |
+
+### Data Flow
+
+1. Client (Jupyter Notebook or any HTTP client) sends an OpenAI-compatible `POST` to the guardrails gateway endpoint at `http://gorch-sample-service.<namespace>.svc.cluster.local:8090/<route>/v1/chat/completions` (e.g., `/all/v1/chat/completions` to apply all configured detectors)
+2. The guardrails gateway receives the request and looks up the route configuration to determine which detectors to apply and whether each detector scans input, output, or both
+3. For input detection: the gateway sends the user prompt to each configured input detector in sequence
+   - Regex detector (built-in, runs at localhost:8080 in the orchestrator pod) checks for PII patterns (email, SSN)
+   - HAP detector (KServe InferenceService at `ibm-hate-and-profanity-detector-predictor.<namespace>.svc.cluster.local:8000`) classifies hate/profanity content
+   - Prompt injection detector (KServe InferenceService at `prompt-injection-detector-predictor.<namespace>.svc.cluster.local:8000`) classifies injection attempts
+   - Gibberish detector (KServe InferenceService at `gibberish-detector-predictor.<namespace>.svc.cluster.local:8000`) classifies gibberish text
+4. If any detector returns a score above its configured threshold, the request is blocked: the response contains empty `choices`, a `warning` message, and a `detections` array with details of which detector triggered and on what content
+5. If all input detectors pass, the gateway forwards the request to the main LLM (vLLM serving Llama 3.2 3B Instruct at `llama-32-3b-instruct-predictor.<namespace>.svc.cluster.local:8080`)
+6. The LLM generates a response
+7. For output detection: the gateway sends the model response through each configured output detector (regex, HAP, gibberish -- prompt injection is input-only per the gateway config)
+8. If output detectors trigger, the response is blocked; otherwise, the complete response (including `choices[0].message.content`) is returned to the client
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| Client (Notebook) | GuardrailsOrchestrator gateway | HTTP (port 8090) | OpenAI-compatible chat completion requests |
+| Gateway | Orchestrator | HTTP (localhost:8032) | Internal routing from gateway to NLP orchestrator |
+| Orchestrator | Regex detector | HTTP (localhost:8080, sidecar) | Built-in PII pattern matching (email, SSN) |
+| Orchestrator | Gibberish detector InferenceService | HTTP (port 8000, cluster DNS) | Gibberish text classification |
+| Orchestrator | Prompt injection detector InferenceService | HTTP (port 8000, cluster DNS) | Prompt injection classification (DeBERTa v3) |
+| Orchestrator | HAP detector InferenceService | HTTP (port 8000, cluster DNS) | Hate and profanity classification (Granite Guardian HAP) |
+| Orchestrator | Main LLM InferenceService | HTTP (port 8080, cluster DNS) | Forward approved prompts for inference (vLLM) |
+| Helm chart | KServe | Kubernetes API | Deploy InferenceService + ServingRuntime for each detector and LLM |
+| Helm chart | TrustyAI Operator | Kubernetes API | Deploy GuardrailsOrchestrator CR |
+
+### Key Integration Points
+
+#### GuardrailsOrchestrator Custom Resource
+
+The TrustyAI operator watches for `GuardrailsOrchestrator` CRs and deploys a pod with three containers: the NLP orchestrator, the guardrails gateway, and the built-in regex detector.
+
+```yaml
+# helm/templates/guardrails-orchestrator.yaml
+apiVersion: trustyai.opendatahub.io/v1alpha1
+kind: GuardrailsOrchestrator
+metadata:
+  name: gorch-sample
+spec:
+  enableBuiltInDetectors: true
+  enableGuardrailsGateway: true
+  guardrailsGatewayConfig: fms-orchestr8-config-gateway
+  orchestratorConfig: fms-orchestr8-config-nlp
+  otelExporter: {}
+  replicas: 1
+```
+
+#### NLP Orchestrator ConfigMap (Detector Service Registry)
+
+The NLP config defines each detector's type, service hostname (cluster DNS), port, chunker, and default detection threshold. The orchestrator uses this to route detection requests to the correct service.
+
+```yaml
+# helm/templates/configmaps.yaml (fms-orchestr8-config-nlp)
+chat_generation:
+  service:
+    hostname: llama-32-3b-instruct-predictor.<namespace>.svc.cluster.local
+    port: 8080
+detectors:
+  regex:
+    type: text_contents
+    service:
+      hostname: "127.0.0.1"
+      port: 8080
+    chunker_id: whole_doc_chunker
+    default_threshold: 0.5
+  hap:
+    type: text_contents
+    service:
+      hostname: ibm-hate-and-profanity-detector-predictor.<namespace>.svc.cluster.local
+      port: 8000
+    chunker_id: whole_doc_chunker
+    default_threshold: 0.5
+  prompt_injection:
+    type: text_contents
+    service:
+      hostname: prompt-injection-detector-predictor.<namespace>.svc.cluster.local
+      port: 8000
+    chunker_id: whole_doc_chunker
+    default_threshold: 0.5
+  gibberish:
+    type: text_contents
+    service:
+      hostname: gibberish-detector-predictor.<namespace>.svc.cluster.local
+      port: 8000
+    chunker_id: whole_doc_chunker
+    default_threshold: 0.35
+```
+
+#### Gateway ConfigMap (Route and Detector Activation)
+
+The gateway config defines named routes that group detectors and specify whether each detector scans input, output, or both. The `/all/` route applies all detectors; `/passthrough/` skips all detectors.
+
+```yaml
+# helm/templates/configmaps.yaml (fms-orchestr8-config-gateway)
+orchestrator:
+  host: "localhost"
+  port: 8032
+detectors:
+  - name: regex
+    input: true
+    output: true
+    detector_params:
+      regex:
+        - email
+        - ssn
+  - name: hap
+    input: true
+    output: true
+    detector_params: {}
+  - name: prompt_injection
+    input: true
+    output: false
+    detector_params: {}
+  - name: gibberish
+    input: true
+    output: true
+    detector_params: {}
+routes:
+  - name: all
+    detectors:
+      - regex
+      - hap
+      - prompt_injection
+      - gibberish
+  - name: passthrough
+    detectors:
+```
+
+#### HF Detector Runtime (Serving Runtime for Detectors)
+
+All three ML detectors use the same TrustyAI HuggingFace detector runtime image (`odh-trustyai-hf-detector-runtime-rhel9`), differing only in the model loaded from OCI storage. Each detector runs as a uvicorn server on port 8000.
+
+```yaml
+# helm/templates/servingruntime-detectors.yaml (pattern repeated for each detector)
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: gibberish-detector
+  annotations:
+    opendatahub.io/template-name: guardrails-detector-huggingface-runtime
+spec:
+  containers:
+    - command:
+        - uvicorn
+        - 'app:app'
+      args:
+        - '--workers=1'
+        - '--host=0.0.0.0'
+        - '--port=8000'
+      env:
+        - name: MODEL_DIR
+          value: /mnt/models
+      image: 'quay.io/modh/odh-trustyai-hf-detector-runtime-rhel9@sha256:...'
+  supportedModelFormats:
+    - name: guardrails-detector-hf-runtime
+```
+
+#### Detector InferenceService (Model Deployment)
+
+Each detector is deployed as a KServe InferenceService in `RawDeployment` mode (no Knative required). Models are stored as OCI artifacts. GPU is optional per detector (`useGpu` flag).
+
+```yaml
+# helm/templates/inferenceservice-detectors.yaml (pattern repeated for each detector)
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: gibberish-detector
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: guardrails-detector-hf-runtime
+      resources:
+        limits:
+          cpu: '2'
+          memory: 8Gi
+        requests:
+          cpu: '1'
+          memory: 4Gi
+      runtime: gibberish-detector
+      storageUri: "oci://quay.io/mmurakam/model-cars:gibberish-text-detector-v0.1.1"
+```
+
+#### Client Usage (Notebook)
+
+The notebook sends standard OpenAI-compatible HTTP POST requests to the gateway's route endpoint. No SDK wrapping is needed -- plain `requests.post` with JSON payload.
+
+```python
+# docs/healthcare-guardrails.ipynb
+guardrails_gateway_endpoint = f'{guardrails_orchestrator_route}/all/v1/chat/completions'
+
+def send_query(query):
+    payload = {
+        'model': model_name,
+        'messages': [{'content': query, 'role': 'user'}]
+    }
+    response = post(guardrails_gateway_endpoint, json=payload)
+    pprint(response.json())
+```
+
+### Prompt / Chain Patterns
+
+Guardrails operate entirely outside the prompt chain. The orchestrator gateway intercepts the request at the HTTP transport level. The prompt content is passed as-is to each detector for classification. No prompt modifications, system prompt changes, or guardrail-specific templates are used. When a detector triggers (score above threshold), the response contains empty `choices` with `warning` and `detections` fields -- the prompt never reaches the LLM. When all detectors pass, the prompt is forwarded unchanged to the vLLM model.
+
+### Gotchas
+
+- The orchestrator pod runs three containers (`3/3 Running` in pod status): the NLP orchestrator (port 8032), the guardrails gateway (port 8090), and the built-in regex detector (port 8080). All three must be running for the gateway to function.
+- Detector thresholds are configured in the NLP orchestrator ConfigMap (`fms-orchestr8-config-nlp`), not in the gateway ConfigMap. The gibberish detector uses a lower default threshold (0.35) than the other detectors (0.5), as noted in `helm/values.yaml`.
+- The prompt injection detector is configured for input scanning only (`input: true, output: false`) in the gateway ConfigMap, while regex, HAP, and gibberish detectors scan both input and output (`input: true, output: true`).
+- Detector models are stored as OCI artifacts (e.g., `oci://quay.io/mmurakam/model-cars:gibberish-text-detector-v0.1.1`). These are separate from the main LLM model stored in the Red Hat AI Services modelcar catalog (`oci://quay.io/redhat-ai-services/modelcar-catalog:llama-3.2-3b-instruct`).
+- Detectors default to CPU-only operation (`useGpu: false` in `helm/values.yaml`). When `useGpu: true`, each detector requests 1 NVIDIA GPU, adding up to 3 additional GPUs beyond the 1 required for the main LLM.
+- All three ML detectors use the same container image (`odh-trustyai-hf-detector-runtime-rhel9`) with the same digest, differentiated only by the model loaded from `storageUri`. Each is deployed as a separate KServe InferenceService with its own ServingRuntime.
+- The gateway exposes named routes: `/all/` applies all configured detectors, `/passthrough/` skips all detectors. Custom routes can be added by editing the gateway ConfigMap.
+- The `GuardrailsOrchestrator` CR requires the TrustyAI operator to be installed, which ships with RHOAI (OpenShift AI). The CR references two ConfigMaps by name (`orchestratorConfig` and `guardrailsGatewayConfig`), and the operator reconciles these to configure the pod.
+- The workbench git clone uses a Job with an init container that waits for the workbench pod to be `Running`, then `oc exec`s into it to run `git clone`. This requires a ServiceAccount with `pods/exec` RBAC permissions (see `helm/templates/workbench-role.yaml`).
+- Each detector InferenceService uses `RawDeployment` mode (`serving.kserve.io/deploymentMode: RawDeployment`), which deploys a standard Kubernetes Deployment instead of a Knative Service. This avoids the requirement for Knative/Serverless but means detectors do not scale to zero.
+- All detectors mount a `shm` emptyDir volume with `medium: Memory` and `sizeLimit: 2Gi` for shared memory, which is required by PyTorch model loading in the HF detector runtime.
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (LlamaStack Shields) | Approach B (F5 AI Guardrails) |
-|----------|-------------------------------|------------------------------|
-| Enforcement model | Per-agent shields in runner code | External proxy at network level |
-| Application changes needed | Yes (shield IDs in agent config, runner integration) | No (change target URL only) |
-| Enforcement modes | Block only | Block, Audit, Redact |
-| Failure behavior | Fail-open (shield errors logged, request proceeds) | Fail-closed (proxy errors block request) |
-| Configuration management | Developer-managed (JSON columns, CRUD API) | Security-team-managed (Moderator UI) |
-| OOTB scanner coverage | Depends on LlamaStack-registered shields | Prompt Injection, PII, EU AI Act, Restricted Topics + custom |
-| Custom guardrail types | Shield models registered in LlamaStack | GenAI (NL description), Keyword, Regex |
-| Observability | Application logs only | Dashboard, Logs, Reports in Moderator UI |
-| Red team testing | Not built in | Built-in AI Red Team attack campaigns |
-| GPU overhead | None (uses existing safety models) | 1-3 GPUs for scanner/red-team models |
-| Scope | Per-agent (different policies per agent) | Per-project (shared policies for a connection) |
-| Response scanning | LlamaStack Responses API refusal types | Moderator scans response on return path |
+| Criteria | Approach A (LlamaStack Shields) | Approach B (F5 AI Guardrails) | Approach C (TrustyAI Orchestrator) |
+|----------|-------------------------------|------------------------------|-----------------------------------|
+| Enforcement model | Per-agent shields in runner code | External proxy at network level | RHOAI-native gateway at network level |
+| Application changes needed | Yes (shield IDs in agent config, runner integration) | No (change target URL only) | No (change target URL only) |
+| Enforcement modes | Block only | Block, Audit, Redact | Block only (empty choices + detections) |
+| Failure behavior | Fail-open (shield errors logged, request proceeds) | Fail-closed (proxy errors block request) | Fail-closed (detector errors block request) |
+| Configuration management | Developer-managed (JSON columns, CRUD API) | Security-team-managed (Moderator UI) | Platform-team-managed (ConfigMaps + Helm values) |
+| Built-in detector types | Depends on LlamaStack-registered shields | Prompt Injection, PII, EU AI Act, Restricted Topics + custom | Gibberish, Prompt Injection (DeBERTa v3), HAP (Granite Guardian), Regex PII (email, SSN) |
+| Observability | Application logs only | Dashboard, Logs, Reports in Moderator UI | Pod logs, Prometheus metrics (port 8080), OTEL exporter (configurable) |
+| GPU overhead | None (uses existing safety models) | 1-3 GPUs for scanner/red-team models | None by default (CPU); optional 1 GPU per detector |
+| Scope | Per-agent (different policies per agent) | Per-project (shared policies for a connection) | Per-route (named routes apply different detector sets) |
+| Response scanning | LlamaStack Responses API refusal types | Moderator scans response on return path | Gateway scans response through output-enabled detectors |
+| Licensing | Open source (LlamaStack) | Commercial (F5/Calypso AI) | Open source (TrustyAI/fms-orchestr8) |
+| Deployment complexity | N/A (part of application) | Two-pass Helm, OLM Subscription, 4 namespaces, anyuid SCC | Single Helm chart, single namespace, no SCC changes |
+| RHOAI integration | External (LlamaStack server) | External (F5 operator) | Native (TrustyAI operator ships with RHOAI) |
