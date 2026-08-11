@@ -7,9 +7,9 @@ This directory contains specialized subagent prompts that handle focused tasks d
 **Main Agent** (SKILL.md):
 - Orchestrates the discovery workflow phases
 - Conducts the structured interview with the user
-- Reads reasoning guardrails during PRD validation
-- Reviews subagent outputs and presents them to the user
-- Manages the uncapped refinement loop
+- Reads reasoning guardrails organically while drafting (Phases 1-6)
+- Reviews subagent outputs — including the `prd-validator`'s findings — and decides what to change, using conversational context the subagents don't have
+- Presents the draft PRD to the user and manages the uncapped refinement loop
 
 **Subagents** (this directory):
 - Execute focused, self-contained tasks
@@ -106,6 +106,51 @@ This directory contains specialized subagent prompts that handle focused tasks d
 
 ---
 
+### 4. prd-validator-prompt.md
+
+| Field | Description |
+|-------|-------------|
+| **Name** | `prd-validator-prompt.md` |
+| **Purpose** | Independently review the PRD draft for completeness, validation-rule compliance, and guardrail adherence — from a clean context, with no memory of how the draft was written |
+| **Input** | Current PRD draft text, `validation_rules` from the discovery spec, path to `reasoning-guardrails.md`, path to `output-templates.md` |
+| **Output** | Structured findings as JSON — overall status, section findings, validation rule results, guardrail flags. **Never a revised PRD** — recommendations only |
+| **When used** | Phase 7 (PRD Validation and Refinement) — once per draft revision, including every round of the refinement loop |
+| **Why subagent** | The agent that wrote the draft is biased toward its own choices; a fresh, unbiased pass with no drafting history catches things the main agent would talk itself out of. The subagent may only recommend — the main agent retains final authority and the broader conversational context to judge which findings actually apply. |
+
+**Output schema:**
+
+```json
+{
+  "overall_status": "ready|needs_revision",
+  "section_findings": [
+    {
+      "section": "ai_touchpoints",
+      "issue": "...",
+      "severity": "blocker|warning",
+      "recommendation": "..."
+    }
+  ],
+  "validation_rule_results": [
+    {
+      "rule_id": "vr-2",
+      "passed": true,
+      "severity": "blocker",
+      "detail": "..."
+    }
+  ],
+  "guardrail_flags": [
+    {
+      "concern_area": "Technology Bias",
+      "observation": "...",
+      "cited_section": "ai_touchpoints",
+      "recommendation": "..."
+    }
+  ]
+}
+```
+
+---
+
 ## Important Notes
 
 ### For Main Agent
@@ -138,7 +183,7 @@ Each subagent prompt is **self-contained** with:
 | File | When |
 |------|------|
 | `SKILL.md` | Always (orchestrator instructions) |
-| `reasoning-guardrails.md` | During PRD validation (Phase 7) |
+| `reasoning-guardrails.md` | Phases 1-6 — organic awareness while drafting. The formal Phase 7 check is now delegated to the `prd-validator` subagent, which reads this file independently for its own clean-context review. |
 | `spec-template.md` | When generating the discovery spec (Phase 4) |
-| `output-templates.md` | When writing the final PRD (Phase 8) |
+| `output-templates.md` | When writing the final PRD (Phase 8). Also read by the prd-structurer subagent (Phase 5) and the prd-validator subagent (Phase 7), passed by path — the main agent only reads it directly for its own Phase 8 write. |
 | `../../../../docs/foundation/validation-skill-template.md` | Never — this is background for humans; the subagent prompt itself is self-contained |

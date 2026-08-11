@@ -30,9 +30,9 @@ Produce a validated Product Requirements Document (PRD) at `.rhoai-qs/<slug>/prd
 
 | File | When |
 |------|------|
-| [reasoning-guardrails.md](./reasoning-guardrails.md) | Phase 7 — PRD validation and refinement |
+| [reasoning-guardrails.md](./reasoning-guardrails.md) | Phases 1-6 — organic awareness while drafting (the formal Phase 7 check is delegated to the prd-validator subagent) |
 | [spec-template.md](./spec-template.md) | Phase 4 — generating the discovery spec |
-| [output-templates.md](./output-templates.md) | Phase 8 — writing the final PRD |
+| [output-templates.md](./output-templates.md) | Phase 8 — writing the final PRD (also passed by path to the prd-structurer subagent in Phase 5 and the prd-validator subagent in Phase 7) |
 | [references/gap-analysis-template.md](./references/gap-analysis-template.md) | Gap analysis mode only |
 
 **Subagents read (pass by file path only — do NOT read these):**
@@ -42,6 +42,7 @@ Produce a validated Product Requirements Document (PRD) at `.rhoai-qs/<slug>/prd
 | [subagents/validation-skill-prompt.md](./subagents/validation-skill-prompt.md) | Quickstart slug resolution |
 | [subagents/prd-structurer-prompt.md](./subagents/prd-structurer-prompt.md) | PRD structurer |
 | [subagents/backlog-matcher-prompt.md](./subagents/backlog-matcher-prompt.md) | Backlog matcher |
+| [subagents/prd-validator-prompt.md](./subagents/prd-validator-prompt.md) | PRD validator |
 
 ## Workflow
 
@@ -170,11 +171,11 @@ Review the subagent's output. For sections with `medium` or `low` confidence, as
 | Deploy | Deploy target: OpenShift AI only, or also local dev with podman? |
 | Compliance | Any compliance/security considerations? |
 
-**Gap questions (ask when relevant to the idea):**
+**Gap questions (not an exhaustive list — ask whichever apply, and anything else that feels unclear):**
 
-- Will this need RAG?
-- Real-time inference or batch?
-- How many concurrent users?
+- Real-time inference or batch processing?
+- How many concurrent users or expected scale?
+- Any other technical or business constraint the user hasn't mentioned yet?
 
 Update the discovery spec as answers come in: move items from `remaining_questions` to `completed_sections`.
 
@@ -193,17 +194,26 @@ Record these mappings in the PRD but do not pre-decide the architecture — the 
 
 ### Phase 7: PRD Validation and Refinement
 
-Read [reasoning-guardrails.md](./reasoning-guardrails.md). Validate the PRD draft for completeness:
+The main agent does not self-validate the draft it just wrote — it has been drafting alongside the user and is anchored to its own choices. Instead, spawn the **prd-validator subagent** for an independent, clean-context review:
 
-**Required PRD sections** (all must have substantive content):
-- Problem statement with target persona
-- At least one step-by-step user flow
-- Data model (input types, storage needs)
-- AI touchpoints with rationale
-- Deploy target with GPU determination
-- Scope boundaries with at least one non-goal
+```python
+Agent(
+    description="Review PRD draft for completeness and guardrail adherence",
+    prompt=f"""
+Read and follow instructions from:
+core/skills/rh-qs-discovery/subagents/prd-validator-prompt.md
 
-Check each `validation_rules` entry from the discovery spec. If any `blocker` rule fails, fix the PRD before presenting it.
+PRD draft: {prd_draft}
+Validation rules: {validation_rules}
+Guardrails path: core/skills/rh-qs-discovery/reasoning-guardrails.md
+Output template path: core/skills/rh-qs-discovery/output-templates.md
+"""
+)
+```
+
+**The subagent only recommends — it never edits the PRD.** Review its findings using your own broader context of the actual conversation with the user; the subagent doesn't have that context, so some of its flags may not apply. Use judgment about which findings to act on.
+
+If any `blocker`-severity finding remains after your review, fix the PRD before presenting it to the user.
 
 Present the draft PRD to the user. **Uncapped refinement** — the user can refine as many times as they want. This is a collaborative, user-driven conversation with no iteration limit.
 
@@ -211,7 +221,7 @@ For each refinement round:
 1. Present the current PRD draft
 2. User provides feedback (changes, additions, corrections)
 3. Update the PRD
-4. Re-validate against guardrails
+4. Re-spawn the prd-validator subagent for a fresh, unbiased pass on the updated draft
 5. Present again — repeat until the user approves
 
 ### Phase 8: Write PRD
@@ -248,6 +258,7 @@ If the user wants to pursue one of the proposed ideas, transition into the stand
 - Flag ambiguities as open questions rather than resolving them yourself
 - Use the validation-skill subagent when continuing an existing idea — never guess the slug
 - Use the backlog-matcher subagent before starting the interview
+- Use the prd-validator subagent for every Phase 7 review pass — never self-grade the draft you just wrote
 - Update the discovery spec as the interview progresses
 - Let the user refine the PRD as many times as they want
 
@@ -258,6 +269,7 @@ If the user wants to pursue one of the proposed ideas, transition into the stand
 - Assume GPU is needed without evidence
 - Skip the backlog check
 - Resolve open questions without asking the user
+- Treat the prd-validator's findings as final or its recommendations as drop-in text — it lacks conversational context, so you still decide what actually changes
 
 ## Next Skill
 
