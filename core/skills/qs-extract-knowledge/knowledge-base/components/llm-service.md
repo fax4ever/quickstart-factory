@@ -1,7 +1,7 @@
 ---
 name: llm-service
 description: "Helm subchart for deploying LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI"
-summary: "Deploys LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI via the llm-service Helm subchart (v0.5.9+ from ai-architecture-charts), with LlamaStack orchestrating inference between backend and model servers across three runner types -- LlamaStack (via LLAMASTACK_URL), LangGraph (direct OpenAI-compat API, falls back to LlamaStack /v1), and CrewAI (LiteLLM routing requiring `openai/`-prefixed model names via `_to_litellm_model()`). Use when deploying GPU-backed LLM inference on RHOAI/OpenShift AI (24GB+ VRAM, HF_TOKEN for gated models) with multi-device support (cpu/gpu/hpu/xeon via DEVICE variable); pre-existing model URLs skip InferenceService creation, `rawDeploymentMode` bypasses KServe for non-KServe clusters, and local dev uses Ollama via LlamaStack's `remote::ollama` provider with silent fallback to first available model. Models configured entirely through `global.models.<name>.enabled/id/url/apiToken/tolerations` at `helm install` via install_with_env.sh or Makefile with rag-values.yaml catalog (values.yaml only has commented examples), GPU tolerations passed as `--set-json`, safety/shield models use separate SAFETY parameter and `registerShield: true` flag (filtered from `/api/v1/llama-stack/llms`), per-model `device`/`accelerators` overrides with tool-call-parser/vision model `args` for function-calling models, and dynamic provider registration patches the LlamaStack ConfigMap at runtime with deployment restart. Gotchas: no explicit `llm-service:` block in ai-virtual-agent values.yaml (f5-ai-guardrails has one with `secret.enabled` for HF token validation; check install script or `helm get values`), LLM (YAML-safe config key) vs LLM_ID (model identifier) distinction where LLM_ID defaults to LLM, LlamaStack API breaks between 0.3.x and 0.6.1 handled by multi-attribute fallback helpers, init container waits for LlamaStack not llm-service causing 10-30min startup for large model downloads, HPU/Xeon models need different vLLM args (`--max-num-seqs 32`) and max-model-len than GPU counterparts, Chart.yaml vs Chart.lock version drift resolved by `make depend`, and CrewAI install script auto-prepends `openai/` prefix for LiteLLM routing."
+summary: "Deploys LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI via the llm-service Helm subchart (v0.5.9+ from ai-architecture-charts), with LlamaStack orchestrating inference between backend and model servers across three runner types -- LlamaStack (via LLAMASTACK_URL), LangGraph (direct OpenAI-compat API, falls back to LlamaStack /v1), and CrewAI (LiteLLM routing requiring `openai/`-prefixed model names via `_to_litellm_model()`). Use when deploying GPU-backed LLM inference on RHOAI/OpenShift AI (24GB+ VRAM, HF_TOKEN for gated models) with multi-device support (cpu/gpu/hpu/xeon via DEVICE variable); pre-existing model URLs skip InferenceService creation, `rawDeploymentMode` bypasses KServe for non-KServe clusters, and local dev uses Ollama via LlamaStack's `remote::ollama` provider with silent fallback to first available model. Models configured entirely through `global.models.<name>.enabled/id/url/apiToken/tolerations/maxTokens` at `helm install` via install_with_env.sh or Makefile with rag-values.yaml catalog (values.yaml only has commented examples), GPU tolerations passed as `--set-json`, safety/shield models use separate SAFETY parameter and `registerShield: true` flag (filtered from `/api/v1/llama-stack/llms`), per-model `device`/`accelerators` overrides with tool-call-parser/vision model `args` for function-calling models, dynamic provider registration patches the LlamaStack ConfigMap at runtime with deployment restart, and LlamaStack client port resolution uses LLAMASTACK_CLIENT_PORT > LLAMASTACK_SERVICE_PORT > 8321 to avoid K8s `tcp://` format in LLAMASTACK_PORT. Gotchas: no explicit `llm-service:` block in ai-virtual-agent values.yaml (f5-ai-guardrails has one with `secret.enabled` for HF token validation; check install script or `helm get values`), LLM (YAML-safe config key) vs LLM_ID (model identifier) distinction where LLM_ID defaults to LLM, LlamaStack API breaks between 0.3.x and 0.6.1 handled by multi-attribute fallback helpers, init container waits for LlamaStack not llm-service causing 10-30min startup for large model downloads, HPU/Xeon models need different vLLM args (`--max-num-seqs 32`) and max-model-len than GPU counterparts, post-init replica scaling requires dedicated RBAC (ServiceAccount/Role/RoleBinding) for `kubectl scale` hook Job, `maxTokens` is server-side only (Responses API lacks per-request support, default 2048 via LLM_MAX_TOKENS), Chart.yaml vs Chart.lock version drift resolved by `make depend`, and CrewAI install script auto-prepends `openai/` prefix for LiteLLM routing."
 metadata:
   type: component
 tags:
@@ -21,6 +21,10 @@ source_examples:
   - quickstart: "f5-api-security"
     repo: "https://github.com/rh-ai-quickstart/f5-api-security"
     notes: "llm-service v0.5.10 subchart with Xeon device support, vision/multimodal model catalog entries, and tool-call-parser vLLM args"
+    approach: "A"
+  - quickstart: "it-self-service-agent"
+    repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
+    notes: "llm-service v0.5.6 subchart with server-side maxTokens per model, LlamaStack post-init replica scaling, and Kubernetes service discovery for LlamaStack client"
     approach: "A"
 ---
 
@@ -250,6 +254,54 @@ inference_providers.append(new_provider)
 core_v1.patch_namespaced_config_map(CONFIGMAP_NAME, namespace, configmap)
 ```
 
+### Server-Side Max Tokens per Model (from it-self-service-agent)
+
+The `maxTokens` parameter can be set per model via `global.models.<name>.maxTokens` at install time. This controls server-side max output tokens (useful when the Responses API does not support per-request max_tokens). The Makefile exposes `LLM_MAX_TOKENS` (default 2048):
+
+```makefile
+# From Makefile (it-self-service-agent)
+LLM_MAX_TOKENS ?= 2048
+
+helm_llama_stack_args = \
+    $(if $(LLM),--set global.models.$(LLM).maxTokens=$(LLM_MAX_TOKENS),)
+```
+
+### Post-Init Replica Scaling for LlamaStack (from it-self-service-agent)
+
+LlamaStack starts with 1 replica to avoid contention during init job asset registration. After the init job completes, a post-install Helm hook Job scales the deployment to the target replica count. This is controlled by `llamastack.postInitScaling`:
+
+```yaml
+# From helm/values.yaml (it-self-service-agent)
+llamastack:
+  postInitScaling:
+    enabled: false  # Set to true or use REPLICA_COUNT in Makefile
+    targetReplicas: 2
+```
+
+The scaler Job (helm hook `post-install,post-upgrade`) waits for the init job to succeed, then runs `kubectl scale deployment llamastack --replicas=$TARGET_REPLICAS`.
+
+### LlamaStack Client with Kubernetes Service Discovery (from it-self-service-agent)
+
+The agent service uses a factory pattern to create both native LlamaStack and OpenAI-compatible clients. Port resolution uses a priority chain: Helm override (`LLAMASTACK_CLIENT_PORT`) > Kubernetes auto-injected (`LLAMASTACK_SERVICE_PORT`) > default (8321). The `LLAMASTACK_PORT` env var is explicitly avoided because Kubernetes sets it to `tcp://host:port` format:
+
+```python
+# From agent-service/src/agent_service/utils/llamastack_client.py
+port_str = os.environ.get("LLAMASTACK_CLIENT_PORT") or os.environ.get(
+    "LLAMASTACK_SERVICE_PORT", "8321"
+)
+```
+
+Helm values pipe through as env vars in `_env-helpers.tpl`:
+
+```yaml
+# From helm/values.yaml (it-self-service-agent)
+llamastack:
+# port: 8321           # Sets LLAMASTACK_CLIENT_PORT
+# apiKey: "dummy-key"  # Sets LLAMASTACK_API_KEY
+# openaiBasePath: "/v1/openai/v1"  # Sets LLAMASTACK_OPENAI_BASE_PATH
+# timeout: 120         # Sets LLAMASTACK_TIMEOUT
+```
+
 ### LlamaStack API Version Compatibility
 
 The codebase handles breaking changes across LlamaStack API versions (0.3.x vs 0.6.1) with multi-attribute fallback helpers:
@@ -295,6 +347,15 @@ def _get_model_type(model):
   - `deploy/helm/rag-values.yaml.example` - Full model catalog with pre-configured tolerations (f5-ai-guardrails)
   - `deploy/helm/Makefile` - Makefile-driven install with `helm_llm_service_args` and interactive HF token validation (f5-ai-guardrails)
 
+- **Additional Helm values (from it-self-service-agent):**
+  - `global.models.<name>.maxTokens` - Server-side max output tokens (default 2048 via `LLM_MAX_TOKENS`)
+  - `llamastack.postInitScaling.enabled` - Enable post-init replica scaling for LlamaStack
+  - `llamastack.postInitScaling.targetReplicas` - Replica count after init job completes
+  - `llamastack.port` - Port override (sets `LLAMASTACK_CLIENT_PORT`, avoids K8s `tcp://` format)
+  - `llamastack.apiKey` - API key for LlamaStack authentication (default `dummy-key`)
+  - `llamastack.openaiBasePath` - Base path for OpenAI-compatible API (default `/v1/openai/v1`)
+  - `llamastack.timeout` - Request timeout in seconds (default 120)
+
 - **Additional Helm values (from f5-ai-guardrails):**
   - `llm-service.secret.enabled` - Enable secret creation for HF token (default `true`)
   - `llm-service.device` - Global device type (`cpu`, `gpu`, `hpu`; default `gpu`)
@@ -327,6 +388,12 @@ def _get_model_type(model):
 
 - **Xeon device requires explicit memory limits (from f5-api-security):** Unlike GPU deployments where vLLM can auto-detect available memory, Xeon (`device: "xeon"`) deployments need explicit `--max-model-len` and `--max-num-seqs` args. The same model (`Llama-3.2-3B-Instruct`) uses `--max-model-len 14336 --max-num-seqs 32` on Xeon, matching HPU defaults but differing from GPU where `30444` is used.
 
+- **Avoid LLAMASTACK_PORT env var (from it-self-service-agent):** Kubernetes auto-injects `LLAMASTACK_PORT` in `tcp://host:port` format (not a plain port number). The client factory explicitly uses `LLAMASTACK_CLIENT_PORT` (Helm override) or `LLAMASTACK_SERVICE_PORT` (K8s auto-injected numeric port) instead. From `llamastack_client.py`: `port_str = os.environ.get("LLAMASTACK_CLIENT_PORT") or os.environ.get("LLAMASTACK_SERVICE_PORT", "8321")`.
+
+- **Post-init scaling requires RBAC for kubectl scale (from it-self-service-agent):** The post-init scaler Job uses `bitnami/kubectl:latest` and needs a dedicated ServiceAccount with Role/RoleBinding granting `get`, `list`, `watch` on Jobs and `get`, `update`, `patch` on Deployments. This is deployed via `llama-stack-post-init-scaler-rbac.yaml` as a Helm hook.
+
+- **maxTokens is server-side only (from it-self-service-agent):** The `global.models.<name>.maxTokens` setting controls server-side max output tokens because the LlamaStack Responses API does not support per-request `max_tokens`. Set via `LLM_MAX_TOKENS` Makefile variable (default 2048). Must fit within model context window (e.g., 14k for some models).
+
 - **Chart.yaml vs Chart.lock version drift (from f5-api-security):** Chart.yaml declares `llm-service` version `0.5.10` but Chart.lock pins `0.5.2`. This happens when `helm dependency update` has not been re-run after a Chart.yaml version bump. Running `make depend` (which calls `helm dependency update`) resolves the drift.
 
 ## Testing Notes
@@ -339,6 +406,9 @@ def _get_model_type(model):
 - In f5-ai-guardrails, `make validate` runs `helm lint` and `helm template --dry-run` on the RAG chart, and `make validate-infra` checks KServe CRDs, webhook endpoints, and GPU availability before install
 - Use `make logs-llm` (f5-ai-guardrails) to tail llm-service pod logs: `oc logs -n $(NAMESPACE) -l app=llm-service --tail=100`
 - `make health` checks pods, services, routes, huggingface-secret, and PVCs in one pass
+
+- In it-self-service-agent, `make helm-list-models` enumerates available models: `helm template dummy-release helm --set llm-service._debugListModels=true | grep ^model:`
+- The init job waits for LlamaStack readiness then runs `python3 -m agent_service.scripts.register_assets` to register agents and knowledge bases
 
 ## Related Patterns
 

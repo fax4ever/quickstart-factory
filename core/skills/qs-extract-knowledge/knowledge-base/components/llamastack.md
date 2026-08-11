@@ -1,12 +1,12 @@
 ---
 name: llamastack
 description: "LlamaStack distribution server providing inference, agents, safety, tool runtime, and vector I/O APIs"
-summary: "LlamaStack provides a unified AI orchestration server exposing inference, agents, safety, tool runtime, vector I/O, and files APIs between the application backend and model providers (Ollama or vLLM), with Approach A (ai-virtual-agent, v0.6.1) using compose with Responses API and StreamAggregator-based SSE streaming in a pluggable LlamaStack/LangGraph/CrewAI runner dispatch, Approach B (data-governance-co-pilot, v0.3.5) deploying a LlamaStackDistribution CRD via OpenShift AI operator with alpha.agents API managing the full agentic loop and session-to-conversation event mapping, and Approach C (f5-ai-guardrails/f5-api-security, v0.6.1) using ai-architecture-charts llama-stack subchart v0.8.6 with dual-client pattern (LlamaStackClient + OpenAI SDK) or single LlamaStackClient (files API for document upload, XC URL dynamic endpoint switching, direct pgvector access) for RAG with optional F5 guardrails proxy dual-panel comparison. Use Approach A for local dev or when the application manages the agentic loop with dynamic MCP toolgroup resolution, input shield validation via client.safety.run_shield(), and automatic tool retry with exclusion; use Approach B for production OpenShift AI deployments where the operator manages LlamaStack lifecycle (600s DeploymentReady wait, 100m/256Mi lightweight proxy resources), vLLM serves inference via KServe, and Makefile populates Helm model.name/url/apiKey values at install time; use Approach C for RAG apps needing shared Helm subcharts with global.models across llm-service/llama-stack, Streamlit frontend with URL normalization for 0.6+, and optional external guardrails proxy -- Nemotron models are incompatible with llama_stack mode (enforced by check-model-provider-compatibility, use mcp_direct). Configured via llamastack-run.yaml (RUN_CONFIG_PATH) declaring providers -- Approach A uses remote::ollama with AsyncLlamaStackClient (180s timeout, K8s SA token + X-Forwarded-User/Email auth headers for RBAC); Approach B uses remote::vllm with provider-prefixed model name (vllm-inference/<model>), vLLM URL derived from KServe predictor (https://<model>-predictor.<ns>.svc.cluster.local:8443/v1), VLLM_TLS_VERIFY='false' for self-signed certs, and static MCP endpoint in Helm-templated ConfigMap; Approach C uses dual clients with OpenAI SDK targeting LlamaStack /v1/chat/completions or single client with files API, HTTPX verify=False for cluster TLS, vector_dbs fallback to vector_stores on 404, and auto-detects LlamaStack route via start.sh for TLS protocol selection. Container runs as root (user 0:0) with 90s healthcheck start_period, SDK attribute names changed between 0.3.x and 0.6.1 (identifier to id, api_model_type to model_type) requiring _get_model_type/_get_model_id helpers, SQLite storage is dev-only, platform linux/amd64 causes ARM emulation perf hit, regex-based tool retry parsing (Tool '(\\w+)' not found) is fragile, has_output_text=False emits error event to prevent silent empty responses, Approach B values.yaml has empty placeholders requiring Makefile --set population, static agent instructions require conversation restart on policy update via requires_conversation_restart_on_policy_update(), Approach C guardrails_state.json on emptyDir is lost on pod replacement, and legacy URL suffix /v1/openai/v1 must be stripped for 0.6+ compatibility."
+summary: "LlamaStack provides a unified AI orchestration server exposing inference, agents, safety, tool runtime, vector I/O, and files APIs between the application backend and model providers (Ollama or vLLM), with Approach A (ai-virtual-agent, v0.6.1) using compose with Responses API and StreamAggregator-based SSE streaming in a pluggable LlamaStack/LangGraph/CrewAI runner dispatch, Approach B (data-governance-co-pilot, v0.3.5) deploying a LlamaStackDistribution CRD via OpenShift AI operator with alpha.agents API managing the full agentic loop and session-to-conversation event mapping, Approach C (f5-ai-guardrails/f5-api-security, v0.6.1) using ai-architecture-charts llama-stack subchart v0.8.6 with dual-client pattern (LlamaStackClient + OpenAI SDK) or single LlamaStackClient (files API for document upload, XC URL dynamic endpoint switching, direct pgvector access) for RAG with optional F5 guardrails proxy dual-panel comparison, and Approach D (it-self-service-agent) using Helm subchart v0.8.5 with Responses API, PostgreSQL persistence (kv_postgres + sql_postgres) for multi-replica horizontal scaling, centralized client factory with K8s auto-discovery, MCP + file_search tools with per-request headers, knowledge base registration via vector_stores API with provider_id: pgvector, and post-init scaler Job. Use Approach A for local dev or when the application manages the agentic loop with dynamic MCP toolgroup resolution, input shield validation via client.safety.run_shield(), and automatic tool retry with exclusion; use Approach B for production OpenShift AI deployments where the operator manages LlamaStack lifecycle (600s DeploymentReady wait, 100m/256Mi lightweight proxy resources), vLLM serves inference via KServe, and Makefile populates Helm model.name/url/apiKey values at install time; use Approach C for RAG apps needing shared Helm subcharts with global.models across llm-service/llama-stack, Streamlit frontend with URL normalization for 0.6+, and optional external guardrails proxy; use Approach D for production multi-agent apps needing horizontal scaling with PostgreSQL-backed shared state, lazy model discovery via models.list() filtering by custom_metadata.model_type, and post-init scaler Job coordinating initialization before scaling replicas -- Nemotron models are incompatible with llama_stack mode (enforced by check-model-provider-compatibility, use mcp_direct). Configured via llamastack-run.yaml (RUN_CONFIG_PATH) declaring providers -- Approach A uses remote::ollama with AsyncLlamaStackClient (180s timeout, K8s SA token + X-Forwarded-User/Email auth headers for RBAC); Approach B uses remote::vllm with provider-prefixed model name (vllm-inference/<model>), vLLM URL derived from KServe predictor (https://<model>-predictor.<ns>.svc.cluster.local:8443/v1), VLLM_TLS_VERIFY='false' for self-signed certs, and static MCP endpoint in Helm-templated ConfigMap; Approach C uses dual clients with OpenAI SDK targeting LlamaStack /v1/chat/completions or single client with files API, HTTPX verify=False for cluster TLS, vector_dbs fallback to vector_stores on 404, and auto-detects LlamaStack route via start.sh for TLS protocol selection; Approach D uses centralized client factory with LLAMASTACK_SERVICE_HOST (avoiding LLAMASTACK_PORT tcp:// format), OpenAI client at /v1/openai/v1, metadataStore with db_path: null to prevent SQLite fallback, and pgvector max_connections=200 shared across all consumers. Container runs as root (user 0:0) with 90s healthcheck start_period, SDK attribute names changed between 0.3.x and 0.6.1 (identifier to id, api_model_type to model_type) requiring _get_model_type/_get_model_id helpers, SQLite storage is dev-only, platform linux/amd64 causes ARM emulation perf hit, regex-based tool retry parsing (Tool '(\\w+)' not found) is fragile, has_output_text=False emits error event to prevent silent empty responses, Approach B values.yaml has empty placeholders requiring Makefile --set population, static agent instructions require conversation restart on policy update via requires_conversation_restart_on_policy_update(), Approach C guardrails_state.json on emptyDir is lost on pod replacement, legacy URL suffix /v1/openai/v1 must be stripped for 0.6+ compatibility, and Approach D must avoid LLAMASTACK_PORT (K8s sets to tcp://host:port format) using LLAMASTACK_CLIENT_PORT or LLAMASTACK_SERVICE_PORT instead, with post-init scaler requiring bitnami/kubectl image mirroring in air-gapped environments."
 metadata:
   type: component
 tags:
-  tech_stack: [llamastack, ollama, python, fastapi, llama-stack-client, vllm, helm, streamlit, openai-sdk]
-  ai_pattern: [agents, model-serving, guardrails, rag, vector-search, mcp]
+  tech_stack: [llamastack, ollama, python, fastapi, llama-stack-client, vllm, helm, streamlit, openai-sdk, langgraph]
+  ai_pattern: [agents, model-serving, guardrails, rag, vector-search, mcp, embeddings]
   platform: [openshift, kubernetes, rhoai, kserve]
   data_layer: [sqlite, faiss, pgvector]
 source_examples:
@@ -26,6 +26,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/f5-api-security"
     notes: "LlamaStack as ai-architecture-charts Helm subchart for RAG with single LlamaStackClient (no OpenAI SDK), Streamlit frontend with XC URL dynamic endpoint switching, files API for vector store document upload, and direct pgvector access for document listing/deletion"
     approach: "C"
+  - quickstart: "it-self-service-agent"
+    repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
+    notes: "LlamaStack as ai-architecture-charts Helm subchart with Responses API, PostgreSQL persistence for multi-replica scaling, centralized client factory with K8s auto-discovery, MCP + file_search tools, and post-init scaler Job"
+    approach: "D"
 ---
 
 # LlamaStack
@@ -616,18 +620,268 @@ fi
 
 ---
 
+## Approach D: Helm Subchart with Responses API and PostgreSQL Persistence (from it-self-service-agent)
+
+### When to Use
+
+Use this approach when deploying LlamaStack as an ai-architecture-charts Helm subchart with the Responses API for agentic workflows, PostgreSQL-backed persistence for multi-replica horizontal scaling, MCP tool integration and knowledge base file_search via the responses tools array, and a post-init scaler Job that coordinates initialization before scaling up replicas. This is the pattern for production multi-agent applications where multiple llama-stack replicas share state through PostgreSQL.
+
+### Differences from Approach A
+
+- **Deployment**: ai-architecture-charts Helm subchart (`llama-stack` v0.8.5) instead of docker-compose service
+- **Persistence**: PostgreSQL for metadata store, vector_io kvstore, agent state, and responses instead of SQLite
+- **Multi-replica**: Supports horizontal scaling with emptyDir volumes (no shared PVC needed since state is in PostgreSQL)
+- **Service discovery**: Kubernetes auto-injected env vars (`LLAMASTACK_SERVICE_HOST`, `LLAMASTACK_SERVICE_PORT`) instead of hardcoded compose URLs
+- **Client pattern**: Centralized factory module (`llamastack_client.py`) producing sync, async, and OpenAI-compatible clients
+
+### Differences from Approach C
+
+- **Client API**: Responses API (`client.responses.create()`) for agentic inference instead of OpenAI `chat.completions.create()`
+- **Agent management**: Custom `Agent` class managing tools, retries, and temperature per agent config instead of direct chat
+- **Persistence**: Explicit PostgreSQL configuration for metadata, kvstore, and SQL backends instead of subchart defaults
+- **Scaling**: Post-init scaler Helm hook Job that waits for asset registration before scaling to target replicas
+- **Tools**: Combined MCP server tools and file_search (vector store) tools passed to the Responses API instead of separate RAG tool queries
+
+### Tech Stack & Dependencies
+
+- **Runtime:** LlamaStack distribution server (subchart default image)
+- **Container image:** Managed by `ai-architecture-charts` `llama-stack` subchart v0.8.5
+- **Key dependencies:** `llama-stack-client==0.5.0` (Python SDK), `openai` Python SDK, `llm-service` subchart for vLLM
+- **Helm subchart:** `llama-stack` v0.8.5 from `https://rh-ai-quickstart.github.io/ai-architecture-charts`
+
+### Key Patterns
+
+#### Centralized Client Factory with Kubernetes Auto-Discovery
+
+All LlamaStack client creation goes through a factory module that automatically uses Kubernetes-injected service environment variables. The factory produces three client types: native sync, native async, and OpenAI-compatible.
+
+```python
+# agent-service/src/agent_service/utils/llamastack_client.py
+# Host: Use Kubernetes auto-injected LLAMASTACK_SERVICE_HOST
+host = llamastack_host or os.environ.get("LLAMASTACK_SERVICE_HOST", "llamastack")
+
+# Port: Check Helm override first, then Kubernetes auto-injected, then default
+# Note: We avoid LLAMASTACK_PORT as Kubernetes sets it to "tcp://host:port" format
+port_str = os.environ.get("LLAMASTACK_CLIENT_PORT") or os.environ.get(
+    "LLAMASTACK_SERVICE_PORT", "8321"
+)
+```
+
+The OpenAI-compatible client targets the `/v1/openai/v1` base path on the LlamaStack server and uses a dummy API key since in-cluster communication does not require authentication.
+
+```python
+# agent-service/src/agent_service/utils/llamastack_client.py
+base_url = f"http://{host}:{port_num}{path}"
+return openai.OpenAI(
+    api_key=key,  # default: "dummy-key"
+    base_url=base_url,
+    timeout=timeout_val,
+)
+```
+
+#### Responses API with MCP and File Search Tools
+
+The Agent class uses `client.responses.create()` with a tools array that combines MCP server tools and file_search tools (for knowledge base vector stores). MCP tools include dynamic per-request headers for user identity, tracing context, and ServiceNow API keys.
+
+```python
+# agent-service/src/agent_service/langgraph/responses_agent.py
+if tools_to_use:
+    response = await self.async_llama_client.responses.create(
+        input=messages_with_system,
+        model=self.model,
+        **response_config,
+        tools=tools_to_use,
+    )
+```
+
+Knowledge base tools are built from vector store IDs discovered at runtime:
+
+```python
+# agent-service/src/agent_service/langgraph/responses_agent.py
+knowledge_base_tool = {
+    "type": "file_search",
+    "vector_store_ids": vector_store_ids,
+}
+tools_to_use.append(knowledge_base_tool)
+```
+
+MCP tools include headers built dynamically per request:
+
+```python
+# agent-service/src/agent_service/langgraph/responses_agent.py
+mcp_tool: Dict[str, Any] = {
+    "type": "mcp",
+    "server_label": server_name,
+    "server_url": server_uri,
+    "require_approval": server_config.get("require_approval", "never"),
+}
+if authoritative_user_id:
+    tool_headers["AUTHORITATIVE_USER_ID"] = authoritative_user_id
+```
+
+#### PostgreSQL Persistence for Multi-Replica Support
+
+All LlamaStack internal state is backed by PostgreSQL (via the shared pgvector subchart) instead of SQLite. This enables multiple llama-stack replicas to share state. Volumes use `emptyDir` instead of PVC since no shared filesystem is needed.
+
+```yaml
+# helm/values.yaml
+llama-stack:
+  metadataStore:
+    type: postgres
+    db_path: null  # Explicitly unset SQLite field
+    host: ${env.POSTGRES_HOST:=pgvector}
+    port: ${env.POSTGRES_PORT:=5432}
+    db: ${env.POSTGRES_DBNAME:=rag_blueprint}
+    namespace: llamastack_registry
+
+  storage:
+    backends:
+      kv_default:
+        type: kv_postgres
+        host: ${env.POSTGRES_HOST:=pgvector}
+        db: llama_agents
+      sql_default:
+        type: sql_postgres
+        host: ${env.POSTGRES_HOST:=pgvector}
+        db: llama_responses
+```
+
+The pgvector chart creates dedicated databases for LlamaStack agent persistence:
+
+```yaml
+# helm/values.yaml
+pgvector:
+  args:
+    - "-c"
+    - "max_connections=200"
+  extraDatabases:
+    - name: llama_agents
+      vectordb: false
+    - name: llama_responses
+      vectordb: false
+```
+
+#### Post-Init Scaler Helm Hook
+
+A Kubernetes Job runs as a Helm post-install/post-upgrade hook. It waits for the init job (which registers knowledge bases and assets with LlamaStack) to complete, then scales the llama-stack deployment to the target replica count. This is triggered when `REPLICA_COUNT` is set in the Makefile.
+
+```yaml
+# helm/templates/llama-stack-post-init-scaler-job.yaml
+{{- if .Values.llamastack.postInitScaling.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+spec:
+  template:
+    spec:
+      containers:
+      - name: scale-deployment
+        image: bitnami/kubectl:latest
+        env:
+        - name: DEPLOYMENT_NAME
+          value: "llamastack"
+        - name: TARGET_REPLICAS
+          value: {{ .Values.llamastack.postInitScaling.targetReplicas | quote }}
+```
+
+The scaler has its own ServiceAccount, Role (get/list/watch jobs, get/patch/update deployments), and RoleBinding created via pre-install hooks.
+
+#### Knowledge Base Registration via OpenAI-Compatible API
+
+The init job registers knowledge bases by creating vector stores through LlamaStack's OpenAI-compatible API, specifying `provider_id: pgvector` in the extra_body to route storage to the PostgreSQL-backed pgvector provider.
+
+```python
+# agent-service/src/agent_service/knowledge/kb_manager.py
+vector_store = self._llama_client.vector_stores.create(
+    name=vector_store_name, extra_body={"provider_id": "pgvector"}
+)
+# Upload files to vector store
+with open(file_path, "rb") as f:
+    file_create_response = self._llama_client.files.create(
+        file=f, purpose="assistants"
+    )
+self._llama_client.vector_stores.files.create(
+    vector_store_id=vector_store_id, file_id=file_id
+)
+```
+
+#### Lazy Model Discovery
+
+The Agent class defers model selection to first use. When no model is configured in the agent YAML, it queries LlamaStack for the first available LLM model via `models.list()` filtering by `custom_metadata.model_type == "llm"`.
+
+```python
+# agent-service/src/agent_service/langgraph/responses_agent.py
+models = await self.async_llama_client.models.list()
+model_id = next(
+    m.id
+    for m in models
+    if m.custom_metadata and m.custom_metadata.get("model_type") == "llm"
+)
+```
+
+#### Retry with Exponential Backoff
+
+The `create_response_with_retry` method wraps response creation with configurable retries (default 3), exponential backoff (1s, 2s, 4s, 8s, capped at 16s), and distinguishes between empty responses, error responses, and exceptions.
+
+### Configuration
+
+- **Environment variables:**
+  - `LLAMASTACK_SERVICE_HOST` -- Kubernetes auto-injected hostname (default: `llamastack`)
+  - `LLAMASTACK_SERVICE_PORT` -- Kubernetes auto-injected port (default: `8321`)
+  - `LLAMASTACK_CLIENT_PORT` -- Helm-configurable port override (takes precedence over `SERVICE_PORT`)
+  - `LLAMASTACK_API_KEY` -- API key (default: `dummy-key`; not required in-cluster)
+  - `LLAMASTACK_OPENAI_BASE_PATH` -- OpenAI API path (default: `/v1/openai/v1`)
+  - `LLAMASTACK_TIMEOUT` -- Request timeout in seconds (default: `120`)
+  - `LLAMA_STACK_URL` -- Used by the init job for readiness polling (default: `http://llamastack:8321`)
+  - `USE_NEMO_GUARDRAILS` -- Enable NeMo Guardrails safety checks on input/output (default: disabled)
+- **Config files:**
+  - `agent-service/config/agents/*.yaml` -- Agent definitions with model, system_message, mcp_servers, knowledge_bases
+- **Helm values:**
+  - `llama-stack.replicaCount` -- Initial replica count (default: `1`, scaled up by post-init job)
+  - `llama-stack.metadataStore` -- PostgreSQL connection for LlamaStack metadata registry
+  - `llama-stack.storage.backends` -- `kv_postgres` and `sql_postgres` backends for agent and responses state
+  - `llama-stack.volumes` -- Override to `emptyDir` instead of PVC for multi-replica support
+  - `llamastack.postInitScaling.enabled` -- Enable post-init scaling (default: `false`, auto-enabled by `REPLICA_COUNT`)
+  - `llamastack.postInitScaling.targetReplicas` -- Target replica count after init completes
+  - `llama_stack_url` -- Init job readiness URL (default: `http://llamastack:8321`)
+
+### Known Gotchas
+
+- `LLAMASTACK_PORT` must not be used directly because Kubernetes sets it to `tcp://host:port` format. The client factory explicitly avoids it and uses `LLAMASTACK_CLIENT_PORT` (Helm override) or `LLAMASTACK_SERVICE_PORT` (K8s auto-injected numeric port) instead (see `llamastack_client.py` lines 73-75).
+- The `llama-stack` subchart volumes are overridden in `values.yaml` to use `emptyDir` instead of PVC. This is intentional because all persistence is handled by PostgreSQL, and PVCs cannot be shared across replicas with `ReadWriteOnce` access mode.
+- The `db_path: null` in `metadataStore` explicitly unsets the SQLite field to prevent LlamaStack from falling back to file-based storage when PostgreSQL is configured.
+- The init job polls `$LLAMA_STACK_URL/` with `curl -ks` (tolerating self-signed certs) in a retry loop before running asset registration. The poll uses both `--fail` and a fallback `--silent` check because LlamaStack may return non-2xx on the root endpoint in some versions.
+- The `max_connections=200` setting on pgvector is shared across all consumers (app services, LlamaStack metadata, LlamaStack kvstore, LlamaStack SQL). Pool sizes (`poolSize: 8`, `maxOverflow: 8`) are unified across test and production environments to avoid connection exhaustion.
+- The post-init scaler Job uses `bitnami/kubectl:latest` image. In air-gapped or restricted environments, this image must be mirrored to an internal registry.
+- Max output tokens for LlamaStack are set server-side in the run config per-model (`maxTokens`). The Responses API does not support per-request `max_tokens` (see LlamaStack issue #3562 referenced in `laptop-refresh-agent.yaml`).
+- The async LlamaStack client is wrapped with a fault injection decorator (`wrap_client_with_fault_injection`) that can simulate timeouts, connection errors, API errors, or empty responses for resilience testing (controlled via Helm values `faultInjection.*`).
+
+### Testing Notes
+
+- Verify LlamaStack readiness: `curl -ks http://llamastack:8321/`
+- Check init job completion: `kubectl get job <release>-init -n <namespace>` (should show `1/1` completions)
+- If post-init scaling is enabled, verify replica count: `kubectl get deploy llamastack -n <namespace>` (should show target replicas)
+- Monitor knowledge base registration: check init job logs for `Successfully registered knowledge base via LlamaStack` messages
+- Fault injection can be enabled at deploy time: `FAULT_INJECTION_ENABLED=true FAULT_INJECTION_RATE=0.1 make install`
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (data-governance-co-pilot) | Approach C (f5-ai-guardrails) |
-|----------|-------------------------------|---------------------------------------|-------------------------------|
-| Deployment method | docker-compose service | Helm chart + LlamaStackDistribution CRD (OpenShift AI operator) | ai-architecture-charts Helm subchart |
-| Inference backend | Ollama (local) | Remote vLLM via KServe InferenceService | Remote vLLM via llm-service subchart |
-| LlamaStack version | 0.6.1 | 0.3.5 | 0.6.1 (subchart v0.8.6) |
-| Client API | Responses API with Conversations | Agents alpha API with sessions | OpenAI chat.completions + LlamaStackClient |
-| Agent management | Runner handles agentic loop, LlamaStack streams responses | LlamaStack manages full agentic loop, provider maps events | No agent loop; direct chat completions for RAG Q&A |
-| MCP integration | Dynamic toolgroup resolution at runtime | Static MCP endpoint in run.yaml ConfigMap | Tool groups listed from LlamaStack for UI display |
-| Auth model | K8s SA token + X-Forwarded headers | API key in K8s Secret, no user header forwarding | Optional bearer token, TLS via HTTPX client factory |
-| Safety | Input shields via `client.safety.run_shield()` | `inline::llama-guard` provider declared in run.yaml | External F5 AI Guardrails Moderator proxy |
-| Storage | SQLite at container-local path | SQLite at operator-managed path | Subchart defaults |
-| Platform | Local dev (compose), OpenShift (future) | OpenShift AI with operator | OpenShift with shared Helm subcharts |
-| Multi-framework | Pluggable runner (LlamaStack/LangGraph/CrewAI) | Pluggable provider (mcp_direct/llama_stack) | Single path (OpenAI SDK for chat) |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (data-governance-co-pilot) | Approach C (f5-ai-guardrails) | Approach D (it-self-service-agent) |
+|----------|-------------------------------|---------------------------------------|-------------------------------|-------------------------------------|
+| Deployment method | docker-compose service | Helm chart + LlamaStackDistribution CRD (OpenShift AI operator) | ai-architecture-charts Helm subchart | ai-architecture-charts Helm subchart |
+| Inference backend | Ollama (local) | Remote vLLM via KServe InferenceService | Remote vLLM via llm-service subchart | Remote vLLM via llm-service subchart |
+| LlamaStack version | 0.6.1 | 0.3.5 | 0.6.1 (subchart v0.8.6) | subchart v0.8.5 (llama-stack-client 0.5.0) |
+| Client API | Responses API with Conversations | Agents alpha API with sessions | OpenAI chat.completions + LlamaStackClient | Responses API via centralized client factory |
+| Agent management | Runner handles agentic loop, LlamaStack streams responses | LlamaStack manages full agentic loop, provider maps events | No agent loop; direct chat completions for RAG Q&A | Custom Agent class with retry, MCP tools, and file_search |
+| MCP integration | Dynamic toolgroup resolution at runtime | Static MCP endpoint in run.yaml ConfigMap | Tool groups listed from LlamaStack for UI display | MCP tools in responses tools array with per-request headers |
+| Auth model | K8s SA token + X-Forwarded headers | API key in K8s Secret, no user header forwarding | Optional bearer token, TLS via HTTPX client factory | Dummy API key (in-cluster only), user ID via MCP headers |
+| Safety | Input shields via `client.safety.run_shield()` | `inline::llama-guard` provider declared in run.yaml | External F5 AI Guardrails Moderator proxy | Optional NeMo Guardrails via external endpoint |
+| Storage | SQLite at container-local path | SQLite at operator-managed path | Subchart defaults | PostgreSQL (kv_postgres + sql_postgres) for multi-replica |
+| Platform | Local dev (compose), OpenShift (future) | OpenShift AI with operator | OpenShift with shared Helm subcharts | OpenShift with shared Helm subcharts |
+| Multi-framework | Pluggable runner (LlamaStack/LangGraph/CrewAI) | Pluggable provider (mcp_direct/llama_stack) | Single path (OpenAI SDK for chat) | Agent class per agent config YAML |
+| Horizontal scaling | Single instance | Operator-managed replicas | Single instance | Post-init scaler Job, PostgreSQL-backed shared state |

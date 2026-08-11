@@ -1,13 +1,13 @@
 ---
 name: agent-orchestration
 description: Agent orchestration patterns from multi-runner dispatch to LangGraph DAGs to dual-provider factory
-summary: "Enables pluggable multi-framework agent execution (Approach A) where a FastAPI ChatService endpoint dispatches to LlamaStack, LangGraph, or CrewAI runners based on VirtualAgent's runner_type in PostgreSQL, producing normalized SSE events (reasoning, response, tool_call, node_started/completed, error) for a React/PatternFly frontend; alternatively (Approach B) implements a hierarchical LangGraph DAG for automated event-driven processing with SentenceTransformer embedding + DBSCAN/HDBSCAN clustering, LLM structured-output routing via Command(goto=...), and nested subgraphs for RAG cheat-sheet and Loki tool-calling context retrieval; or (Approach C) a dual-provider factory selecting between backend-managed agentic loop (MCP-Direct with vLLM + Nemotron TOOLCALL tag auto-detection + hard-coded allowlist/Pydantic tool validation) and delegated orchestration (Llama Stack Agents API with toolgroup registration), both consuming the same pg-airman-mcp tool server with runtime governance policy injection. Use LlamaStack runner (default) for Responses API with built-in conversation history and auto-retry tool exclusion via AsyncLlamaStackClient; LangGraph for ReAct agents with MCP tools via MultiServerMCPClient or declarative DAG workflows (graph_config with typed nodes: llm, mcp_tool, mcp_tool_map, router and template substitution); CrewAI for multi-agent crews with persona/backstory mapping and LiteLLM OpenAI-compatible routing; Approach B for batch event-driven pipelines with fixed hierarchical subgraphs, dual LLM endpoints (default + tool-calling-capable), parallel processing of unique cluster representatives, and closure-bound Loki tools with result_id caching to reduce token usage; Approach C for interactive copilots needing deployment-time provider flexibility (COPILOT_PROVIDER_MODE env var) with single MCP tool server, where MCP-Direct gives full control over streaming/token management/model-specific parsing and Llama Stack simplifies architecture by delegating the agentic loop. All runners implement BaseRunner.stream() yielding SSE strings terminated by [DONE]; VirtualAgent model stores runner_type, model_name, prompt, tools, knowledge_base_ids, vector_store_ids, shields, and graph_config; LangGraph mode switches on graph_config presence (absent = create_react_agent, present = declarative StateGraph DAG with parallel node execution); Approach B graphs are compiled at module load time with a shared module-level LLM instance; Approach C's factory creates MCPDirectProvider or LlamaStackProvider based on COPILOT_PROVIDER_MODE, with MCP-Direct running a while loop (up to 100 iterations) auto-detecting Nemotron vs OpenAI tool call format, and Llama Stack registering pg-airman-mcp as a toolgroup with per-conversation sessions. Runners are lazily imported with _check_langgraph()/CREWAI_AVAILABLE guards to handle missing optional packages; CrewAI requires a _StreamDeduplicator to filter ReAct Thought/Action/Input noise; LangGraph's InMemorySaver must be swapped for PostgresSaver in multi-worker deployments; both LangGraph and CrewAI use LLM-based _extract_input_fields to parse structured fields from natural language when graph_config.input_fields are defined; Approach B's stream_with_fallback returns partial content on mid-stream interruption and its offline pipeline separates preparation (clustering) from processing to wait for RAG service readiness; Approach C's tool validation only applies in MCP-Direct mode (Llama Stack has no equivalent security layer), Llama Stack policy updates require full agent recreation clearing all sessions, conversation_store is in-memory (lost on pod restart), and MCP-Direct appends \"/mcp\" while Llama Stack appends \"/sse\" to the configured mcp_server_url."
+summary: "Provides four agent orchestration patterns for AI quickstarts: (A) FastAPI ChatService dispatches to LlamaStack, LangGraph, or CrewAI runners based on VirtualAgent.runner_type in PostgreSQL, producing normalized SSE events for a React/PatternFly frontend; (B) hierarchical LangGraph DAG for automated event-driven processing with SentenceTransformer + DBSCAN/HDBSCAN clustering and nested subgraphs; (C) dual-provider factory selecting MCP-Direct or Llama Stack behind a single MCP tool server; (D) YAML-driven state machine with multi-agent routing via CloudEvents/Knative, LlamaStack Responses API with native MCP tools + file_search, and NeMo Guardrails. Use Approach A for interactive chat needing pluggable frameworks (LlamaStack default with AsyncLlamaStackClient auto-retry tool exclusion, LangGraph dual-mode switching on graph_config presence for create_react_agent vs declarative StateGraph DAG with typed nodes and MultiServerMCPClient, CrewAI with LiteLLM and _StreamDeduplicator for ReAct noise); Approach B for batch event-driven pipelines with Command(goto=...) routing, dual LLM endpoints, closure-bound Loki tools with result_id caching, and stream_with_fallback for partial content on interruption; Approach C (COPILOT_PROVIDER_MODE env var) for interactive copilots where MCP-Direct gives backend-managed agentic loop (100-iteration while loop, Nemotron TOOLCALL tag auto-detection with 11-char streaming buffer, hard-coded allowlist + Pydantic tool validation, appends \"/mcp\") and Llama Stack delegates orchestration via toolgroup registration (per-conversation sessions, appends \"/sse\"); Approach D for multi-agent IT service automation with 5 YAML state types (waiting, llm_processor, intent_classifier, llm_validator, terminal), dynamic LangGraph StateGraph construction, AsyncPostgresSaver checkpointing with __resume_dispatcher__ for pod restart resilience, response_analysis with trigger_phrases driving set_field/transition actions, and per-agent MCP+knowledge base configuration. All Approach A runners implement BaseRunner.stream() yielding SSE strings terminated by [DONE]; VirtualAgent model stores runner_type, model_name, prompt, tools, knowledge_base_ids, vector_store_ids, shields, and graph_config; Approach B graphs compile at module load with shared module-level LLM instance; Approach C's factory creates MCPDirectProvider or LlamaStackProvider with runtime governance policy injection (Llama Stack requires full agent recreation clearing sessions); Approach D dynamically creates AgentState TypedDict from YAML state_schema.business_fields, routes between specialist agents via routing_decision state field, and uses LlamaStack Responses API create_response_with_retry with exponential backoff (1s-16s) for empty responses. Runners are lazily imported with _check_langgraph()/CREWAI_AVAILABLE guards; LangGraph InMemorySaver must swap to PostgresSaver for multi-worker; both LangGraph and CrewAI use LLM-based _extract_input_fields for structured field parsing from natural language; Approach B's offline pipeline separates preparation (clustering) from processing to wait for RAG readiness; Approach C's tool validation only applies in MCP-Direct mode (Llama Stack has no equivalent security layer) and conversation_store is in-memory (lost on pod restart); Approach D's _consumed_this_invoke flag prevents multiple waiting states from consuming the same HumanMessage, session locks (180s timeout) prevent concurrent CloudEvent processing, and FaultInjectingAsyncLlamaStackClient exempts vector_stores namespace from fault injection."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, langchain, langgraph, crewai, llamastack, python, gradio, sentence-transformers, scikit-learn, sveltekit, openai-sdk, vega-lite]
-  ai_pattern: [agents, prompt-chaining, model-serving, embeddings, data-governance]
-  platform: [llamastack, vllm, rhoai, openshift, kserve]
+  tech_stack: [fastapi, langchain, langgraph, crewai, llamastack, python, gradio, sentence-transformers, scikit-learn, sveltekit, openai-sdk, vega-lite, cloudevents, nemo-guardrails, zammad]
+  ai_pattern: [agents, prompt-chaining, model-serving, embeddings, data-governance, guardrails]
+  platform: [llamastack, vllm, rhoai, openshift, kserve, knative]
   data_layer: [postgresql, pgvector]
 source_examples:
   - quickstart: "ai-virtual-agent"
@@ -22,6 +22,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
     notes: "Dual-provider factory pattern selecting between backend-managed agentic loop (MCP-Direct with vLLM + MCP) and delegated orchestration (Llama Stack Agents API), both consuming the same pg-airman-mcp tool server"
     approach: "C"
+  - quickstart: "it-self-service-agent"
+    repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
+    notes: "YAML-driven configurable state machine with LangGraph, multi-agent routing via CloudEvents, LlamaStack Responses API, and NeMo guardrails integration"
+    approach: "D"
 ---
 
 # Agent Orchestration
@@ -612,19 +616,258 @@ Both providers use the same prompt structure with governance policy injection:
 
 ---
 
+## Approach D: YAML-Driven State Machine with Multi-Agent Routing (from it-self-service-agent)
+
+### When to Use
+
+Use this approach when building a multi-agent IT service automation system where each specialist agent follows a structured conversational workflow defined entirely in YAML configuration. This approach is suited for scenarios where: conversation flows are deterministic state machines (collect info, validate, classify intent, process), multiple specialist agents handle different request types (laptop refresh, ticket review, general support), a routing agent dispatches to specialists based on user intent, and the entire system communicates via CloudEvent-driven microservices (request-manager, agent-service, integration-dispatcher) connected through a Knative eventing broker.
+
+### Differences from Approaches A, B, and C
+
+| Aspect | Approach A (Multi-Runner Dispatch) | Approach B (Hierarchical LangGraph DAG) | Approach C (Dual-Provider Factory) | Approach D (YAML State Machine) |
+|--------|-----------------------------------|----------------------------------------|-----------------------------------|---------------------------------|
+| Graph definition | Configurable via database (runner_type, graph_config) | Fixed Python code, compiled at module load | Not applicable (simple tool-calling loop) | YAML configuration files defining states, transitions, and prompts |
+| State types | N/A (runner handles everything) | Typed LangGraph nodes (llm, router, tool) | N/A | 5 generic state types: `waiting`, `llm_processor`, `intent_classifier`, `llm_validator`, `terminal` |
+| Agent framework | Pluggable (LlamaStack, LangGraph, CrewAI) | LangGraph only | MCP-Direct or Llama Stack | LangGraph execution engine + LlamaStack Responses API |
+| Multi-agent routing | Not built in (single agent per session) | Not applicable (single pipeline) | Not applicable (single copilot) | Routing agent classifies intent and dispatches to specialist agents |
+| Communication | Direct REST/SSE | Direct Python method calls | Direct REST/SSE | CloudEvent-driven microservices via Knative broker |
+| State persistence | Database-driven (VirtualAgent model) | Stateless batch processing | In-memory dict | PostgreSQL-backed LangGraph checkpointer (AsyncPostgresSaver) |
+| Prompt management | Database-stored prompt field | File-based system prompts | Environment-variable-based | YAML inline prompts with `{placeholder}` template substitution |
+| LLM interaction | Framework-specific (LlamaStack/LangGraph/CrewAI) | LangChain ChatOpenAI | AsyncOpenAI or LlamaStack Agents API | LlamaStack Responses API with retry logic and empty response handling |
+| Guardrails | Per-agent shields via LlamaStack safety API | Not applicable | Runtime policy injection | NeMo Guardrails service via HTTP `/v1/guardrail/checks` endpoint |
+| External tools | MCP servers via framework-specific paths | LangChain tools wrapping MCP | MCP-Direct or Llama Stack toolgroup | MCP servers via LlamaStack Responses API native MCP tool type |
+| Session management | Per-agent session in database | Stateless | In-memory dict | Per-session LangGraph thread with PostgreSQL checkpoint persistence |
+
+### Data Flow
+
+1. User submits a request via web UI, CLI, Slack, or Zammad ticketing system
+2. Request-manager normalizes the request into a `NormalizedRequest` and publishes a `com.self-service-agent.request.created` CloudEvent to the Knative broker
+3. Agent-service receives the CloudEvent, acquires a session lock, and creates a `ResponsesSessionManager`
+4. `ResponsesSessionManager` loads agent configurations from YAML files and creates or resumes a `ConversationSession` with PostgreSQL-backed checkpointing
+5. The routing agent's YAML state machine classifies user intent (e.g., `LAPTOP_REFRESH`) and sets `routing_decision` in LangGraph state
+6. `SessionManager._handle_routing()` detects the routing decision and creates a new `ConversationSession` for the specialist agent (e.g., `laptop-refresh`)
+7. The specialist agent's YAML state machine processes the request through states: waiting for input, LLM processing with tools (MCP + knowledge base), validation, and confirmation
+8. LlamaStack Responses API handles LLM inference, MCP tool execution (ServiceNow, Zammad), and knowledge base retrieval (file_search) in a single call
+9. Agent-service publishes the response as a `com.self-service-agent.agent.response-ready` CloudEvent
+10. Integration-dispatcher delivers the response to the appropriate channel (web, Slack, email, Zammad)
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| Web/CLI/Slack/Zammad | request-manager | REST/CloudEvents | Normalize and route incoming requests |
+| request-manager | Knative broker | HTTP (CloudEvent) | Publish `request.created` events |
+| Knative broker | agent-service | HTTP (CloudEvent) | Deliver request events for processing |
+| agent-service (ResponsesSessionManager) | LangGraph ConversationSession | Python method call | State machine execution with checkpointing |
+| agent-service (Agent) | LlamaStack server | HTTP (AsyncLlamaStackClient) | Responses API for inference + MCP tools + file_search |
+| agent-service (Agent) | NeMo Guardrails service | HTTP (httpx) | Input/output guardrail checks via `/v1/guardrail/checks` |
+| LlamaStack server | MCP servers (snow, zammad) | HTTP (streamable-http) | Tool execution (ServiceNow tickets, Zammad ticket management) |
+| LlamaStack server | vLLM | HTTP (OpenAI-compatible) | LLM inference |
+| LlamaStack server | pgvector | TCP | Knowledge base vector store queries |
+| agent-service | Knative broker | HTTP (CloudEvent) | Publish `agent.response-ready` events |
+| Knative broker | integration-dispatcher | HTTP (CloudEvent) | Deliver response events for channel delivery |
+| integration-dispatcher | Slack/Email/Zammad | HTTP/SMTP | Deliver agent responses to end user |
+
+### Key Integration Points
+
+#### YAML-Driven State Machine Configuration
+
+Each agent's conversation flow is defined in a YAML file with states, transitions, prompts, and response analysis rules. The `StateMachine` class reads this configuration and dynamically creates a LangGraph `StateGraph` with one node per YAML state.
+
+```yaml
+# agent-service/config/lg-prompts/routing.yaml (lines 1-43)
+settings:
+  initial_state: "greet_and_identify_need"
+  terminal_state: "end"
+  empty_response_retry_count: 5
+
+state_schema:
+  business_fields:
+    routing_decision:
+      type: "string"
+      default: null
+
+states:
+  greet_and_identify_need:
+    type: "llm_processor"
+    temperature: 0.3
+    prompt: |
+      You are a routing agent. Greet the user and ask what they need help with.
+    transitions:
+      success: "waiting_user_need"
+
+  waiting_user_need:
+    type: "waiting"
+    transitions:
+      user_input: "classify_user_intent"
+
+  classify_user_intent:
+    type: "llm_processor"
+    temperature: 0.1
+    prompt: |
+      The user said: "{last_user_message}"
+      Respond with exactly one of: LAPTOP_REFRESH, EMAIL_CHANGE, or OTHER
+    response_analysis:
+      conditions:
+        - name: "laptop_refresh"
+          trigger_phrases: ["LAPTOP_REFRESH"]
+          actions:
+            - type: "set_field"
+              field_name: "routing_decision"
+              value: "laptop-refresh"
+            - type: "transition"
+              target: "end"
+```
+
+#### Dynamic LangGraph Construction from YAML
+
+The `ConversationSession._create_graph()` method reads the YAML state definitions and creates a LangGraph `StateGraph` with a node for each state. Waiting states pause execution until a new `HumanMessage` arrives; other states invoke `StateMachine.process_state()` which dispatches to the appropriate state type handler.
+
+```python
+# agent-service/src/agent_service/langgraph/lg_flow_state_machine.py (lines 1238-1359)
+def _create_graph(self) -> Any:
+    workflow = StateGraph(self.state_machine.AgentState)
+    states_config = self.state_machine.config.get("states", {})
+
+    for state_name, state_config in states_config.items():
+        state_type = state_config.get("type", "")
+
+        def make_node_func(name, stype):
+            async def node_func(state):
+                state["current_state"] = name
+                if stype == "terminal":
+                    return state
+                if stype == "waiting":
+                    # Check for new HumanMessage to consume
+                    human_count = sum(1 for msg in state.get("messages", [])
+                                     if isinstance(msg, HumanMessage))
+                    if human_count > state.get("_last_processed_human_count", 0)
+                       and not state.get("_consumed_this_invoke", False):
+                        state["_last_processed_human_count"] = human_count
+                        state["_consumed_this_invoke"] = True
+                        return Command(goto=next_node, update=state)
+                    return state  # Pause execution
+                else:
+                    updated_state, next_node = await self.state_machine.process_state(
+                        state, self.agent, self.authoritative_user_id)
+                    return Command(goto=next_node, update=updated_state)
+            return node_func
+
+        workflow.add_node(state_name, make_node_func(state_name, state_type))
+```
+
+#### Multi-Agent Routing via State Field
+
+The routing agent sets a `routing_decision` field in the LangGraph state via YAML-configured response analysis. The `SessionManager._handle_routing()` method reads this field and creates a new `ConversationSession` for the target specialist agent.
+
+```python
+# agent-service/src/agent_service/session_manager.py (lines 949-970)
+# Check conversation state for routing decision from StateMachine
+if self.conversation_session:
+    current_state = await self.conversation_session.app.aget_state(
+        self.conversation_session.thread_config)
+    current_values = current_state.values
+    routing_decision = current_values.get("routing_decision")
+
+    if routing_decision and routing_decision in self.agents:
+        routed_agent = routing_decision
+```
+
+#### CloudEvent-Driven Microservice Communication
+
+Services communicate via CloudEvents published to a Knative broker. Event types are defined in `shared-models` and include `request.created`, `request.processing`, `agent.response-ready`, and `request.database-update`.
+
+```python
+# shared-models/src/shared_models/events.py (lines 35-46)
+class EventTypes:
+    REQUEST_CREATED = "com.self-service-agent.request.created"
+    REQUEST_PROCESSING = "com.self-service-agent.request.processing"
+    AGENT_RESPONSE_READY = "com.self-service-agent.agent.response-ready"
+    DATABASE_UPDATE_REQUESTED = "com.self-service-agent.request.database-update"
+
+# agent-service/src/agent_service/main.py (lines 378-403)
+builder = CloudEventBuilder("agent-service")
+event = builder.create_response_event(event_data, response.request_id,
+                                       response.agent_id, response.session_id)
+headers, body = to_structured(event)
+response_http = await self.http_client.post(self.config.broker_url,
+                                             headers=headers, content=body)
+```
+
+#### LlamaStack Responses API with MCP and Knowledge Base
+
+The specialist agent uses LlamaStack's Responses API which natively supports MCP tool servers and knowledge base file_search in a single API call. MCP servers are configured per-agent in YAML and resolved to tool definitions at runtime.
+
+```python
+# agent-service/src/agent_service/langgraph/responses_agent.py (lines 230-265)
+mcp_tool: Dict[str, Any] = {
+    "type": "mcp",
+    "server_label": server_name,
+    "server_url": server_uri,
+    "require_approval": server_config.get("require_approval", "never"),
+}
+# Add authorization headers
+if authoritative_user_id:
+    tool_headers["AUTHORITATIVE_USER_ID"] = authoritative_user_id
+# Add tracing headers
+if tracingIsActive():
+    inject(tool_headers)
+mcp_tool["headers"] = tool_headers
+tools_to_use.append(mcp_tool)
+
+# Knowledge base file_search tool
+knowledge_base_tool = {
+    "type": "file_search",
+    "vector_store_ids": vector_store_ids,
+}
+tools_to_use.append(knowledge_base_tool)
+```
+
+### Prompt / Chain Patterns
+
+Each state type has a distinct prompt handling pattern:
+
+- **llm_processor**: Sends the YAML-configured `prompt` (with `{placeholder}` template substitution for state data like `{last_user_message}`, `{conversation_history}`, `{authoritative_user_id}`) to the LlamaStack Responses API. Supports conditional prompts that select different prompt text based on state field values. Temperature and tool usage (`uses_tools`, `uses_mcp_tools`) are per-state YAML settings.
+- **intent_classifier**: Uses a low-temperature LLM call with a classification prompt, then matches the response against `intent_actions` entries to determine the next state and any data extraction actions.
+- **llm_validator**: Sends conversation history plus a validation prompt, then uses a second LLM call with a `success_validation_prompt` to determine if the response was valid or needs correction.
+- **waiting**: No prompt -- pauses the graph until a new `HumanMessage` arrives via `ConversationSession.send_message()`.
+
+The `response_analysis` section in YAML-configured states enables conditional transitions based on `trigger_phrases` found in LLM responses, with actions including `set_field`, `add_message`, `transition`, `extract_data` (regex), `check_correction`, and `increment_field`.
+
+### Gotchas
+
+- The `StateMachine` class dynamically creates a `TypedDict` subclass (`AgentState`) from the YAML `state_schema.business_fields` section (lines 57-93 of `lg_flow_state_machine.py`). Field types are mapped from YAML strings ("string", "list", "dict", "boolean") to Python types. Unrecognized types default to `Optional[str]`.
+- The `ConversationSession` uses a `__resume_dispatcher__` node as the LangGraph entry point (lines 1332-1343 of `lg_flow_state_machine.py`). This node checks `_last_waiting_node` in checkpointed state to resume from the correct waiting state after a process restart, rather than re-executing from the initial state.
+- The `_consumed_this_invoke` flag (line 1295-1303) prevents multiple waiting states from consuming the same `HumanMessage` within a single graph invocation. It is reset to `False` at the start of each `send_message()` call. Without this, a graph with two consecutive waiting states would skip the second one.
+- Agent configuration (model, system message, MCP servers, knowledge bases) is loaded from YAML files in `config/agents/` at startup. The LangGraph state machine config path is specified per-agent via `lg_state_machine_config` and can be overridden via environment variable `LG_PROMPT_<AGENT_NAME>` (lines 1130-1146).
+- The `create_response_with_retry` method (lines 343-429 of `responses_agent.py`) implements exponential backoff (1s, 2s, 4s, 8s, 16s max) for empty responses and errors, with a configurable retry count set via `empty_response_retry_count` in the YAML settings. The default retry count is 3.
+- Session locks (`acquire_agent_session_lock` / `release_agent_session_lock`) prevent concurrent CloudEvent processing for the same session. The lock timeout (`SESSION_LOCK_WAIT_TIMEOUT`, default 180s) must be >= the agent processing timeout to avoid dropping queued requests.
+- The `FaultInjectingAsyncLlamaStackClient` wrapper (lines 46-227 of `fault_injector.py`) randomly injects failures into LlamaStack API calls for resilience testing, but exempts `vector_stores` namespace calls to avoid breaking knowledge base operations.
+- The `_format_text` method (lines 224-310 of `lg_flow_state_machine.py`) supports dot notation in placeholders (e.g., `{laptop_eligibility.response}`) for nested state data access, and protects double braces (`{{` / `}}`) from being treated as placeholders, enabling JSON-like content in prompts.
+
+### Related Architectures
+
+- [guardrails-layer](guardrails-layer.md) -- NeMo Guardrails input/output shields are applied before/after agent response processing
+- [rag-pipeline](rag-pipeline.md) -- Knowledge bases are uploaded at startup and wired as file_search tools via LlamaStack Responses API
+- [mcp-tool-integration](mcp-tool-integration.md) -- MCP servers (ServiceNow, Zammad) are configured per-agent in YAML and invoked via LlamaStack Responses API native MCP tool type
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Multi-Runner Dispatch) | Approach B (Hierarchical LangGraph DAG) | Approach C (Dual-Provider Factory) |
-|----------|-----------------------------------|----------------------------------------|-----------------------------------|
-| Use case | Interactive chat with configurable AI agents | Automated event-driven data processing pipeline | Interactive copilot with deployment-mode flexibility |
-| User interaction | Real-time chat with SSE streaming | No user interaction during processing; results viewed after | Real-time chat with SSE streaming |
-| Agent framework | Pluggable (LlamaStack, LangGraph, CrewAI) | LangGraph only, with LangChain tool-calling agent | MCP-Direct (custom loop) or Llama Stack (delegated) |
-| Graph definition | Configurable via database (runner_type, graph_config) | Fixed Python code, compiled at module load | Not applicable (simple tool-calling loop, no graph) |
-| Framework selection | Runtime (per-agent, stored in database) | Hardcoded | Deployment-time (environment variable) |
-| Context retrieval | RAG via file_search tool (transparent to prompt) | RAG as explicit graph node + Loki log retrieval subgraph | Not applicable (tools query database directly) |
-| Processing model | One request at a time per chat session | Batch processing with log clustering for deduplication | One request at a time per chat session |
-| LLM routing | Not used (dispatch is by runner_type config) | LLM structured output drives conditional graph edges | Not applicable (single sequential loop) |
-| Tool security | Framework-managed tool registration | No explicit validation | Hard-coded allowlist + Pydantic schema validation (MCP-Direct only) |
-| Model format support | Standard OpenAI tool calling | Standard OpenAI tool calling | Auto-detects Nemotron TOOLCALL tags vs OpenAI format |
-| Policy management | Per-agent shields via LlamaStack safety API | Not applicable | Runtime policy injection into system prompt |
-| Complexity | Higher (multi-framework, SSE normalization) | Moderate (single framework, hierarchical subgraphs) | Moderate (two providers, shared interface) |
+| Criteria | Approach A (Multi-Runner Dispatch) | Approach B (Hierarchical LangGraph DAG) | Approach C (Dual-Provider Factory) | Approach D (YAML State Machine) |
+|----------|-----------------------------------|----------------------------------------|-----------------------------------|---------------------------------|
+| Use case | Interactive chat with configurable AI agents | Automated event-driven data processing pipeline | Interactive copilot with deployment-mode flexibility | Multi-agent IT service automation with structured conversational workflows |
+| User interaction | Real-time chat with SSE streaming | No user interaction during processing; results viewed after | Real-time chat with SSE streaming | Real-time chat via web, CLI, Slack, or ticketing system |
+| Agent framework | Pluggable (LlamaStack, LangGraph, CrewAI) | LangGraph only, with LangChain tool-calling agent | MCP-Direct (custom loop) or Llama Stack (delegated) | LangGraph (execution engine) + LlamaStack Responses API (inference + tools) |
+| Graph definition | Configurable via database (runner_type, graph_config) | Fixed Python code, compiled at module load | Not applicable (simple tool-calling loop, no graph) | YAML configuration files with typed states and declarative transitions |
+| Framework selection | Runtime (per-agent, stored in database) | Hardcoded | Deployment-time (environment variable) | Startup (per-agent YAML config files, overridable via env vars) |
+| Context retrieval | RAG via file_search tool (transparent to prompt) | RAG as explicit graph node + Loki log retrieval subgraph | Not applicable (tools query database directly) | RAG via file_search tool (transparent to prompt, knowledge bases in YAML) |
+| Processing model | One request at a time per chat session | Batch processing with log clustering for deduplication | One request at a time per chat session | One request at a time per session, with session lock preventing concurrent processing |
+| LLM routing | Not used (dispatch is by runner_type config) | LLM structured output drives conditional graph edges | Not applicable (single sequential loop) | LLM intent classification drives `routing_decision` field, session manager dispatches to specialist |
+| Tool security | Framework-managed tool registration | No explicit validation | Hard-coded allowlist + Pydantic schema validation (MCP-Direct only) | LlamaStack-managed MCP tool execution with per-request AUTHORITATIVE_USER_ID header |
+| Model format support | Standard OpenAI tool calling | Standard OpenAI tool calling | Auto-detects Nemotron TOOLCALL tags vs OpenAI format | Standard OpenAI tool calling via LlamaStack Responses API |
+| Policy management | Per-agent shields via LlamaStack safety API | Not applicable | Runtime policy injection into system prompt | NeMo Guardrails service with custom Colang flows and jailbreak detection NIM |
+| Multi-agent support | Not built in (single agent per session) | Not applicable | Not applicable | Built-in routing agent + specialist agent dispatch with session state handoff |
+| Communication model | Direct REST/SSE | Direct Python method calls | Direct REST/SSE | CloudEvent-driven microservices via Knative broker |
+| Complexity | Higher (multi-framework, SSE normalization) | Moderate (single framework, hierarchical subgraphs) | Moderate (two providers, shared interface) | Higher (multi-service, CloudEvents, YAML state machines, multi-agent routing) |

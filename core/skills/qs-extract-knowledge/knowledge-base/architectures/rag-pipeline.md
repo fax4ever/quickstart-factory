@@ -1,11 +1,11 @@
 ---
 name: rag-pipeline
 description: RAG patterns from LlamaStack vector stores to NVIDIA Blueprints to standalone FAISS microservices
-summary: "Implements retrieval-augmented generation across four approaches: (A) LlamaStack with external ingestion pipeline, pgvector vector stores, and transparent file_search retrieval via Responses API requiring no RAG-specific prompting; (B) NVIDIA RAG Blueprint with NV-Ingest document processing, GPU-accelerated Milvus GPU_CAGRA, vLLM on KServe with MIG-sliced GPUs, NIM-to-vLLM translation proxies for embedding/reranking, and optional query rewriting/reflection/decomposition with /no_think Nemotron directive; (C) standalone FAISS microservice with TEI nomic-embed-text-v1.5 (search_document:/search_query: prefixes), MinIO LATEST.json pointer file for init-job-to-service coordination, and results consumed as agent-internal context enrichment from static PDFs; (D) frontend-only Streamlit using LlamaStack rag_tool APIs with manual CONTEXT: prompt injection, direct pgvector access via asyncpg, all-MiniLM-L6-v2 at 384 dimensions, and triple-fallback vector DB registration. Choose A for custom FastAPI backends needing LlamaStack-integrated transparent retrieval; B for no-custom-code GPU-heavy deployments with pre-built NVIDIA RAG server and built-in multimodal/reranking capabilities; C for agent-pipeline context enrichment from curated PDF knowledge bases with minimal GPU requirements (TEI only); D for minimal-complexity frontend-only demos where RAG is a supporting feature alongside other capabilities like guardrails. Critical config: A requires update_vector_store_ids() to sync dual metadata (PostgreSQL + LlamaStack); B needs cross-chart ConfigMap (ingestor-server-prompt) installed before rag-server, anyuid SCC for three service accounts, and NV-Ingest MESSAGE_CLIENT_HOST hardcoded to ingest-redis-master; C requires TEI connection pooling and FAISS index files on disk (faiss.read_index needs file paths not buffers); D hardcodes embedding dimension 384 and uses direct pgvector queries with vs_{id.replace('-','_')} table naming. Common gotchas: A's dual metadata can desync if update_vector_store_ids fails and RAG only works with LlamaStack runner (not LangGraph/CrewAI); B depends on NVIDIA cloud NIMs for OCR/table/graphic detection (external network dependency) and embedding proxy strips input_type losing query-vs-passage distinction; C's FAISS index must fit entirely in RAM and RAGHandler singleton silently returns empty strings if RAG is disabled; D bypasses LlamaStack for document management via direct pgvector access that breaks if LlamaStack changes its internal schema."
+summary: "Implements retrieval-augmented generation across five approaches: (A) LlamaStack with external ingestion pipeline, pgvector vector stores, and transparent file_search retrieval via Responses API requiring no RAG-specific prompting; (B) NVIDIA RAG Blueprint with NV-Ingest document processing, GPU-accelerated Milvus GPU_CAGRA, vLLM on KServe with MIG-sliced GPUs, NIM-to-vLLM translation proxies for embedding/reranking, and optional query rewriting/reflection/decomposition with /no_think Nemotron directive; (C) standalone FAISS microservice with TEI nomic-embed-text-v1.5 (search_document:/search_query: prefixes), MinIO LATEST.json pointer file for init-job-to-service coordination, and results consumed as agent-internal context enrichment from static PDFs; (D) frontend-only Streamlit using LlamaStack rag_tool APIs with manual CONTEXT: prompt injection, direct pgvector access via asyncpg, all-MiniLM-L6-v2 at 384 dimensions, and triple-fallback vector DB registration; (E) startup-time ingestion of curated text files via LlamaStack OpenAI-compatible files.create/vector_stores.files.create with per-agent knowledge_bases YAML config, explicit extra_body={\"provider_id\": \"pgvector\"}, and transparent file_search retrieval identical to Approach A. Choose A for custom FastAPI backends needing LlamaStack-integrated transparent retrieval; B for no-custom-code GPU-heavy deployments with pre-built NVIDIA RAG server and built-in multimodal/reranking capabilities; C for agent-pipeline context enrichment from curated PDF knowledge bases with minimal GPU requirements (TEI only); D for minimal-complexity frontend-only demos where RAG is a supporting feature alongside other capabilities like guardrails; E for curated text knowledge bases bundled with the application or ConfigMap-mounted, requiring automatic startup ingestion and per-agent knowledge base assignment without user-facing document management. Critical config: A requires update_vector_store_ids() to sync dual metadata (PostgreSQL + LlamaStack); B needs cross-chart ConfigMap (ingestor-server-prompt) installed before rag-server, anyuid SCC for three service accounts, and NV-Ingest MESSAGE_CLIENT_HOST hardcoded to ingest-redis-master; C requires TEI connection pooling and FAISS index files on disk (faiss.read_index needs file paths not buffers); D hardcodes embedding dimension 384 and uses direct pgvector queries with vs_{id.replace('-','_')} table naming; E requires extra_body={\"provider_id\": \"pgvector\"} for LlamaStack 0.3.3+ vector store creation and creates new UUID-suffixed vector stores each restart. Common gotchas: A's dual metadata can desync if update_vector_store_ids fails and RAG only works with LlamaStack runner (not LangGraph/CrewAI); B depends on NVIDIA cloud NIMs for OCR/table/graphic detection (external network dependency) and embedding proxy strips input_type losing query-vs-passage distinction; C's FAISS index must fit entirely in RAM and RAGHandler singleton silently returns empty strings if RAG is disabled; D bypasses LlamaStack for document management via direct pgvector access that breaks if LlamaStack changes its internal schema; E accumulates stale vector stores across restarts (_get_vector_store_id selects latest by created_at) and only supports .txt files (no PDF/DOCX)."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, llamastack, python, vllm, nvidia-rag-blueprint, langchain, langgraph, gradio, streamlit]
+  tech_stack: [fastapi, llamastack, python, vllm, nvidia-rag-blueprint, langchain, langgraph, gradio, streamlit, cloudevents]
   ai_pattern: [rag, embeddings, vector-search, reranking, multimodal]
   platform: [llamastack, rhoai, openshift, kubernetes, kserve, vllm, tei]
   data_layer: [pgvector, milvus, faiss, minio]
@@ -30,6 +30,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/f5-api-security"
     notes: "Frontend-only Streamlit RAG using OpenAI-compatible vector_stores.search API (LlamaStack 0.6.1+) for retrieval, files.create/vector_stores.files.create for document ingestion, manual prompt context injection, direct pgvector access, and optional F5 XC endpoint routing for inference"
     approach: "D"
+  - quickstart: "it-self-service-agent"
+    repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
+    notes: "Startup-time knowledge base ingestion via LlamaStack OpenAI-compatible vector_stores API with pgvector provider, file_search tool via Responses API, and per-agent knowledge_bases YAML config"
+    approach: "E"
 ---
 
 # RAG Pipeline
@@ -763,19 +767,156 @@ The same RAG context and prompt are sent to both the F5 Guardrails panel and the
 
 ---
 
+## Approach E: Startup-Time Knowledge Base Ingestion via LlamaStack OpenAI-Compatible API (from it-self-service-agent)
+
+### When to Use
+
+Use this approach when deploying a curated set of knowledge base documents that are bundled with the application (or mounted via ConfigMap) and ingested into LlamaStack vector stores at service startup. This approach suits scenarios where: the knowledge base is a fixed set of text files representing organizational policies or product catalogs, documents do not change frequently (updates require service restart or ConfigMap redeployment), no user-facing document management UI is needed, and retrieval should be transparent to the agent via LlamaStack's file_search tool in the Responses API.
+
+### Differences from Approaches A, B, C, and D
+
+| Aspect | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach C (FAISS Microservice) | Approach D (Frontend-Driven) | Approach E (Startup Ingestion) |
+|--------|------------------------|-----------------------------------|-------------------------------|------------------------------|-------------------------------|
+| RAG orchestration | Custom FastAPI backend + external pipeline | Pre-built NVIDIA RAG server | Standalone RAG microservice | Streamlit frontend | Backend startup code (KnowledgeBaseManager) |
+| Vector database | pgvector via LlamaStack vector stores | GPU-accelerated Milvus | FAISS in-memory | pgvector via LlamaStack vector stores | pgvector via LlamaStack vector stores |
+| Document ingestion | External pipeline via LlamaStack `/ingestion_pipeline/` API | NV-Ingest with cloud NIMs | Custom PDF parser + init job | `rag_tool.insert` from Streamlit UI | Direct `files.create` + `vector_stores.files.create` at startup |
+| Ingestion trigger | API call (user-initiated) | API call (user-initiated) | Init job (deploy-time) | UI upload (user-initiated) | Service startup (automatic) |
+| Context injection | Transparent via file_search tool | `{context}` placeholder in rag_template | HTTP API results as markdown | Manual `CONTEXT:` prepend in frontend | Transparent via file_search tool |
+| Document management | FastAPI CRUD API + PostgreSQL metadata | Frontend + NV-Ingest APIs | Init job (static) | Streamlit UI + direct pgvector | None (files bundled or ConfigMap-mounted) |
+| Knowledge base source | User-uploaded documents | User-uploaded documents | Curated PDFs bundled with deployment | User-uploaded via Streamlit UI | Curated text files in config directory or ConfigMap |
+| Dual metadata tracking | Yes (PostgreSQL + LlamaStack) | No (Milvus only) | No (MinIO + FAISS) | Yes (LlamaStack + direct pgvector) | No (LlamaStack only) |
+| Vector store provider | Implicit (LlamaStack default) | Milvus | FAISS | Implicit (LlamaStack default) | Explicit (`extra_body={"provider_id": "pgvector"}`) |
+
+### Data Flow
+
+**Knowledge Base Ingestion (at service startup):**
+
+1. Agent-service starts and `KnowledgeBaseManager.register_knowledge_bases()` scans the `config/knowledge_bases/` directory (and optional extra ConfigMap mount path)
+2. For each subdirectory (e.g., `laptop-refresh/`), it calls `register_knowledge_base()`
+3. A new vector store is created with a unique name via `self._llama_client.vector_stores.create(name=vector_store_name, extra_body={"provider_id": "pgvector"})`
+4. All `.txt` files in the subdirectory are uploaded via `self._llama_client.files.create(file=f, purpose="assistants")`
+5. Each uploaded file is attached to the vector store via `self._llama_client.vector_stores.files.create(vector_store_id=vector_store_id, file_id=file_id)`
+6. LlamaStack handles chunking, embedding, and indexing into the pgvector-backed vector store
+
+**RAG Retrieval (at query time):**
+
+1. Agent configuration YAML specifies `knowledge_bases: ["laptop-refresh"]`
+2. During `_get_mcp_tools_to_use()`, the agent calls `_get_vector_store_id(kb_name)` to find the matching vector store
+3. `_get_vector_store_id()` lists all vector stores via `self.async_llama_client.vector_stores.list()` and finds the latest one matching the knowledge base name pattern
+4. A `file_search` tool definition is added to the tools array: `{"type": "file_search", "vector_store_ids": [vector_store_id]}`
+5. The LlamaStack Responses API transparently handles query embedding, vector search, and context injection when processing the agent's request
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| KnowledgeBaseManager | LlamaStack (sync client) | HTTP (OpenAI-compatible) | Vector store creation, file upload, file attachment |
+| Agent (responses_agent.py) | LlamaStack (async client) | HTTP (AsyncLlamaStackClient) | Vector store listing for ID resolution |
+| Agent (responses_agent.py) | LlamaStack Responses API | HTTP (AsyncLlamaStackClient) | file_search tool execution during inference |
+| LlamaStack server | pgvector | TCP | Vector store persistence, embedding storage, similarity search |
+| Knowledge base files | Agent-service filesystem | Filesystem / ConfigMap mount | Source documents (`.txt` files) |
+
+### Key Integration Points
+
+#### KnowledgeBaseManager Startup Ingestion
+
+The `KnowledgeBaseManager` scans directories at startup and registers each subdirectory as a separate knowledge base via LlamaStack's OpenAI-compatible vector store API.
+
+```python
+# agent-service/src/agent_service/knowledge/kb_manager.py (lines 73-121)
+def register_knowledge_base(self, kb_directory: Path) -> Optional[str]:
+    kb_name = kb_directory.name
+    # Create vector store with explicit pgvector provider
+    vector_store_name = f"{kb_name}-kb-{uuid.uuid4().hex[:8]}"
+    vector_store = self._llama_client.vector_stores.create(
+        name=vector_store_name, extra_body={"provider_id": "pgvector"}
+    )
+    vector_store_id = vector_store.id
+
+    # Upload files to vector store
+    uploaded_files = self._upload_files_to_vector_store(kb_directory, vector_store_id)
+    return str(vector_store_id)
+```
+
+#### File Upload via OpenAI-Compatible API
+
+Knowledge base text files are uploaded using the OpenAI-compatible files API and then attached to the vector store.
+
+```python
+# agent-service/src/agent_service/knowledge/kb_manager.py (lines 128-183)
+def _upload_files_to_vector_store(self, directory: Path, vector_store_id: str) -> int:
+    txt_files = list(directory.rglob("*.txt"))
+    for file_path in txt_files:
+        with open(file_path, "rb") as f:
+            file_create_response = self._llama_client.files.create(
+                file=f, purpose="assistants"
+            )
+        file_id = file_create_response.id
+        self._llama_client.vector_stores.files.create(
+            vector_store_id=vector_store_id, file_id=file_id
+        )
+        uploaded_count += 1
+    return uploaded_count
+```
+
+#### Vector Store ID Resolution by Name Pattern
+
+At query time, the agent resolves the knowledge base name to a vector store ID by listing all vector stores and finding the latest one matching the name pattern.
+
+```python
+# agent-service/src/agent_service/langgraph/responses_agent.py (lines 118-168)
+async def _get_vector_store_id(self, kb_name: str) -> Optional[str]:
+    vector_stores = await self.async_llama_client.vector_stores.list()
+    matching_stores = []
+    for vs in vector_stores.data:
+        if vs.name and kb_name in vs.name:
+            matching_stores.append(vs)
+    if matching_stores:
+        latest_store = max(matching_stores, key=lambda x: x.created_at)
+        return str(latest_store.id) if latest_store.id is not None else None
+    return None
+```
+
+#### Per-Agent Knowledge Base Configuration
+
+Each agent YAML configuration lists the knowledge bases it should use. The agent resolves these names to vector store IDs at runtime.
+
+```yaml
+# agent-service/config/agents/laptop-refresh-agent.yaml (lines 15-16)
+knowledge_bases: ["laptop-refresh"]
+```
+
+### Prompt / Chain Patterns
+
+RAG is transparent to the prompt layer, identical to Approach A. The agent's system prompt and state machine prompts are passed through the LlamaStack Responses API, and when `file_search` tools are attached, LlamaStack automatically embeds the user query, retrieves relevant chunks from the vector store, and injects them into the LLM context.
+
+The YAML state machine prompt explicitly instructs the LLM to use the knowledge base: "CRITICAL Query the laptop-refresh knowledge base to find the laptop refresh interval policy. CRITICAL You MUST use a knowledge base query tool to search for 'standard laptop refresh interval'" (lg-prompt-big.yaml, line 51). This ensures the LLM triggers the file_search tool rather than relying on its training data.
+
+### Gotchas
+
+- The `KnowledgeBaseManager` uses the synchronous LlamaStack client (`create_llamastack_client()`) for startup ingestion, while the `Agent` class uses the asynchronous client (`create_async_llamastack_client()`) for runtime operations. This is because startup runs before the async event loop is active.
+- Each service restart creates a new vector store with a unique name (`{kb_name}-kb-{uuid_hex[:8]}`), meaning old vector stores accumulate in LlamaStack/pgvector. The `_get_vector_store_id()` method (line 134 of responses_agent.py) selects the latest store by `created_at` timestamp, so stale stores are ignored at query time but not cleaned up.
+- The `extra_body={"provider_id": "pgvector"}` parameter (line 91 of kb_manager.py) is required in LlamaStack 0.3.3+ to associate the vector store with the pgvector provider. Without this, the vector store creation may fail or use an unexpected default provider.
+- Only `.txt` files are supported for knowledge base ingestion (line 139 of kb_manager.py: `directory.rglob("*.txt")`). PDF, DOCX, and other formats are not handled. This is a deliberate simplification -- the knowledge base consists of curated policy documents in plain text format.
+- The `register_knowledge_bases()` method accepts an optional `extra_path` parameter (line 26 of kb_manager.py) for scanning additional directories beyond the default `config/knowledge_bases/`. This is used for ConfigMap-mounted knowledge bases in Kubernetes deployments, enabling knowledge base updates without rebuilding the container image.
+- The `_get_vector_store_id()` method returns `None` (not a fallback name) when no matching vector store is found (lines 153-168 of responses_agent.py). The `_get_mcp_tools_to_use()` method skips knowledge bases that return `None`, logging a warning but not failing the request. This means a missing or failed vector store results in the agent operating without RAG rather than crashing.
+- Knowledge base files for the laptop-refresh agent include region-specific laptop catalogs (`APAC_laptop_offerings.txt`, `EMEA_laptop_offerings.txt`, `LATAM_laptop_offerings.txt`, `NA_laptop_offerings.txt`) and a `refresh_policy.txt`. All five files are uploaded to the same vector store, and the LLM uses the employee's location (from the MCP tool response) to query the correct region's offerings.
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach C (FAISS Microservice) | Approach D (Frontend-Driven) |
-|----------|------------------------|-----------------------------------|-------------------------------|------------------------------|
-| Custom backend logic needed | Yes -- build your own RAG pipeline with FastAPI | No -- use pre-built NVIDIA RAG server | Yes -- standalone RAG service + init pipeline | No -- frontend handles all RAG orchestration |
-| RAG retrieval integration | Transparent via file_search tool (LlamaStack handles internally) | Explicit via prompt template context injection | HTTP API consumed by agent graph node | Manual context prepend in frontend code |
-| Vector database | pgvector (integrated with LlamaStack) | GPU-accelerated Milvus (GPU_CAGRA index) | FAISS in-memory (loaded from MinIO) | pgvector (integrated with LlamaStack) |
-| Document processing | External ingestion pipeline via HTTP API | NV-Ingest with cloud NIMs (OCR, table/graphic detection) | Custom PDF parser (PyPDF-based) | LlamaStack rag_tool.insert (base64 data URL) |
-| Model serving | LlamaStack server | vLLM via KServe with MIG-sliced GPUs | TEI for embeddings, separate LLM for inference | LlamaStack server + vLLM via KServe |
-| Multimodal support | Not built in | Built-in VLM inference for image captioning | Not built in | Not built in |
-| GPU requirements | Lower (LlamaStack manages inference) | Higher (4-5 GPUs or MIG-partitioned) | Minimal (TEI for embeddings, no GPU for FAISS) | Lower (LlamaStack manages inference) |
-| External dependencies | Minimal (self-contained LlamaStack) | NVIDIA NGC cloud NIMs | MinIO for index storage, TEI for embeddings | Minimal (LlamaStack + pgvector) |
-| Retrieval consumer | User-facing agent response | User-facing frontend | Internal agent pipeline (context enrichment) | User-facing frontend (dual-panel comparison) |
-| Index lifecycle | Managed by LlamaStack API | Managed by Milvus | Init job + MinIO pointer file + polling | Managed by LlamaStack API (via frontend) |
-| Knowledge base type | Dynamic (user-uploaded documents) | Dynamic (user-uploaded documents) | Static (curated PDFs bundled with deployment) | Dynamic (user-uploaded via Streamlit UI) |
-| Document management | FastAPI CRUD API + PostgreSQL metadata | Frontend + NV-Ingest APIs | Init job (static) | Streamlit UI + direct pgvector access |
+| Criteria | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach C (FAISS Microservice) | Approach D (Frontend-Driven) | Approach E (Startup Ingestion) |
+|----------|------------------------|-----------------------------------|-------------------------------|------------------------------|-------------------------------|
+| Custom backend logic needed | Yes -- build your own RAG pipeline with FastAPI | No -- use pre-built NVIDIA RAG server | Yes -- standalone RAG service + init pipeline | No -- frontend handles all RAG orchestration | Minimal -- startup ingestion code in KnowledgeBaseManager |
+| RAG retrieval integration | Transparent via file_search tool (LlamaStack handles internally) | Explicit via prompt template context injection | HTTP API consumed by agent graph node | Manual context prepend in frontend code | Transparent via file_search tool (LlamaStack handles internally) |
+| Vector database | pgvector (integrated with LlamaStack) | GPU-accelerated Milvus (GPU_CAGRA index) | FAISS in-memory (loaded from MinIO) | pgvector (integrated with LlamaStack) | pgvector (integrated with LlamaStack, explicit provider_id) |
+| Document processing | External ingestion pipeline via HTTP API | NV-Ingest with cloud NIMs (OCR, table/graphic detection) | Custom PDF parser (PyPDF-based) | LlamaStack rag_tool.insert (base64 data URL) | Direct files.create + vector_stores.files.create (text files only) |
+| Model serving | LlamaStack server | vLLM via KServe with MIG-sliced GPUs | TEI for embeddings, separate LLM for inference | LlamaStack server + vLLM via KServe | LlamaStack server + vLLM via KServe |
+| Multimodal support | Not built in | Built-in VLM inference for image captioning | Not built in | Not built in | Not built in |
+| GPU requirements | Lower (LlamaStack manages inference) | Higher (4-5 GPUs or MIG-partitioned) | Minimal (TEI for embeddings, no GPU for FAISS) | Lower (LlamaStack manages inference) | Lower (LlamaStack manages inference) |
+| External dependencies | Minimal (self-contained LlamaStack) | NVIDIA NGC cloud NIMs | MinIO for index storage, TEI for embeddings | Minimal (LlamaStack + pgvector) | Minimal (LlamaStack + pgvector) |
+| Retrieval consumer | User-facing agent response | User-facing frontend | Internal agent pipeline (context enrichment) | User-facing frontend (dual-panel comparison) | Agent state machine via LlamaStack Responses API |
+| Index lifecycle | Managed by LlamaStack API (with dual metadata) | Managed by Milvus | Init job + MinIO pointer file + polling | Managed by LlamaStack API (via frontend) | Created at startup, accumulates across restarts |
+| Knowledge base type | Dynamic (user-uploaded documents) | Dynamic (user-uploaded documents) | Static (curated PDFs bundled with deployment) | Dynamic (user-uploaded via Streamlit UI) | Static (curated text files bundled or ConfigMap-mounted) |
+| Document management | FastAPI CRUD API + PostgreSQL metadata | Frontend + NV-Ingest APIs | Init job (static) | Streamlit UI + direct pgvector access | None (files deployed with application or via ConfigMap) |

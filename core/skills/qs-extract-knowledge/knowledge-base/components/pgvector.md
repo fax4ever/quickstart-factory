@@ -1,12 +1,12 @@
 ---
 name: pgvector
 description: "PostgreSQL with pgvector extension for relational data and vector search in AI Quickstarts on RHOAI"
-summary: "pgvector serves as combined relational store (SQLAlchemy/Alembic with asyncpg driver, UUID primary keys via sqlalchemy.dialects.postgresql) and LlamaStack vector_io provider (provider_id: \"pgvector\", embedding_model: \"all-MiniLM-L6-v2\") or standalone data-governance database for RHOAI quickstarts needing structured application state, RAG vector search, or curated data views with MCP read-only access. Use Approach A (ai-virtual-agent, f5-ai-guardrails, f5-api-security) when a single service needs vector search plus relational data with LlamaStack managing vector operations (extraDatabases vectordb: false, DATABASE_URL assembled from pgSecret keys); Approach B (ansible-log-analysis) when multiple services (backend, annotation-interface, phoenix) share one PostgreSQL as relational store with pre-built namespace-qualified URI secret, SQLModel.metadata.create_all instead of Alembic, psycopg2 sync driver swap for non-async consumers, ConfigMap init CREATE EXTENSION VECTOR, and embeddings stored in MinIO; Approach C (data-governance-co-pilot) when deploying standalone Helm chart with quay.io/rh-aiservices-bu Red Hat image, Helm post-install Job seeding ~45MB CSV via OpenShift BuildConfig (bypassing ConfigMap 3MB limit), mcp_readonly SELECT-only user for MCP defense-in-depth, CERTIFIED/DEPRECATED governance views, and raw psycopg2 with no ORM. Deployed as ai-architecture-charts subchart (v0.5.5 for A, v0.1.0 bundled for B) or standalone chart (C); A's Alembic rewrites postgresql+asyncpg:// to synchronous postgresql:// with expire_on_commit=False; B's secret embeds Release.Namespace in URI and pg_isready init containers gate startup; C's data loader connects via pod DNS (pgvector-0) assuming single replica. Common gotchas: Settings.DATABASE_URL defaults to sqlite+aiosqlite:///:memory: causing silent SQLite fallback; local dev postgres:15 lacks pgvector extension (need pgvector/pgvector:pg15 or pg17); B's chained .replace() URL normalization fragile if URI already contains \"postgresql+asyncpg://\"; A's deployment template fails if extraDatabases empty or reordered; C's readonlyPassword appears plaintext in rendered Job manifest, mcp_readonly grants don't auto-apply to future tables, and values.yaml placeholder strings cause broken deployments if --set flags omitted."
+summary: "pgvector serves as combined relational store (SQLAlchemy/Alembic with asyncpg, SQLModel, or raw psycopg2) and LlamaStack vector_io provider (provider_id: \"pgvector\", embedding_model: \"all-MiniLM-L6-v2\") for RHOAI quickstarts needing structured application state, RAG vector search, distributed session serialization via advisory locks, or curated data views with MCP read-only access. Use Approach A (ai-virtual-agent, f5-ai-guardrails, f5-api-security) when a single service needs vector search plus relational data with LlamaStack managing vector operations (extraDatabases vectordb: false, DATABASE_URL assembled from pgSecret keys); Approach B (ansible-log-analysis) when multiple services (backend, annotation-interface, phoenix) share one PostgreSQL as relational store with pre-built namespace-qualified URI secret, SQLModel.metadata.create_all instead of Alembic, psycopg2 sync driver swap for non-async consumers, ConfigMap init CREATE EXTENSION VECTOR, and embeddings stored in MinIO; Approach C (data-governance-co-pilot) when deploying standalone Helm chart with quay.io/rh-aiservices-bu Red Hat image, Helm post-install Job seeding ~45MB CSV via OpenShift BuildConfig (bypassing ConfigMap 3MB limit), mcp_readonly SELECT-only user for MCP defense-in-depth, CERTIFIED/DEPRECATED governance views, and raw psycopg2 with no ORM; Approach D (it-self-service-agent) when 6+ services need dual connection pools (async SQLAlchemy + sync/async psycopg_pool for LangGraph PostgresSaver), pg_try_advisory_lock polling for per-session serialization (avoiding PG BUG #17686), Alembic migration Kubernetes Job with service wait_for_migration() gating, LlamaStack multi-store backends (metadataStore, kv_postgres, sql_postgres across rag_blueprint/llama_agents/llama_responses databases), max_connections=200, and Helm _env-helpers.tpl template helpers for env var generation. Deployed as ai-architecture-charts subchart (v0.5.5 for A, v0.1.0 bundled for B, v0.1.0 for D) or standalone chart (C); A's Alembic rewrites postgresql+asyncpg:// to synchronous postgresql:// with expire_on_commit=False; B's secret embeds Release.Namespace in URI and pg_isready init containers gate startup; C's data loader connects via pod DNS (pgvector-0) assuming single replica; D's DatabaseManager creates dual pools with configurable DB_POOL_SIZE/DB_MAX_OVERFLOW and uses database-level clock (SELECT now()) for cross-pod ordering, with provider_id: \"pgvector\" required in extra_body for llama-stack 0.3.3+. Common gotchas: Settings.DATABASE_URL defaults to sqlite+aiosqlite:///:memory: causing silent SQLite fallback; local dev postgres:15 lacks pgvector extension (need pgvector/pgvector:pg15 or pg17); B's chained .replace() URL normalization fragile if URI already contains \"postgresql+asyncpg://\"; A's deployment template fails if extraDatabases empty or reordered; C's readonlyPassword appears plaintext in rendered Job manifest, mcp_readonly grants don't auto-apply to future tables, and values.yaml placeholder strings cause broken deployments if --set flags omitted; D's dual statement timeout required so advisory lock polling queries aren't cancelled, and connection pool budget across 6+ services approaches max_connections=200 under load."
 metadata:
   type: component
 tags:
-  tech_stack: [postgresql, fastapi, sqlalchemy, sqlmodel, alembic, asyncpg, psycopg2, gradio, pandas, streamlit]
-  ai_pattern: [vector-search, rag, embeddings, data-pipeline, guardrails]
+  tech_stack: [postgresql, fastapi, sqlalchemy, sqlmodel, alembic, asyncpg, psycopg2, psycopg, gradio, pandas, streamlit, langgraph]
+  ai_pattern: [vector-search, rag, embeddings, data-pipeline, guardrails, agents]
   platform: [openshift, rhoai, kserve]
   data_layer: [pgvector]
 source_examples:
@@ -30,6 +30,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/f5-api-security"
     notes: "pgvector v0.1.0 subchart as LlamaStack vector_io backend for RAG; Streamlit frontend queries pgvector directly via asyncpg for document listing/deletion; PGVECTOR_* env vars hardcoded in parent chart values"
     approach: "A"
+  - quickstart: "it-self-service-agent"
+    repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
+    notes: "pgvector v0.1.0 subchart shared by 6+ services; dual async/sync connection pools; PostgreSQL advisory locks for distributed session serialization; Helm template helpers for env var generation; LlamaStack multi-store backends (metadata, kv, sql); Alembic migration Job"
+    approach: "D"
 ---
 
 # pgvector
@@ -581,21 +585,251 @@ CMD ["python3", "/scripts/load_data.py"]
 
 ---
 
+## Approach D: Multi-Service Hub with Advisory Locks and Dual Connection Pools (from it-self-service-agent)
+
+### When to Use
+
+When pgvector serves as the central database for a multi-service agentic architecture (6+ consumers) that requires distributed session serialization via PostgreSQL advisory locks, dual connection pools (async SQLAlchemy for application queries and sync/async psycopg pools for LangGraph checkpointing), and LlamaStack multi-store backends (metadata, kv, sql) all pointing at the same PostgreSQL instance. Use this approach when multiple replicas of each service must coordinate request processing through database-level locking and pod heartbeats.
+
+### Differences from Approach A
+
+- **Multi-service consumer pattern:** Six services (agent-service, request-manager, integration-dispatcher, db-migration-job, langfuse, langfuse-worker) all consume the same pgvector secret, versus Approach A's single backend service.
+- **Helm template helpers for env vars:** Database env vars are generated through reusable `_env-helpers.tpl` named templates (`self-service-agent.dbEnvVars`, `self-service-agent.dbEnvVarsNoStatementTimeout`) rather than inline env definitions in each deployment template.
+- **Dual connection pools:** The `DatabaseManager` maintains both an async SQLAlchemy pool (for application queries) and separate sync/async `psycopg_pool` instances (for LangGraph's `PostgresSaver`/`AsyncPostgresSaver`), all configurable via Helm values.
+- **PostgreSQL advisory locks:** Uses `pg_try_advisory_lock`/`pg_advisory_unlock` for per-session request serialization across replicas, with polling-based acquisition to avoid PG BUG #17686.
+- **Alembic migrations via Kubernetes Job:** Schema migrations run as a Kubernetes Job (`db-migration-job`) rather than at service startup, with services waiting for the expected migration version before accepting traffic.
+- **LlamaStack multi-store backends:** PostgreSQL serves as metadataStore, vectorIOKvstore (kv_postgres), and sql storage (sql_postgres) for llama-stack, using separate databases (`rag_blueprint`, `llama_agents`, `llama_responses`).
+- **max_connections=200 tuning:** PostgreSQL args explicitly set `max_connections=200` with unified pool sizes across test/prod environments.
+- **Database-level clock:** `get_db_utc_now()` uses `SELECT now()` from PostgreSQL rather than pod-local `datetime.now()` to avoid clock skew when ordering requests across pods.
+
+### Helm Subchart Dependency
+
+The pgvector database is declared as a subchart dependency at v0.1.0 from the shared ai-architecture-charts repository.
+
+```yaml
+# helm/Chart.yaml
+dependencies:
+  - name: pgvector
+    version: 0.1.0
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+```
+
+### Extra Databases and max_connections Configuration
+
+The pgvector subchart creates additional databases for LlamaStack backends, with `vectordb: false` since vector operations are managed by LlamaStack's own provider. PostgreSQL is tuned with `max_connections=200`.
+
+```yaml
+# helm/values.yaml
+pgvector:
+  args:
+    - "-c"
+    - "max_connections=200"
+  extraDatabases:
+    - name: llama_agents
+      vectordb: false
+    - name: llama_responses
+      vectordb: false
+```
+
+### Helm Template Helpers for Database Env Vars
+
+A reusable named template generates database env vars from the pgvector secret, including connection pool configuration. A variant (`dbEnvVarsNoStatementTimeout`) exists for services like request-manager that override `DB_STATEMENT_TIMEOUT` for lock wait operations.
+
+```yaml
+# helm/templates/_env-helpers.tpl
+{{- define "self-service-agent.dbEnvVars" -}}
+- name: POSTGRES_HOST
+  valueFrom:
+    secretKeyRef:
+      name: pgvector
+      key: host
+# ... POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD ...
+- name: DB_POOL_SIZE
+  value: {{ .Values.requestManagement.database.poolSize | default "8" | quote }}
+- name: DB_MAX_OVERFLOW
+  value: {{ .Values.requestManagement.database.maxOverflow | default "8" | quote }}
+# ... DB_POOL_TIMEOUT, DB_POOL_RECYCLE, DB_STATEMENT_TIMEOUT ...
+- name: DB_SYNC_POOL_MIN_SIZE
+  value: {{ .Values.requestManagement.database.syncPoolMinSize | default "1" | quote }}
+{{- end }}
+```
+
+### Dual Connection Pool Architecture
+
+The `DatabaseManager` creates an async SQLAlchemy engine for application queries and separate sync/async `psycopg_pool` instances for LangGraph checkpointing. Pool sizes are configurable via Helm values and environment variables.
+
+```python
+# shared-models/src/shared_models/database.py
+class DatabaseManager:
+    def __init__(self) -> None:
+        self.engine = create_async_engine(
+            self.config.connection_string,
+            pool_pre_ping=True,
+            pool_size=self.config.pool_size,
+            max_overflow=self.config.max_overflow,
+            connect_args={
+                "server_settings": {
+                    "statement_timeout": str(self.config.statement_timeout_ms),
+                    "idle_in_transaction_session_timeout": str(
+                        self.config.idle_transaction_timeout_ms
+                    ),
+                },
+            },
+        )
+        self._sync_pool: Optional[psycopg_pool.ConnectionPool] = None
+        self._async_pool: Optional[psycopg_pool.AsyncConnectionPool] = None
+```
+
+### PostgreSQL Advisory Locks for Session Serialization
+
+Per-session advisory locks ensure one in-flight request per session across all replicas. The implementation uses `pg_try_advisory_lock` with polling (not `pg_advisory_lock` with `lock_timeout`) to avoid PG BUG #17686 where lock_timeout can race with lock grants.
+
+```python
+# request-manager/src/request_manager/session_lock.py
+async def acquire_session_lock(
+    session_id: str, db: AsyncSession,
+    timeout_seconds: float = DEFAULT_LOCK_TIMEOUT,
+) -> bool:
+    lock_key = session_id_to_lock_key(session_id)
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        result = await db.execute(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": lock_key},
+        )
+        row = result.fetchone()
+        if row and row[0]:
+            return True
+        await asyncio.sleep(SESSION_LOCK_POLL_INTERVAL_SECONDS)
+    return False
+```
+
+### Alembic Migration Job
+
+Database schema is managed through Alembic migrations run as a Kubernetes Job before services start. Services use `wait_for_migration()` to block until the expected migration version is reached.
+
+```yaml
+# helm/templates/db-migration-job.yaml
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      containers:
+      - name: db-migration
+        image: "{{ .Values.image.registry }}/{{ .Values.image.agentService }}:{{ .Values.image.tag }}"
+        command: ["python3", "shared-models/scripts/migrate.py"]
+        env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            secretKeyRef:
+              name: pgvector
+              key: host
+```
+
+### LlamaStack Multi-Store PostgreSQL Backends
+
+LlamaStack uses three separate PostgreSQL databases for different storage backends: the default database for metadata/registry, `llama_agents` for kv storage (agent state), and `llama_responses` for sql storage (response history).
+
+```yaml
+# helm/values.yaml
+llama-stack:
+  metadataStore:
+    type: postgres
+    host: ${env.POSTGRES_HOST:=pgvector}
+    db: ${env.POSTGRES_DBNAME:=rag_blueprint}
+    namespace: llamastack_registry
+  storage:
+    backends:
+      kv_default:
+        type: kv_postgres
+        host: ${env.POSTGRES_HOST:=pgvector}
+        db: llama_agents
+      sql_default:
+        type: sql_postgres
+        host: ${env.POSTGRES_HOST:=pgvector}
+        db: llama_responses
+```
+
+### pgvector as LlamaStack Vector Store Provider
+
+Knowledge bases are registered with the pgvector provider via LlamaStack's OpenAI-compatible API. The `provider_id: "pgvector"` must be specified in `extra_body` for llama-stack 0.3.3+.
+
+```python
+# agent-service/src/agent_service/knowledge/kb_manager.py
+vector_store = self._llama_client.vector_stores.create(
+    name=vector_store_name, extra_body={"provider_id": "pgvector"}
+)
+```
+
+### Database-Level Clock for Cross-Pod Consistency
+
+To avoid pod clock skew when ordering requests across replicas, a utility function uses PostgreSQL's `now()` instead of local `datetime.now()`.
+
+```python
+# shared-models/src/shared_models/database.py
+async def get_db_utc_now() -> datetime:
+    db_manager = get_database_manager()
+    async with db_manager.get_session() as db:
+        result = await db.execute(text("SELECT now()"))
+        ts = result.scalar()
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return cast(datetime, ts)
+```
+
+### Configuration (Approach D)
+
+- **Environment variables:**
+  - `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` -- From pgvector secret, injected via Helm template helpers.
+  - `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT`, `DB_POOL_RECYCLE` -- Async SQLAlchemy pool configuration (default: 8/8/30/3600).
+  - `DB_SYNC_POOL_MIN_SIZE`, `DB_SYNC_POOL_MAX_SIZE`, `DB_SYNC_POOL_TIMEOUT` -- Sync psycopg pool for LangGraph (default: 1/5/30).
+  - `DB_STATEMENT_TIMEOUT` -- Per-query timeout in ms (default: 30000; request-manager overrides to match lock wait timeout).
+  - `DB_IDLE_TRANSACTION_TIMEOUT` -- Idle transaction timeout in ms (default: 300000).
+  - `EXPECTED_MIGRATION_VERSION` -- Version string services wait for before accepting traffic (default: "003").
+  - `SESSION_LOCK_WAIT_TIMEOUT` -- Advisory lock acquisition timeout in seconds (default: 180).
+  - `SESSION_LOCK_POLL_INTERVAL_SECONDS` -- Polling interval for lock acquisition (default: 0.05).
+- **Helm values:**
+  - `pgvector.args` -- PostgreSQL server arguments (e.g., `max_connections=200`).
+  - `pgvector.extraDatabases` -- Additional databases for LlamaStack backends.
+  - `requestManagement.database.*` -- Connection pool sizes, timeouts, and statement timeouts.
+  - `requestManagement.requestManager.database.poolSize` -- Per-service pool override for request-manager.
+  - `requestManagement.requestManager.sessionSerialization.*` -- Advisory lock polling and reclaim configuration.
+
+### Known Gotchas (Approach D)
+
+- **Dual statement timeout for request-manager:** The request-manager needs `DB_STATEMENT_TIMEOUT` set higher than `SESSION_LOCK_WAIT_TIMEOUT` (lock wait timeout in ms) so advisory lock polling queries are not cancelled. The `_env-helpers.tpl` provides a `dbEnvVarsNoStatementTimeout` variant, and `requestManagerEnvVars` adds the override computed as `lockWaitTimeoutSeconds * 1000` (see `helm/templates/_env-helpers.tpl` lines 57-106, 198-200).
+- **pg_try_advisory_lock polling instead of pg_advisory_lock:** The codebase explicitly uses polling with `pg_try_advisory_lock` rather than blocking `pg_advisory_lock` with `lock_timeout` to avoid PG BUG #17686. The polling interval (0.05s default) means there is a small latency cost on lock acquisition (see `request-manager/src/request_manager/session_lock.py` lines 36-42).
+- **Connection pool budget for max_connections=200:** With 6+ services each having pool_size=8 and max_overflow=8, plus sync pools (min=1, max=5 each), the total potential connections can approach the 200 limit under load. The comment in `values.yaml` (line 133) notes this is unified for test/prod.
+- **provider_id required in extra_body:** When creating vector stores via LlamaStack's OpenAI-compatible API, `provider_id: "pgvector"` must be passed in `extra_body` for llama-stack 0.3.3+. Without this, the vector store may not be associated with the pgvector provider (see `agent-service/src/agent_service/knowledge/kb_manager.py` lines 87-91).
+- **Alembic defaults in alembic.ini override at runtime:** The `alembic.ini` hardcodes `sqlalchemy.url = postgresql://pgvector:pgvector@pgvector:5432/llama_agents` but the `env.py` overrides this from `DatabaseConfig` at runtime (see `shared-models/alembic/env.py` line 24). This default only matters for local `alembic` CLI usage.
+
+### Testing Notes (Approach D)
+
+- Verify migration Job completes: `oc get job <release>-db-migration` and check logs for version output.
+- Verify services waited for migration: search pod logs for "Database migration completed successfully" with `version=003`.
+- Verify advisory locks are functioning: check request-manager logs for "Session lock acquired" entries with lock_key values.
+- Verify connection pool health: look for "Database configuration initialized successfully" logs showing pool_size and max_overflow values.
+- Verify multiple databases exist: connect to pgvector pod and run `psql -U postgres -l | grep -E 'rag_blueprint|llama_agents|llama_responses'`.
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) |
-|----------|-------------------------------|-----------------------------------|---------------------------------------|
-| **pgvector chart version** | v0.5.5 (subchart) | v0.1.0 (bundled .tgz) | v0.1.0 (standalone chart) |
-| **PostgreSQL version** | 15 | 17 | 15 |
-| **Container image** | ai-architecture-charts subchart default | `pgvector/pgvector:pg17` | `quay.io/rh-aiservices-bu/postgresql-15-pgvector-c9s:latest` |
-| **Chart relationship** | Dependency subchart | Dependency subchart (bundled) | Standalone Helm chart |
-| **URL construction** | Assembled from individual secret keys in deployment template | Pre-built `uri` key consumed directly from secret | Pod DNS hardcoded in data loader Job; consumers wire their own connections |
-| **DB initialization** | `extraDatabases` values mechanism | ConfigMap init script with `CREATE EXTENSION VECTOR` | ConfigMap init script with `CREATE EXTENSION IF NOT EXISTS vector CASCADE` |
-| **Schema management** | Alembic migrations (async-to-sync URL rewrite) | `SQLModel.metadata.create_all` at startup | Raw SQL in Python data loader script |
-| **ORM** | SQLAlchemy ORM with PostgreSQL dialect types | SQLModel with JSON column type | None (raw psycopg2) |
-| **Data seeding** | None | None | Kubernetes Job with OpenShift BuildConfig for large CSV datasets |
-| **Vector search usage** | Active via LlamaStack `vector_io` provider | Extension enabled but unused; embeddings in MinIO | Extension enabled; used for data governance, not RAG |
-| **Security** | Standard credentials via secret | Standard credentials via secret | Read-only `mcp_readonly` user for MCP server defense-in-depth |
-| **Number of consumers** | Single backend service | Multiple services (backend, annotation-interface, phoenix) | Data loader Job + MCP server |
-| **Credential passthrough** | Install script `--set` flags | Values file defaults | `--set` flags (placeholder defaults in values.yaml) |
-| **Best for** | Apps needing vector search + relational data in one DB | Multi-service apps using PostgreSQL as shared relational store | Data governance demos with seed data, MCP server access, and curated views |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) |
+|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|
+| **pgvector chart version** | v0.5.5 (subchart) | v0.1.0 (bundled .tgz) | v0.1.0 (standalone chart) | v0.1.0 (subchart) |
+| **PostgreSQL version** | 15 | 17 | 15 | Subchart default |
+| **Container image** | ai-architecture-charts subchart default | `pgvector/pgvector:pg17` | `quay.io/rh-aiservices-bu/postgresql-15-pgvector-c9s:latest` | ai-architecture-charts subchart default |
+| **Chart relationship** | Dependency subchart | Dependency subchart (bundled) | Standalone Helm chart | Dependency subchart |
+| **URL construction** | Assembled from individual secret keys in deployment template | Pre-built `uri` key consumed directly from secret | Pod DNS hardcoded in data loader Job | Helm template helpers (`_env-helpers.tpl`) generate env vars from secret |
+| **DB initialization** | `extraDatabases` values mechanism | ConfigMap init script with `CREATE EXTENSION VECTOR` | ConfigMap init script with `CREATE EXTENSION IF NOT EXISTS vector CASCADE` | `extraDatabases` values + `max_connections=200` args |
+| **Schema management** | Alembic migrations (async-to-sync URL rewrite) | `SQLModel.metadata.create_all` at startup | Raw SQL in Python data loader script | Alembic migrations via Kubernetes Job (services wait for version) |
+| **ORM** | SQLAlchemy ORM with PostgreSQL dialect types | SQLModel with JSON column type | None (raw psycopg2) | SQLAlchemy ORM + psycopg_pool for LangGraph |
+| **Data seeding** | None | None | Kubernetes Job with OpenShift BuildConfig for large CSV datasets | None |
+| **Vector search usage** | Active via LlamaStack `vector_io` provider | Extension enabled but unused; embeddings in MinIO | Extension enabled; used for data governance, not RAG | Active via LlamaStack `vector_io` + metadata/kv/sql backends |
+| **Security** | Standard credentials via secret | Standard credentials via secret | Read-only `mcp_readonly` user for MCP server defense-in-depth | Standard credentials via secret; advisory locks for session isolation |
+| **Number of consumers** | Single backend service | Multiple services (backend, annotation-interface, phoenix) | Data loader Job + MCP server | 6+ services (agent, request-manager, dispatcher, migration, langfuse, langfuse-worker) |
+| **Connection pooling** | Single async SQLAlchemy pool | Single async SQLAlchemy pool | No pooling (raw psycopg2) | Dual pools: async SQLAlchemy + sync/async psycopg_pool for LangGraph |
+| **Distributed coordination** | None | None | None | PostgreSQL advisory locks for per-session request serialization |
+| **Credential passthrough** | Install script `--set` flags | Values file defaults | `--set` flags (placeholder defaults in values.yaml) | Helm template helpers; values defaults |
+| **Best for** | Apps needing vector search + relational data in one DB | Multi-service apps using PostgreSQL as shared relational store | Data governance demos with seed data, MCP server access, and curated views | Multi-service agentic apps needing distributed session serialization, LangGraph checkpointing, and LlamaStack multi-store backends |

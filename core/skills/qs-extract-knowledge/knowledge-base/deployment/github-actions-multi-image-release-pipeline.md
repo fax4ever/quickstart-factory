@@ -1,7 +1,7 @@
 ---
 name: github-actions-multi-image-release-pipeline
 description: Five-workflow GitHub Actions pipeline building 4 container images with release PR and Helm chart publishing
-summary: "Implements a five-workflow GitHub Actions CI/CD pipeline (ci, build-dev, build-main, create-release-pr, release) that builds and releases four container images (main app + 3 MCP servers) across a dev->main->release branch promotion model with automated semantic version bumping and Helm chart publishing to GitHub Releases. Use when a quickstart produces multiple container images needing independent per-branch builds, automated patch/minor/major version bumps via workflow_dispatch, Helm chart packaging attached to GitHub Releases, and Quay.io registry publishing -- a single-workflow approach won't scale when CI (5 parallel jobs: frontend lint+build, Python flake8/black/isort, Helm chart lint, pre-commit, compose overlay integration tests), branch builds, and release logic need separate triggers. Images push to quay.io/rh-ai-quickstart/ using QUAY_USERNAME/QUAY_PASSWORD secrets with `<branch>-<short-sha>` plus floating `latest-<branch>` tags; only the main app image uses Buildx registry caching (`cache-from`/`cache-to: type=registry`); release workflow reads version from Chart.yaml, creates a git tag, runs `helm package`, and attaches the .tgz via `gh release create`. CI test job uses `docker compose -f compose.yaml -f compose.ci.yaml` (not podman) with a GHA-caching overlay; the version bump commit from create-release-pr must be present in the merged PR for release.yml to read the correct Chart.yaml version; MCP server images skip Buildx caching as small single-stage builds; release PR merge conflicts are resolved by preferring the release branch's Chart.yaml/values.yaml/Chart.lock via `git checkout --ours`."
+summary: "Implements a five-workflow GitHub Actions CI/CD pipeline (ci, build-dev, build-main, create-release-pr, release) that builds and releases four container images (main app + 3 MCP servers) across a dev->main->release branch promotion model with automated semantic version bumping via workflow_dispatch (patch/minor/major) and Helm chart publishing to GitHub Releases, plus a cleanup job that deletes the release branch after PR close. Use Approach A when needing separate CI (5 parallel jobs: frontend lint+build, Python flake8/black/isort, Helm chart lint, pre-commit, compose overlay integration tests), per-branch builds, and release management with Helm packaging; use Approach B (single build-and-push workflow with Makefile delegation for 8 images, `make version` extraction, concurrency cancel-in-progress, and multi-tag loop over BASE_VERSION/VERSION_WITH_COMMIT/latest|branch_name) when all images share build tooling and no release PR or Helm publishing is needed. Images push to quay.io/rh-ai-quickstart/ using QUAY_USERNAME/QUAY_PASSWORD secrets with `<branch>-<short-sha>` plus floating `latest-<branch>` tags; only the main app image uses Buildx registry caching (`cache-from`/`cache-to: type=registry`); release workflow reads version from Chart.yaml, creates a git tag, runs `helm package`, and attaches the .tgz via `gh release create`. CI test job uses `docker compose -f compose.yaml -f compose.ci.yaml` (not podman) with a GHA-caching overlay; the version bump commit from create-release-pr must be present in the merged PR for release.yml to read the correct Chart.yaml version; MCP server images skip Buildx caching as small single-stage builds; release PR merge conflicts are resolved by preferring the release branch's Chart.yaml/values.yaml/Chart.lock via `git checkout --ours`."
 metadata:
   type: deployment-pattern
 tags:
@@ -13,6 +13,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
     notes: "5 workflows: CI, build-dev, build-main, create-release-pr, release; builds main app + 3 MCP server images"
     approach: "A"
+  - quickstart: "it-self-service-agent"
+    repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
+    notes: "Single build-and-push workflow for 8 images via make build-all-images with Makefile version extraction"
+    approach: "B"
 ---
 
 # GitHub Actions Multi-Image Release Pipeline
@@ -151,7 +155,76 @@ cleanup-branch:
 - MCP server images do not use Buildx caching (`cache-from`/`cache-to`) unlike the main application image, since they are small single-stage builds
 - The `create-release-pr` workflow handles merge conflicts by preferring the release branch's versions of `Chart.yaml`, `values.yaml`, and `Chart.lock` using `git checkout --ours` (see `create-release-pr.yml` lines 81-84)
 
+---
+
+## Approach B: Single Build-and-Push Workflow with Makefile Delegation (from it-self-service-agent)
+
+### When to Use
+
+When all images share the same build tooling (shared Containerfile templates) and a Makefile already handles versioning, lockfile validation, and multi-image builds. A single workflow replaces separate per-branch build workflows.
+
+### Differences from Approach A
+
+- Single `build-and-push.yaml` workflow instead of five separate workflows
+- Delegates entirely to Makefile (`make build-all-images`, `make push-all-images`) instead of per-image `docker/build-push-action` steps
+- Version extracted from Makefile (`make version`) rather than read from Chart.yaml
+- Builds 8 images (via shared Containerfile templates) instead of 4
+- No Buildx caching -- relies on Makefile build ordering
+- No release PR or Helm chart publishing workflows
+- Multi-tag loop: iterates over `${BASE_VERSION} ${VERSION_WITH_COMMIT} latest|branch_name`
+
+### Build-and-Push Workflow
+
+```yaml
+# .github/workflows/build-and-push.yaml (excerpt)
+on:
+  push:
+    branches: ['main', 'dev']
+concurrency:
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: true
+jobs:
+  build-and-push:
+    steps:
+      - name: Extract version from Makefile
+        run: |
+          BASE_VERSION=$(make version)
+          VERSION_WITH_COMMIT="${BASE_VERSION}-${{ github.sha }}"
+          VERSIONS="${BASE_VERSION} ${VERSION_WITH_COMMIT}"
+          if [[ "${BRANCH_NAME}" == "main" ]]; then
+            VERSIONS="${VERSIONS} latest"
+          else
+            VERSIONS="${VERSIONS} ${BRANCH_NAME}"
+          fi
+      - name: Build all Images
+        run: |
+          for version in "${VERSIONS[@]}"; do
+            VERSION="${version}" make build-all-images
+          done
+      - name: Push all Images
+        run: |
+          for version in "${VERSIONS[@]}"; do
+            VERSION="${version}" make push-all-images
+          done
+```
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A | Approach B |
+|----------|-----------|-----------|
+| Workflows | 5 (CI, build-dev, build-main, release-pr, release) | 1 (build-and-push) |
+| Image build method | docker/build-push-action per image | make build-all-images (Makefile delegation) |
+| Version source | Chart.yaml | Makefile BASE_VERSION |
+| Buildx caching | Registry-based for main app | Not used |
+| Release management | Automated PR + GitHub Release + Helm package | Not included |
+| Image count | 4 | 8 |
+| Branch model | dev -> main -> release | dev -> main |
+
 ## Related Patterns
 
-- `container-build-ubi-multistage-fullstack.md` -- the Containerfiles built by these workflows
-- `compose-ci-overlay-gha-cache-coverage.md` -- the CI compose overlay used in the test job
+- `container-build-ubi-multistage-fullstack.md` -- the Containerfiles built by these workflows (Approach A)
+- `compose-ci-overlay-gha-cache-coverage.md` -- the CI compose overlay used in the test job (Approach A)
+- `container-build-parameterized-containerfile-template.md` -- the Containerfile templates built by Approach B
+- `makefile-git-branch-version-autodetect.md` -- version auto-detection used by Approach B

@@ -1,7 +1,7 @@
 ---
 name: helm-umbrella-mixed-remote-local-committed-deps
 description: Umbrella Helm chart mixing remote ai-architecture-charts, declared local subcharts, and committed tgz bundles
-summary: "Solves structuring a Helm umbrella chart that must combine remote ai-architecture-charts dependencies (pgvector, minio, mcp-servers), conditionally-declared local subcharts (aap-mock, rag), and undeclared charts auto-discovered from the charts/ directory including committed third-party tgz files (Grafana 10.1.4, Loki 6.45.2, Alloy 1.4.0) and local subchart directories (backend, ui, clustering, phoenix, annotation-interface, text-embeddings-inference). Use when some components lack ai-architecture-charts equivalents and need pinned third-party chart versions committed as tgz files alongside declared remote and local dependencies in a single umbrella chart -- only Approach A exists covering this mixed-sourcing strategy. Cross-chart configuration splits into a separate global-values.yaml (shared via {{ .Values.global }}) and values.yaml both passed via Makefile -f flags; conditional subcharts toggle via aap-mock.enabled and global.rag.enabled while undeclared local charts always install with no condition toggle. Committed tgz files bypass helm dependency update requiring manual tgz replacement for version upgrades, Chart.lock tracks only 5 of 14 total subcharts leaving 9 invisible to dependency management, and mcp-servers requires double-nested values keys (mcp-servers.mcp-servers.<server-name>)."
+summary: "Solves structuring a Helm umbrella chart that must combine remote ai-architecture-charts dependencies (pgvector, minio, mcp-servers), conditionally-declared local subcharts (aap-mock, rag), and undeclared charts auto-discovered from the charts/ directory including committed third-party tgz files (Grafana, Loki, Alloy) and local subchart directories (backend, ui, clustering, phoenix, annotation-interface, text-embeddings-inference). Use Approach A (ansible-log-analysis) when third-party charts lack ai-architecture-charts equivalents and need pinned tgz versions committed in charts/ alongside declared remote and local deps with partial Chart.lock tracking (5 of 14); use Approach B (it-self-service-agent) when all deps can be declared in Chart.yaml with `file://` for local subcharts and optional components (nemo-guardrails, zammad-demo-site) deploy as separate `helm upgrade --install` releases with CRD prerequisite checks, achieving complete dependency tracking. Cross-chart configuration splits into a separate global-values.yaml (shared via {{ .Values.global }}) and values.yaml both passed via Makefile -f flags; conditional subcharts toggle via aap-mock.enabled and global.rag.enabled while Approach A's undeclared local charts always install with no condition toggle. Committed tgz files bypass helm dependency update requiring manual tgz replacement for version upgrades, Chart.lock in Approach A tracks only 5 of 14 total subcharts leaving 9 invisible to dependency management, and mcp-servers requires double-nested values keys (mcp-servers.mcp-servers.<server-name>)."
 metadata:
   type: deployment-pattern
 tags:
@@ -14,6 +14,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
     notes: "3 remote deps, 2 declared local deps, 6 undeclared local chart dirs, 3 committed tgz files"
     approach: "A"
+  - quickstart: "it-self-service-agent"
+    repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
+    notes: "4 remote deps, 1 declared local dep (file://), no committed tgz, separate releases for optional components"
+    approach: "B"
 ---
 
 # Helm Umbrella with Mixed Remote, Local, and Committed Dependencies
@@ -133,7 +137,80 @@ install: namespace
 - The Chart.lock only tracks the five declared dependencies; the three committed tgz charts and six undeclared local directories are invisible to `helm dependency update`
 - The undeclared local subcharts (backend, ui, annotation-interface, clustering, phoenix, text-embeddings-inference) have no `condition` toggle and are always installed
 
+---
+
+## Approach B: Clean Remote + Local Without Committed Deps (from it-self-service-agent)
+
+### When to Use
+
+When all remote dependencies are declared in Chart.yaml with conditions and the only local subchart uses `file://` syntax -- no committed tgz files and no undeclared charts in the `charts/` directory. Optional components that need independent lifecycle management are deployed as separate Helm releases rather than subcharts.
+
+### Differences from Approach A
+
+- No committed `.tgz` files -- all remote deps managed by `helm dependency update`
+- No undeclared charts auto-discovered from `charts/` directory
+- Uses `file://` syntax for local subcharts (`repository: "file://./zammad"`)
+- Optional components (nemo-guardrails, zammad-demo-site) deployed as separate `helm upgrade --install` releases rather than subcharts
+- All 5 dependencies are declared and tracked by Chart.lock
+
+### Chart.yaml with Conditional Dependencies
+
+```yaml
+# helm/Chart.yaml
+dependencies:
+  - name: pgvector
+    version: 0.1.0
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+  - name: llm-service
+    version: 0.5.6
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+    condition: llm-service.enabled
+  - name: llama-stack
+    version: 0.8.5
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+  - name: mcp-servers
+    version: 0.5.17
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+    condition: mcp-servers.enabled
+  - name: ticketingZammad
+    version: 0.1.0
+    repository: "file://./zammad"
+    condition: ticketingZammad.enabled
+```
+
+### Separate Helm Releases for Optional Components
+
+NeMo Guardrails is deployed as an independent Helm release via a dedicated Makefile target:
+
+```makefile
+# Makefile (excerpt)
+deploy-nemo-guardrails: namespace
+	@if ! oc get crd nemoguardrails.trustyai.opendatahub.io &>/dev/null; then \
+		echo "NemoGuardrails CRD not found. Ensure RHOAI 3.3+ is installed."; \
+		exit 1; \
+	fi
+	@helm upgrade --install nemo-guardrails $(NEMO_GUARDRAILS_CHART) \
+		-n $(NAMESPACE) \
+		--set llm.url=http://llamastack:8321/v1 \
+		--set llm.modelId=$(LLM_ID)
+```
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A | Approach B |
+|----------|-----------|-----------|
+| Third-party charts | Committed as tgz files | Not used |
+| Dependency tracking | Partial (5 of 14 in Chart.lock) | Complete (all 5 in Chart.lock) |
+| Undeclared charts | 9 auto-discovered from charts/ | None |
+| Local subchart syntax | Directory in charts/ | `file://` in Chart.yaml |
+| Optional components | Subchart conditions | Separate Helm releases |
+| Version management | Manual tgz replacement for committed charts | All via `helm dependency update` |
+
 ## Related Patterns
 
-- `helm-inline-grafana-alerting-loki-webhook.md` -- values configuration for the committed Grafana and Loki tgz charts
-- `helm-alloy-sidecar-pvc-log-collector.md` -- values configuration for the committed Alloy tgz chart
+- `helm-inline-grafana-alerting-loki-webhook.md` -- values configuration for the committed Grafana and Loki tgz charts (Approach A)
+- `helm-alloy-sidecar-pvc-log-collector.md` -- values configuration for the committed Alloy tgz chart (Approach A)
+- `helm-knative-kafka-cloudevents-triggers.md` -- eventing templates within the Approach B umbrella chart
+- `makefile-multi-profile-helm-install.md` -- Makefile targets that install the Approach B umbrella chart

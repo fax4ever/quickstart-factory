@@ -1,7 +1,7 @@
 ---
 name: container-build-ubi-uv-python-multistage
 description: Multi-stage UBI8 Python Containerfile with uv copied from official image for dependency management
-summary: "Builds Python containers on Red Hat UBI8/python-312 using the uv package manager (COPY --from ghcr.io/astral-sh/uv:0.9.7) with multi-stage builds that split dependency installation from project installation for optimal Docker layer caching. Three variants: multi-stage root Containerfile (uv sync --frozen --no-install-project then --no-editable --no-dev, copies only .venv and source to runtime stage) for the main app, single-stage service Containerfiles for lightweight services using the same uv pattern, and a non-uv pip variant for services with requirements.txt instead of pyproject.toml/uv.lock. Critical config: OpenShift arbitrary UID support requires chgrp -R 0 / chmod -R g=u on app and cache directories, runtime venv activation via VIRTUAL_ENV=/app/.venv with PATH prepend, build-time UV_HTTP_TIMEOUT=600 for large packages, and TORCH_CUDA_ARCH_LIST=\"\" to skip CUDA compilation. Common gotchas: deepeval cache directory requires chmod -R 777 with HOME=/app to avoid PermissionError, HuggingFace cache needs /hf_cache with 777 permissions and HF_HOME env var, rag service Containerfile builds from repo root context (COPY services/rag/...) while other services build from their own directory, and README.md must be present for pyproject.toml package metadata resolution."
+summary: "Builds Python containers on Red Hat UBI using the uv package manager with multi-stage builds that split dependency installation from project installation for optimal Docker layer caching. Approach A (UBI8/python-312, COPY --from ghcr.io/astral-sh/uv:0.9.7, per-service Containerfiles with multi-stage root using uv sync --frozen --no-install-project then --no-editable --no-dev, single-stage service variants, and non-uv pip variant for requirements.txt services) suits repos with distinct per-service builds; Approach B (UBI9/python-312 builder + python-312-minimal:9.7 runtime, uv installed via pip3, shared Containerfile.services-template and Containerfile.mcp-template parameterized by SERVICE_NAME/MODULE_NAME ARGs, USE_PIP_INSTALL=true fallback with pip --require-hashes for QEMU/M1) suits monorepos with many services sharing identical build structure. Critical config: OpenShift arbitrary UID support requires chgrp -R 0 / chmod -R g=u on app and cache directories (Approach A) or USER 1001 (Approach B), runtime venv activation via VIRTUAL_ENV=/app/.venv with PATH prepend, and build-time UV_HTTP_TIMEOUT=600 for large packages with TORCH_CUDA_ARCH_LIST=\"\" to skip CUDA compilation. Common gotchas: deepeval cache directory requires chmod -R 777 with HOME=/app to avoid PermissionError, HuggingFace cache needs /hf_cache with 777 permissions and HF_HOME env var, rag service Containerfile builds from repo root context (COPY services/rag/...) while other services build from their own directory, and README.md must be present for pyproject.toml package metadata resolution."
 metadata:
   type: deployment-pattern
 tags:
@@ -13,6 +13,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
     notes: "Multi-stage UBI8/python-312 with uv for backend; single-stage variants for services"
     approach: "A"
+  - quickstart: "it-self-service-agent"
+    repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
+    notes: "UBI9/python-312 with uv installed via pip; shared Containerfile templates; USE_PIP_INSTALL toggle for QEMU fallback"
+    approach: "B"
 ---
 
 # Multi-Stage UBI Python Containerfile with uv
@@ -115,7 +119,78 @@ CMD ["python", "-m", "app.main"]
 - The clustering service creates `/hf_cache` with `chmod -R 777` for HuggingFace model downloads at runtime (see `services/clustering/Containerfile` lines 17-19)
 - The rag service Containerfile builds from the repo root context but copies from `services/rag/` paths (`COPY services/rag/pyproject.toml ./`), while other service Containerfiles build from their own directory context (see `services/rag/Containerfile` lines 12, 20)
 
+---
+
+## Approach B: UBI9 with pip-installed uv and Shared Containerfile Templates (from it-self-service-agent)
+
+### When to Use
+
+When multiple microservices share the same build structure and only differ by service directory and Python module name. The shared template approach eliminates per-service Containerfile maintenance in monorepos with many services.
+
+### Differences from Approach A
+
+- Uses UBI9 (`registry.access.redhat.com/ubi9/python-312:9.7`) instead of UBI8
+- Installs uv via `pip3 install uv==${UV_VERSION}` instead of `COPY --from=ghcr.io/astral-sh/uv`
+- Two shared Containerfile templates (`Containerfile.services-template`, `Containerfile.mcp-template`) parameterized via build ARGs instead of per-service Containerfiles
+- `USE_PIP_INSTALL` build arg toggles between uv sync (default) and pip install with hash verification (QEMU/M1 workaround)
+- Runtime stage uses `ubi9/python-312-minimal:9.7` (minimal image) for smaller footprint
+- Venv staged to `/app/service.venv` in builder to avoid duplication when copying service directory
+
+### Shared Template Pattern
+
+Both templates accept `SERVICE_NAME` and `MODULE_NAME` as build args:
+
+```dockerfile
+# Containerfile.services-template (excerpt)
+ARG SERVICE_NAME
+ARG MODULE_NAME
+ARG USE_PIP_INSTALL=false
+ARG UV_VERSION=0.8.9
+
+FROM registry.access.redhat.com/ubi9/python-312:9.7 as builder
+USER root
+RUN pip3 install --no-cache-dir uv==${UV_VERSION}
+WORKDIR /app
+COPY shared-models ./shared-models/
+COPY shared-clients ./shared-clients/
+ARG SERVICE_NAME
+COPY ${SERVICE_NAME}/pyproject.toml ${SERVICE_NAME}/uv.lock ${SERVICE_NAME}/requirements.txt ./${SERVICE_NAME}/
+WORKDIR /app/${SERVICE_NAME}
+
+FROM registry.access.redhat.com/ubi9/python-312-minimal:9.7
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="/usr/bin:${VIRTUAL_ENV}/bin:$PATH"
+CMD python3 -m uvicorn $MODULE_NAME:app --host 0.0.0.0 --port 8080
+```
+
+### Dual Install Strategy
+
+```dockerfile
+# USE_PIP_INSTALL toggle (excerpt)
+RUN if [ "$USE_PIP_INSTALL" = "true" ]; then \
+        python3 -m venv .venv && \
+        .venv/bin/pip install --require-hashes --use-deprecated=legacy-resolver \
+          -r /tmp/non-editable-requirements.txt; \
+    else \
+        uv sync --frozen --no-dev; \
+    fi
+```
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A | Approach B |
+|----------|-----------|-----------|
+| Base image | UBI8/python-312 | UBI9/python-312 + python-312-minimal |
+| uv installation | COPY from official image | pip3 install |
+| Containerfile per service | Yes (one per service) | No (shared templates) |
+| Build arg parameterization | Not used | SERVICE_NAME, MODULE_NAME |
+| pip fallback | Not available | USE_PIP_INSTALL=true for QEMU/M1 |
+| OpenShift UID handling | chgrp/chmod g=u | USER 1001 (UBI default) |
+
 ## Related Patterns
 
 - `container-build-tei-model-prebake.md` -- different build pattern for the TEI embedding service
-- `github-actions-path-filtered-matrix-skopeo-retag.md` -- CI workflow that builds these Containerfiles
+- `github-actions-path-filtered-matrix-skopeo-retag.md` -- CI workflow that builds these Containerfiles (Approach A)
+- `container-build-parameterized-containerfile-template.md` -- detailed coverage of the shared template pattern (Approach B)

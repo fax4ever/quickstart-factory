@@ -1,12 +1,12 @@
 ---
 name: minio
 description: "S3-compatible object storage for file attachments, optional via compose profiles and feature flags"
-summary: "MinIO (quay.io/minio/minio:latest) provides S3-compatible object storage for quickstarts, handling chat attachment uploads (Approach A), serving as shared infrastructure for RAG index persistence, ML model storage, Loki log backend, and document seeding (Approach B), or providing infrastructure-only S3 storage with automated bucket provisioning and ODH dashboard integration (Approach C). Use Approach A (boto3, configure-pipeline subchart v0.5.6, ATTACHMENTS_BUCKET_* env vars) when MinIO is a single-purpose optional service gated by compose `attachments` profile and inverted DISABLE_ATTACHMENTS flag; use Approach B (minio Python SDK >=7.2.17, standalone minio subchart v0.1.0 as StatefulSet with 50Gi PVC, MINIO_* env vars with shared K8s Secret) when MinIO is always-on with multiple consumers (backend, clustering, rag, Loki); use Approach C (in-repo helm/minio/ chart as Deployment with 100Gi PVC, Makefile DEPLOY_MINIO flag, post-install minio/mc bucket Job, opendatahub.io/dashboard: 'true' labels) when MinIO is infrastructure-only with no Python SDK integration. Approach A uses lazy _get_s3() with module-level globals and auto-bucket via head_bucket/create_bucket storing attachments under session-scoped keys ({session_id}/{attachment_id}{ext}); Approach B uses centralized get_minio_client() factory (secure=False hardcoded, config priority: params > env vars > defaults), LATEST.json pointer tracking RAG index status (BUILDING/READY/FAILED), joblib serialization for ML model storage, and OpenShift Routes with TLS edge termination; Approach C uses Helm post-install hook Job with minio/mc:latest CLI connecting via in-cluster DNS (backoffLimit: 3, hook-delete-policy: hook-succeeded) and Makefile credential validation enforcing minimum length requirements. The start-dev.sh script bridges ENABLE_ATTACHMENTS to the inverted DISABLE_ATTACHMENTS flag, compose backend must declare MinIO with `required: false` to avoid blocking startup, Loki deploys its own separate MinIO with anyuid SCC for minio-sa, the minio subchart is packaged as .tgz requiring extraction to inspect templates, Approach C's Secret template is noted as not production-hardened (should use ExternalSecret/Vault), the post-install bucket Job has no explicit wait-for-ready logic, clustering model_loader.py duplicates client logic bypassing the shared factory, and session-scoped authorization remains unimplemented (TODO)."
+summary: "MinIO (quay.io/minio/minio:latest or pinned release) provides S3-compatible object storage for quickstarts, handling chat attachment uploads (Approach A), serving as shared infrastructure for RAG index persistence, ML model storage, Loki log backend, and document seeding (Approach B), providing infrastructure-only S3 storage with automated bucket provisioning and ODH dashboard integration (Approach C), or backing Langfuse v3 observability with per-feature event/export/media buckets (Approach D). Use Approach A (boto3, configure-pipeline subchart v0.5.6, ATTACHMENTS_BUCKET_* env vars) when MinIO is a single-purpose optional service gated by compose `attachments` profile and inverted DISABLE_ATTACHMENTS flag; use Approach B (minio Python SDK >=7.2.17, standalone minio subchart v0.1.0 as StatefulSet with 50Gi PVC, MINIO_* env vars with shared K8s Secret) when MinIO is always-on with multiple consumers (backend, clustering, rag, Loki); use Approach C (in-repo helm/minio/ chart as Deployment with 100Gi PVC, Makefile DEPLOY_MINIO flag, post-install minio/mc bucket Job, opendatahub.io/dashboard: 'true' labels) when MinIO is infrastructure-only with no Python SDK integration; use Approach D (parent chart-embedded StatefulSet with 10Gi PVC, pinned RELEASE.2024-12-18T13-15-44Z, langfuse.enabled gate, OpenShift restricted SCC with runAsNonRoot/drop ALL/seccomp RuntimeDefault) when MinIO is Langfuse-dedicated with init container bucket provisioning using MC_HOST_ pattern and MC_CONFIG_DIR=/tmp/.mc. Approach A uses lazy _get_s3() with module-level globals and auto-bucket via head_bucket/create_bucket storing attachments under session-scoped keys ({session_id}/{attachment_id}{ext}); Approach B uses centralized get_minio_client() factory (secure=False hardcoded, config priority: params > env vars > defaults), LATEST.json pointer tracking RAG index status (BUILDING/READY/FAILED), joblib serialization for ML model storage, and OpenShift Routes with TLS edge termination; Approach C uses Helm post-install hook Job with minio/mc:latest CLI connecting via in-cluster DNS (backoffLimit: 3, hook-delete-policy: hook-succeeded) and Makefile credential validation enforcing minimum length requirements; Approach D uses init container with mc CLI polling `mc ls` until ready then creating three buckets with anonymous download policy, and LANGFUSE_S3_* per-feature env vars requiring FORCE_PATH_STYLE: \"true\" for path-style S3 addressing. The start-dev.sh script bridges ENABLE_ATTACHMENTS to the inverted DISABLE_ATTACHMENTS flag, compose backend must declare MinIO with `required: false` to avoid blocking startup, Loki deploys its own separate MinIO with anyuid SCC for minio-sa, the minio subchart is packaged as .tgz requiring extraction to inspect templates, Approach C's Secret template is noted as not production-hardened (should use ExternalSecret/Vault), the post-install bucket Job has no explicit wait-for-ready logic, clustering model_loader.py duplicates client logic bypassing the shared factory, session-scoped authorization remains unimplemented (TODO), Approach D's mc:latest init image is unpinned while the server is pinned creating potential version mismatch, S3 region is hardcoded to us-east-1 in Langfuse consumer env vars, and anonymous download policy on Langfuse buckets allows any namespace pod to read contents without credentials."
 metadata:
   type: component
 tags:
-  tech_stack: [minio, python, boto3, fastapi, joblib, faiss, helm]
-  ai_pattern: [rag, embeddings, vector-search, data-pipeline]
+  tech_stack: [minio, python, boto3, fastapi, joblib, faiss, helm, langfuse]
+  ai_pattern: [rag, embeddings, vector-search, data-pipeline, evaluation]
   platform: [openshift, rhoai, opendatahub]
   data_layer: [minio]
 source_examples:
@@ -22,6 +22,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
     notes: "Optional MinIO Deployment with in-repo Helm chart, post-install bucket Job, ODH dashboard labels, Makefile-gated install"
     approach: "C"
+  - quickstart: "it-self-service-agent"
+    repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
+    notes: "Langfuse-dedicated MinIO StatefulSet with init container bucket provisioning, OpenShift-hardened security context, pinned image version"
+    approach: "D"
 ---
 
 # MinIO
@@ -672,18 +676,199 @@ spec:
 
 ---
 
+## Approach D: Langfuse-Dedicated StatefulSet with Init Container Bucket Provisioning (from it-self-service-agent)
+
+### When to Use
+
+When MinIO serves as the S3-compatible backend specifically for Langfuse v3 observability (event upload, batch export, media upload). This approach embeds MinIO resources directly in the parent Helm chart templates (not a subchart), uses an init container for bucket provisioning with wait-for-ready logic, and enforces OpenShift-hardened security contexts on all containers.
+
+### Differences from Approaches A, B, and C
+
+- **Purpose:** Dedicated to Langfuse S3 storage, not general-purpose or application-level
+- **Conditionality:** Gated by `.Values.langfuse.enabled` -- MinIO only deploys when Langfuse is enabled
+- **Image versioning:** Pinned release tag (`RELEASE.2024-12-18T13-15-44Z`) rather than `latest`
+- **Deployment kind:** StatefulSet with VolumeClaimTemplate (like B), but embedded in the parent chart templates (not a subchart)
+- **Bucket provisioning:** Init container in the Langfuse Deployment pod (not a post-install hook Job like C), with explicit wait-for-ready loop
+- **Security:** Full OpenShift-hardened security context on both the MinIO pod and the init container (runAsNonRoot, drop ALL capabilities, seccomp RuntimeDefault)
+- **Consumer wiring:** Uses `LANGFUSE_S3_*` namespaced env vars with per-feature bucket separation (events, exports, media) and `FORCE_PATH_STYLE: "true"`
+- **No Python SDK:** No application code interacts with MinIO directly -- purely infrastructure for Langfuse
+- **Console port:** 9001 (not 9090 like B)
+
+### Tech Stack & Dependencies
+- **Runtime:** MinIO server (S3-compatible API)
+- **Container image:** `quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z` (pinned version)
+- **Bucket init image:** `quay.io/minio/mc:latest`
+- **Key dependencies:** Langfuse web and worker containers consume S3 storage
+- **Helm chart:** Embedded in parent chart `helm/templates/minio-deployment.yaml` (not a subchart)
+
+### Key Patterns
+
+#### StatefulSet Gated by Langfuse Feature Flag
+
+The entire MinIO manifest (Secret, Service, StatefulSet) is wrapped in `{{- if .Values.langfuse.enabled }}`, coupling MinIO lifecycle to Langfuse enablement. All resources are labeled with `app.kubernetes.io/component: minio`.
+
+```yaml
+# helm/templates/minio-deployment.yaml (lines 1-2, 47-48)
+{{- if .Values.langfuse.enabled }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "self-service-agent.fullname" . }}-minio
+spec:
+  serviceName: {{ include "self-service-agent.fullname" . }}-minio
+  replicas: 1
+```
+
+#### OpenShift-Hardened Security Context
+
+Both the pod-level and container-level security contexts enforce restricted SCC compliance, with `runAsNonRoot`, all capabilities dropped, and seccomp profile set to `RuntimeDefault`.
+
+```yaml
+# helm/templates/minio-deployment.yaml (lines 65-79)
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: minio
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+```
+
+#### Init Container Bucket Provisioning with Wait-for-Ready
+
+Buckets are created by an init container in the Langfuse Deployment (not in the MinIO StatefulSet itself). The init container uses the `MC_HOST_` environment variable pattern to avoid needing a config file, sets `MC_CONFIG_DIR=/tmp/.mc` for OpenShift writability, and polls MinIO with `mc ls` until ready before creating three dedicated buckets with anonymous download policy.
+
+```yaml
+# helm/templates/langfuse-deployment.yaml (lines 163-213)
+      - name: init-minio
+        image: quay.io/minio/mc:latest
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        command:
+        - /bin/sh
+        - -c
+        - |
+          export MC_HOST_myminio="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@${MINIO_ENDPOINT}"
+          export MC_CONFIG_DIR=/tmp/.mc
+
+          until mc ls myminio/ >/dev/null 2>&1; do
+            echo "Waiting for MinIO to be ready..."
+            sleep 2
+          done
+
+          mc mb --ignore-existing myminio/langfuse-events
+          mc mb --ignore-existing myminio/langfuse-exports
+          mc mb --ignore-existing myminio/langfuse-media
+
+          mc anonymous set download myminio/langfuse-events
+          mc anonymous set download myminio/langfuse-exports
+          mc anonymous set download myminio/langfuse-media
+```
+
+#### Per-Feature S3 Bucket Wiring in Langfuse
+
+Langfuse web and worker containers each receive three sets of `LANGFUSE_S3_*` env vars -- one per feature (event upload, batch export, media upload). All three point to the same MinIO endpoint but use separate buckets. `FORCE_PATH_STYLE` is required because MinIO uses path-style addressing, not virtual-hosted-style.
+
+```yaml
+# helm/templates/langfuse-worker-deployment.yaml (lines 139-203)
+        # S3/MinIO Configuration (Event Upload)
+        - name: LANGFUSE_S3_EVENT_UPLOAD_ENABLED
+          value: "true"
+        - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
+          value: "langfuse-events"
+        - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
+          value: http://{{ include "self-service-agent.fullname" . }}-minio:9000
+        - name: LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE
+          value: "true"
+        # ... repeated for BATCH_EXPORT (langfuse-exports) and MEDIA_UPLOAD (langfuse-media)
+```
+
+#### Configurable Health Probes and Resources
+
+MinIO health probes use the standard MinIO health endpoints (`/minio/health/live` and `/minio/health/ready`) with all timing parameters exposed through Helm values, allowing tuning without template changes.
+
+```yaml
+# helm/values.yaml (lines 864-875)
+    healthChecks:
+      livenessProbe:
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 3
+      readinessProbe:
+        initialDelaySeconds: 10
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 3
+```
+
+### Configuration
+- **Environment variables (MinIO container):**
+  - `MINIO_ROOT_USER` -- from Secret `access-key` field (default: `minioadmin`)
+  - `MINIO_ROOT_PASSWORD` -- from Secret `secret-key` field (default: `changeme`)
+- **Environment variables (Langfuse consumers):**
+  - `LANGFUSE_S3_EVENT_UPLOAD_ENABLED` / `_BUCKET` / `_REGION` / `_ENDPOINT` / `_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` / `_FORCE_PATH_STYLE` -- event upload config
+  - `LANGFUSE_S3_BATCH_EXPORT_ENABLED` / `_BUCKET` / `_REGION` / `_ENDPOINT` / `_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` / `_FORCE_PATH_STYLE` -- batch export config
+  - `LANGFUSE_S3_MEDIA_UPLOAD_ENABLED` / `_BUCKET` / `_REGION` / `_ENDPOINT` / `_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` / `_FORCE_PATH_STYLE` -- media upload config
+- **Helm values (`langfuse.minio.*`):**
+  - `version` -- MinIO image tag (default: `RELEASE.2024-12-18T13-15-44Z`)
+  - `accessKey` / `secretKey` -- credentials stored in Secret
+  - `storage` -- PVC size (default: `10Gi`)
+  - `storageClass` -- optional, uses cluster default if empty
+  - `resources` -- requests and limits (default: 512Mi-1Gi memory, 250m-500m CPU)
+  - `healthChecks.livenessProbe.*` / `healthChecks.readinessProbe.*` -- probe timing
+
+### Known Gotchas
+- The init container uses `MC_CONFIG_DIR=/tmp/.mc` because the default `~/.mc` directory is not writable in OpenShift's restricted SCC. Without this, the `mc` CLI fails on startup.
+- The `MC_HOST_myminio` environment variable pattern (`http://${ACCESS_KEY}:${SECRET_KEY}@${ENDPOINT}`) embeds credentials in a URL. This avoids needing `mc alias set` (which writes a config file) but the credentials appear in the container's environment.
+- Anonymous download policy is set on all three buckets (`mc anonymous set download`). This is required for Langfuse's internal S3 access pattern but means any pod in the namespace can read bucket contents without credentials.
+- The `LANGFUSE_S3_*_FORCE_PATH_STYLE` env var must be `"true"` because MinIO uses path-style S3 addressing. Omitting this causes Langfuse to attempt virtual-hosted-style requests, which fail against MinIO.
+- The Secret default password is `changeme` (line 13 of minio-deployment.yaml) with a hardcoded fallback of `minioadmin` for the access key -- both should be overridden for production via `langfuse.minio.secretKey` and `langfuse.minio.accessKey`.
+- The init container image (`quay.io/minio/mc:latest`) is unpinned while the MinIO server image is pinned, creating a potential version mismatch between the CLI and server.
+- The S3 region is hardcoded to `us-east-1` in the Langfuse consumer env vars rather than being templated from values, so changing it requires editing the templates directly.
+
+### Testing Notes
+- Verify MinIO health: `curl -f http://<release>-minio:9000/minio/health/live`
+- Check readiness probe: `curl -f http://<release>-minio:9000/minio/health/ready`
+- Confirm buckets exist by exec-ing into the init container log or using the MinIO console at port 9001
+- Verify Langfuse can write events by checking the `langfuse-events` bucket for data after running a traced LLM call
+- The StatefulSet PVC name follows the pattern `data-<release>-minio-0` -- check `oc get pvc` to confirm binding
+
+### Related Patterns
+- Architecture: Langfuse v3 observability stack with S3 backend
+- Deployment: Init container for service dependency readiness
+- Deployment: OpenShift restricted SCC compliance in security contexts
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) |
-|----------|-------------------------------|-----------------------------------|---------------------------------------|
-| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) |
-| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client |
-| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) |
-| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag |
-| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart |
-| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label |
-| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination |
-| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) |
-| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI |
-| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) |
-| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) |
+|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|
+| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) | Langfuse v3 S3 backend (events, exports, media) |
+| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client | None -- Langfuse handles S3 internally |
+| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) | Embedded in parent chart templates (StatefulSet + VolumeClaimTemplate) |
+| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag | Conditional on `langfuse.enabled` |
+| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart | Two (Langfuse web + worker) |
+| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label | `<release>-minio-secret` with access-key/secret-key fields |
+| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination | Not created (internal-only) |
+| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC via StatefulSet VolumeClaimTemplate |
+| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI | Init container with mc CLI + wait-for-ready loop |
+| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) | No |
+| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) | Embedded in parent chart templates |
+| Image version | latest | latest | latest | Pinned release tag |
+| Security context | Not specified | Not specified | Empty (`{}`) | Full OpenShift restricted SCC (runAsNonRoot, drop ALL, seccomp) |

@@ -1,11 +1,11 @@
 ---
 name: mcp-tool-integration
 description: MCP tool integration from multi-framework registration to transport layer to persistent validated sessions
-summary: "Integrates MCP tool servers into agent systems via three approaches: Approach A (ai-virtual-agent) provides multi-framework registration via LlamaStack toolgroups API (`POST /api/v1/mcp_servers/`, provider `model-context-protocol`), Kubernetes-native discovery from ToolHive MCPServer CRDs and Services labeled `app.kubernetes.io/component=mcp-server`, and four runtime paths (LlamaStack resolves `mcp::` prefixed toolgroup IDs, LangGraph ReAct uses `langchain-mcp-adapters` MultiServerMCPClient, GraphEngine calls MCP directly via JSON-RPC with `_MCP_SESSIONS`/`_TOOL_SCHEMAS` module-level caches refreshing on 400/404 containing \"session\" and `_filter_args_to_schema` preventing -32602 errors, CrewAI maps server names to hardcoded classes via `_TOOL_CLASS_BY_NAME`/`_SERVER_TOOL_NAME_HINTS`); Approach B (ansible-log-analysis) hides MCP inside LangChain `@tool` functions as a transport layer for a single Loki server configured via `LOKI_MCP_SERVER_URL` with per-query httpx `MCPClient` using `Mcp-Session-Id` headers, tool result caching via `_store_tool_result` returning `result_id` references, `MAX_LOGS_PER_QUERY` (5000) cap, and closure-bound tool creation via `create_log_lines_above_tool`; Approach C (data-governance-co-pilot) maintains a persistent MCP session with pg-airman-mcp using MCP SDK `streamablehttp_client`+`ClientSession` with exponential backoff (5 retries, 1-10s), converts discovered tools to OpenAI format via `_convert_mcp_tools_to_openai`, validates calls via hard-coded `ALLOWED_TOOLS` set with Pydantic `TOOL_SCHEMAS`, auto-reconnects via `_reconnect_mcp()` on 404/\"Session terminated\"/ClosedResourceError, and supports dual consumption via MCP-Direct (custom agentic loop) or Llama Stack (toolgroup `mcp::pg_airman`). Choose Approach A for extensible multi-server platforms needing dynamic Kubernetes discovery, UI management, and multi-framework support; choose Approach B for single fixed-server integrations where MCP is invisible to the LLM with per-query session lifecycle; choose Approach C for security-first single-server scenarios needing persistent sessions with auto-reconnection, tool validation allowlist, and dual-mode consumption (MCP-Direct appends `/mcp` to URL, Llama Stack appends `/sse`). MCP servers are registered with `mcp_endpoint={\"uri\": url}` and built with FastMCP using `transport=\"streamable-http\"`; Kubernetes discovery is namespace-scoped with transport type set by `mcp.transport` label (default streamable-http); Approach B wraps all MCP calls inside `execute_loki_query()` creating a new `MCPClient` per invocation with JSON-RPC initialize handshake; Approach C's `check_mcp_server_tools()` logs warnings at startup for unrecognized tools without blocking. CrewAI MCP is not native, requiring entries in both `_TOOL_CLASS_BY_NAME` and `_SERVER_TOOL_NAME_HINTS` mapping tables; Approach B creates new `MCPClient` and `httpx.AsyncClient` per query with no connection pooling; Approach C's Pydantic tool validation is only active in MCP-Direct mode -- Llama Stack bypasses it, creating a prompt injection risk; pg-airman-mcp uses `mcp_readonly` user in `restricted` access mode with `allowCommentInRestricted: false` and supports multiple replicas requiring Service-level session affinity."
+summary: "Integrates MCP tool servers into agent systems via four approaches: Approach A (ai-virtual-agent) provides multi-framework registration via LlamaStack toolgroups API (`POST /api/v1/mcp_servers/`, provider `model-context-protocol`), Kubernetes-native discovery from ToolHive MCPServer CRDs and Services labeled `app.kubernetes.io/component=mcp-server` with transport type from `mcp.transport` label (default streamable-http), and four runtime paths (LlamaStack resolves `mcp::` prefixed toolgroup IDs, LangGraph ReAct uses `langchain-mcp-adapters` MultiServerMCPClient, GraphEngine calls MCP directly via JSON-RPC with `_MCP_SESSIONS`/`_TOOL_SCHEMAS` module-level caches refreshing on 400/404 containing \"session\" and `_filter_args_to_schema` preventing -32602 errors, CrewAI maps server names to hardcoded classes via `_TOOL_CLASS_BY_NAME`/`_SERVER_TOOL_NAME_HINTS`); Approach B (ansible-log-analysis) hides MCP inside LangChain `@tool` functions as transport for a single Loki server configured via `LOKI_MCP_SERVER_URL` with per-query httpx `MCPClient` using `Mcp-Session-Id` headers, tool result caching via `_store_tool_result` returning `result_id` references, `MAX_LOGS_PER_QUERY` (5000) cap, and closure-bound tool creation via `create_log_lines_above_tool`; Approach C (data-governance-co-pilot) maintains a persistent MCP session with pg-airman-mcp using MCP SDK `streamablehttp_client`+`ClientSession` with exponential backoff (5 retries, 1-10s), converts discovered tools to OpenAI format via `_convert_mcp_tools_to_openai`, validates calls via hard-coded `ALLOWED_TOOLS` set with Pydantic `TOOL_SCHEMAS`, auto-reconnects via `_reconnect_mcp()` on 404/\"Session terminated\"/ClosedResourceError, and supports dual consumption via MCP-Direct (custom agentic loop) or Llama Stack (toolgroup `mcp::pg_airman`); Approach D (it-self-service-agent) uses LlamaStack Responses API native MCP tool type with per-request `AUTHORITATIVE_USER_ID`/`traceparent`/`tracestate`/`SERVICE_NOW_TOKEN` headers injected at runtime, per-agent YAML config listing MCP server name+uri with `require_approval: \"never\"`, per-state tool toggling via `uses_mcp_tools` flag in the YAML state machine, FastMCP servers extracting auth via `mcp_common.headers.header_first` with `@trace_mcp_tool()` decorator for OpenTelemetry spans, and Zammad MCP delegating to a basher MCP client with `assert_ticket_customer_matches_basher` ticket ownership verification. Choose Approach A for extensible multi-server platforms needing dynamic Kubernetes discovery, UI management, and multi-framework support; choose Approach B for single fixed-server integrations where MCP is invisible to the LLM with per-query session lifecycle; choose Approach C for security-first single-server scenarios needing persistent sessions with auto-reconnection, tool validation allowlist, and dual-mode consumption (MCP-Direct appends `/mcp` to URL, Llama Stack appends `/sse`); choose Approach D for multi-agent IT service automation needing per-user authorization headers, OpenTelemetry tracing propagation across MCP calls, per-agent YAML MCP server configuration, and LlamaStack-delegated MCP session lifecycle. MCP servers are registered with `mcp_endpoint={\"uri\": url}` and built with FastMCP using `transport=\"streamable-http\"`; Kubernetes discovery is namespace-scoped with transport type set by `mcp.transport` label (default streamable-http); Approach B wraps all MCP calls inside `execute_loki_query()` creating a new `MCPClient` per invocation with JSON-RPC initialize handshake; Approach C's `check_mcp_server_tools()` logs warnings at startup for unrecognized tools without blocking; Approach D injects per-request headers into LlamaStack Responses API MCP tool definitions and supports `/health` endpoints via FastMCP `custom_route` for Kubernetes probes. CrewAI MCP is not native, requiring entries in both `_TOOL_CLASS_BY_NAME` and `_SERVER_TOOL_NAME_HINTS` mapping tables; Approach B creates new `MCPClient` and `httpx.AsyncClient` per query with no connection pooling; Approach C's Pydantic tool validation is only active in MCP-Direct mode -- Llama Stack bypasses it, creating a prompt injection risk; pg-airman-mcp uses `mcp_readonly` user in `restricted` access mode with `allowCommentInRestricted: false` and supports multiple replicas requiring Service-level session affinity; Approach D's `AUTHORITATIVE_USER_ID` format varies -- ServiceNow strips `-{digits}` suffix via `re.sub(r\"-\\d+$\", \"\", raw)` while Zammad parses full `email-ticketid` format via `parse_email_and_ticket_id`, `dummy_parameter` exists in Zammad tools because MCP validation fails without at least one parameter, and LlamaStack manages the MCP session lifecycle internally so the agent has no control over session reuse, timeouts, or reconnection behavior."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, llamastack, langchain, langgraph, python, httpx, openai-sdk, pydantic]
+  tech_stack: [fastapi, llamastack, langchain, langgraph, python, httpx, openai-sdk, pydantic, zammad, servicenow]
   ai_pattern: [agents, model-serving, data-governance]
   platform: [llamastack, vllm, rhoai, openshift, kubernetes, kserve]
   data_layer: [postgresql, pgvector]
@@ -22,6 +22,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
     notes: "Persistent MCP session with pg-airman-mcp for PostgreSQL governance tools, tool validation allowlist with Pydantic schemas, dual consumption via MCP-Direct (backend agentic loop) and Llama Stack (toolgroup registration)"
     approach: "C"
+  - quickstart: "it-self-service-agent"
+    repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
+    notes: "MCP servers (Zammad ticketing, ServiceNow) built with FastMCP, invoked via LlamaStack Responses API native MCP tool type with per-request AUTHORITATIVE_USER_ID and tracing headers"
+    approach: "D"
 ---
 
 # MCP Tool Integration
@@ -541,16 +545,175 @@ MCP tools are presented to the LLM as standard function definitions. The LLM sel
 
 ---
 
+## Approach D: LlamaStack Responses API Native MCP with Per-Request Auth Headers (from it-self-service-agent)
+
+### When to Use
+
+Use this approach when MCP servers are consumed via LlamaStack's Responses API native MCP tool type, where LlamaStack handles the MCP session lifecycle and tool execution internally. This approach suits scenarios where: multiple MCP servers wrap enterprise systems (ticketing, ITSM, HR), each request must carry per-user authorization headers (e.g., `AUTHORITATIVE_USER_ID` for user impersonation), the agent framework uses LlamaStack Responses API as the primary inference interface, MCP servers are configured per-agent in YAML rather than registered via an API, and OpenTelemetry tracing context needs to propagate across MCP tool calls.
+
+### Differences from Approaches A, B, and C
+
+| Aspect | Approach A (Multi-Framework MCP) | Approach B (MCP as Transport) | Approach C (Persistent Session) | Approach D (LlamaStack Native MCP) |
+|--------|----------------------------------|-------------------------------|--------------------------------|-------------------------------------|
+| MCP server count | Multiple, dynamically registered | Single, hardcoded via env var | Single, hardcoded via env var | Multiple, per-agent YAML config |
+| Registration | LlamaStack toolgroups API | None | MCP-Direct: none; Llama Stack: toolgroup | None (MCP server URLs in agent YAML config) |
+| Discovery | Kubernetes MCPServer CRDs + labeled Services | None | None | None (URLs configured per-agent in YAML) |
+| Client library | LlamaStack native, langchain-mcp-adapters, httpx, CrewAI shims | Custom MCPClient (httpx) | MCP SDK (streamablehttp_client + ClientSession) | LlamaStack Responses API (delegates MCP to LlamaStack server) |
+| Session lifecycle | Framework-managed or module-level cache | Per-query | Persistent (startup to shutdown) | Delegated to LlamaStack (per-request) |
+| Tool visibility to LLM | LLM sees MCP tools directly | MCP hidden behind LangChain tools | LLM sees tools (converted to OpenAI format) | LLM sees MCP tools via LlamaStack Responses API |
+| Tool security | Framework-managed registration | None | Hard-coded allowlist + Pydantic | LlamaStack-managed + per-request AUTHORITATIVE_USER_ID header |
+| Auth propagation | Not built in | Not applicable | None (MCP-Direct has no auth headers) | Per-request headers: user ID, tracing context, service tokens |
+| MCP server builder | External MCP servers | External Loki MCP server | External pg-airman-mcp | FastMCP with streamable-http transport |
+
+### Data Flow
+
+1. Agent configuration YAML lists MCP servers with `name` and `uri` (e.g., `snow` at `http://mcp-self-service-agent-snow:8000/mcp`)
+2. During `create_response()`, the agent builds a tools array including MCP tool definitions with `type: "mcp"`, `server_label`, `server_url`, and per-request `headers`
+3. Headers include `AUTHORITATIVE_USER_ID` (authenticated user's email), OpenTelemetry `traceparent`/`tracestate` (if tracing active), and `SERVICE_NOW_TOKEN` (if available)
+4. The agent calls `self.async_llama_client.responses.create(input=messages, model=model, tools=tools_to_use)`
+5. LlamaStack Responses API discovers available tools from the MCP server, presents them to the LLM, and executes tool calls as needed
+6. MCP server receives tool call with headers, extracts user identity, and performs the operation (e.g., create ServiceNow ticket, get Zammad ticket info)
+7. MCP server returns tool result to LlamaStack, which passes it back to the LLM for response synthesis
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| Agent (responses_agent.py) | LlamaStack server | HTTP (AsyncLlamaStackClient) | Responses API with MCP tool definitions |
+| LlamaStack server | MCP server (snow) | HTTP (streamable-http) | ServiceNow ticket operations |
+| LlamaStack server | MCP server (zammad) | HTTP (streamable-http) | Zammad ticket management |
+| MCP server (snow) | ServiceNow API / mock-service-now | HTTP | Laptop refresh ticket creation, employee lookup |
+| MCP server (zammad) | Zammad REST API (via basher) | HTTP | Ticket tagging, state updates, customer lookup |
+
+### Key Integration Points
+
+#### Per-Agent MCP Server Configuration in YAML
+
+Each agent's YAML configuration specifies which MCP servers are available, their URIs, and approval requirements.
+
+```yaml
+# agent-service/config/agents/laptop-refresh-agent.yaml (lines 8-16)
+mcp_servers:
+  - name: "snow"
+    uri: "http://mcp-self-service-agent-snow:8000/mcp"
+    require_approval: "never"
+knowledge_bases: ["laptop-refresh"]
+```
+
+#### MCP Tool Definition with Per-Request Headers
+
+The agent builds MCP tool definitions at runtime, injecting per-request headers for user authorization, tracing, and service token propagation.
+
+```python
+# agent-service/src/agent_service/langgraph/responses_agent.py (lines 216-265)
+for server_config in mcp_server_configs:
+    server_name = server_config.get("name")
+    server_uri = server_config.get("uri")
+
+    mcp_tool: Dict[str, Any] = {
+        "type": "mcp",
+        "server_label": server_name,
+        "server_url": server_uri,
+        "require_approval": server_config.get("require_approval", "never"),
+    }
+
+    tool_headers = {}
+    if authoritative_user_id:
+        tool_headers["AUTHORITATIVE_USER_ID"] = authoritative_user_id
+    if tracingIsActive():
+        inject(tool_headers)  # Inject traceparent/tracestate
+    snow_api_key = os.environ.get("SERVICENOW_API_KEY")
+    if snow_api_key:
+        tool_headers["SERVICE_NOW_TOKEN"] = snow_api_key
+    if tool_headers:
+        mcp_tool["headers"] = tool_headers
+
+    tools_to_use.append(mcp_tool)
+```
+
+#### Per-State MCP Tool Toggling
+
+The YAML state machine configuration supports `uses_tools` and `uses_mcp_tools` flags per state, allowing states like intent classification to skip MCP tool calls (reducing latency) while processing states use full tool access.
+
+```python
+# agent-service/src/agent_service/langgraph/lg_flow_state_machine.py (lines 183-206)
+if action_config:
+    skip_all_tools = self._is_config_disabled(
+        action_config.get("uses_tools", state_config.get("uses_tools", "yes")))
+    skip_mcp_servers_only = self._is_config_disabled(
+        action_config.get("uses_mcp_tools", state_config.get("uses_mcp_tools", "yes")))
+```
+
+#### FastMCP Server with Auth Header Extraction
+
+MCP servers built with FastMCP extract the `AUTHORITATIVE_USER_ID` from request headers to perform user-scoped operations. The shared `mcp_common.headers.header_first` utility handles header extraction.
+
+```python
+# mcp-servers/snow/src/snow/server.py (lines 108-148)
+@mcp.tool()
+@trace_mcp_tool()
+def open_laptop_refresh_ticket(
+    employee_name: str, business_justification: str,
+    servicenow_laptop_code: str, ctx: Context[Any, Any],
+) -> str:
+    """Open a ServiceNow laptop refresh ticket for an employee."""
+    authoritative_user_id = _snow_authoritative_user_id_for_email(ctx)
+    api_token = header_first(ctx, "SERVICE_NOW_TOKEN")
+    # ... create ticket using ServiceNowClient with user's sys_id
+
+# mcp-servers/zammad/src/zammad_mcp/server.py (lines 132-142)
+def _authorize_ticket(ctx: Context[Any, Any]) -> tuple[str, int, int]:
+    raw = header_first(ctx, "AUTHORITATIVE_USER_ID", "authoritative_user_id")
+    email, ticket_id = parse_email_and_ticket_id(raw)
+    cust_uid = assert_ticket_customer_matches_basher(ticket_id, email)
+    return email, ticket_id, cust_uid
+```
+
+#### OpenTelemetry Tracing Propagation
+
+Tracing context is propagated from the agent service to MCP servers via HTTP headers, enabling distributed tracing across the entire request path (agent -> LlamaStack -> MCP -> backend system).
+
+```python
+# agent-service/src/agent_service/langgraph/responses_agent.py (lines 246-255)
+if tracingIsActive():
+    inject(tool_headers)  # OpenTelemetry context propagation
+    logger.debug("Injected tracing headers for MCP server",
+                 server_name=server_name, header_keys=list(tool_headers.keys()))
+
+# mcp-servers/mcp-common/src/mcp_common/tracing.py
+# Shared tracing decorator for MCP tool functions
+```
+
+### Prompt / Chain Patterns
+
+MCP tools are discovered and invoked by LlamaStack Responses API. The LLM receives tool definitions from the MCP servers (via LlamaStack's built-in MCP support) and decides when to call them based on the conversation context and the state machine prompt. The agent's YAML prompt explicitly instructs the LLM to use specific tools (e.g., "use the open_laptop_refresh_ticket tool to create the ticket", "use the get_employee_laptop_info tool to get the laptop information") and includes critical guardrails around tool usage (e.g., "CRITICAL: If an employee-info mcp server is unavailable, don't proceed").
+
+The `allowed_tools` configuration in YAML states can restrict which tools are available in specific states, preventing tool calls during classification or validation states.
+
+### Gotchas
+
+- LlamaStack Responses API manages the MCP session lifecycle internally. The agent code never creates or manages MCP sessions directly -- it only provides the MCP server URL and headers in the tool definition. This simplifies the agent code but means the agent has no control over session reuse, timeouts, or reconnection behavior.
+- The `AUTHORITATIVE_USER_ID` header format varies by MCP server: the ServiceNow MCP server strips a `-{digits}` suffix (for ticket flow format `email-ticketid`) via `re.sub(r"-\d+$", "", raw)` (line 28 of snow/server.py), while the Zammad MCP server parses the full `email-ticketid` format via `parse_email_and_ticket_id(raw)` (line 140 of zammad/server.py).
+- MCP servers use the `@trace_mcp_tool()` decorator from `mcp_common.tracing` for OpenTelemetry span creation. This decorator reads the injected tracing headers to create child spans, enabling end-to-end distributed tracing from the agent service through LlamaStack to the MCP server.
+- The ServiceNow MCP server supports request limits (`SERVICENOW_LAPTOP_REQUEST_LIMITS`) and duplicate avoidance (`SERVICENOW_LAPTOP_AVOID_DUPLICATES`) configured via environment variables (lines 40-71 of snow/server.py). These are validated at server startup and stored on the FastMCP app instance.
+- The Zammad MCP server delegates actual ticket operations to a "basher" MCP client (`call_basher_tool` in basher_client.py), which calls a separate Zammad API wrapper. The `assert_ticket_customer_matches_basher` function (line 141 of zammad/server.py) verifies that the authenticated user owns the ticket before allowing operations.
+- The `require_approval` field in MCP tool definitions is set to `"never"` in the agent YAML configs (line 15 of laptop-refresh-agent.yaml). LlamaStack Responses API uses this to determine whether to auto-execute tool calls or require user confirmation.
+- Both MCP servers expose a `/health` endpoint (snow: line 102, zammad: line 127) for Kubernetes liveness/readiness probes. The FastMCP `custom_route` decorator is used for these non-MCP endpoints.
+- The `dummy_parameter` argument in several Zammad MCP tools (e.g., `mark_as_agent_managed_laptop_refresh`, line 149 of zammad/server.py) exists because "validation fails unless there is at least one parameter" in the MCP tool definition.
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Multi-Framework MCP) | Approach B (MCP as Transport Layer) | Approach C (Persistent Session + Validation) |
-|----------|----------------------------------|-------------------------------------|---------------------------------------------|
-| Number of MCP servers | Multiple, dynamically added | Single, known at deploy time | Single, known at deploy time |
-| Registration/discovery | LlamaStack API + Kubernetes CRDs/Services | Environment variable only | Env var (MCP-Direct) or toolgroup registration (Llama Stack) |
-| Agent framework | Multiple (LlamaStack, LangGraph, CrewAI) | LangChain tools inside LangGraph | MCP-Direct (custom loop) or Llama Stack (delegated) |
-| MCP visibility to LLM | LLM sees MCP tools directly | MCP hidden behind LangChain tools | LLM sees MCP tools directly (converted to OpenAI format) |
-| Session management | Framework-managed or cached at module level | Per-query (create, use, dispose) | Persistent (startup to shutdown) with auto-reconnection |
-| Tool security | Framework-managed registration | None | Hard-coded allowlist + Pydantic schema validation |
-| MCP client library | Various (LlamaStack native, langchain-mcp-adapters, httpx, CrewAI shims) | Custom MCPClient (httpx) | MCP SDK (streamablehttp_client + ClientSession) |
-| Use case | Extensible tool platform with UI management | Fixed integration with specific backend service | Data governance copilot with security-first tool access |
-| Complexity | Higher (registration API, discovery, multi-framework) | Lower (single client, single server, no management layer) | Moderate (persistent session, validation layer, dual provider) |
+| Criteria | Approach A (Multi-Framework MCP) | Approach B (MCP as Transport Layer) | Approach C (Persistent Session + Validation) | Approach D (LlamaStack Native MCP) |
+|----------|----------------------------------|-------------------------------------|---------------------------------------------|-------------------------------------|
+| Number of MCP servers | Multiple, dynamically added | Single, known at deploy time | Single, known at deploy time | Multiple, per-agent YAML config |
+| Registration/discovery | LlamaStack API + Kubernetes CRDs/Services | Environment variable only | Env var (MCP-Direct) or toolgroup registration (Llama Stack) | None (URLs in agent YAML config) |
+| Agent framework | Multiple (LlamaStack, LangGraph, CrewAI) | LangChain tools inside LangGraph | MCP-Direct (custom loop) or Llama Stack (delegated) | LlamaStack Responses API (delegated) |
+| MCP visibility to LLM | LLM sees MCP tools directly | MCP hidden behind LangChain tools | LLM sees MCP tools directly (converted to OpenAI format) | LLM sees MCP tools via LlamaStack Responses API |
+| Session management | Framework-managed or cached at module level | Per-query (create, use, dispose) | Persistent (startup to shutdown) with auto-reconnection | Delegated to LlamaStack (per-request) |
+| Tool security | Framework-managed registration | None | Hard-coded allowlist + Pydantic schema validation | LlamaStack-managed + per-request auth headers |
+| Auth propagation | Not built in | Not applicable | None | Per-request: AUTHORITATIVE_USER_ID, tracing headers, service tokens |
+| MCP client library | Various (LlamaStack native, langchain-mcp-adapters, httpx, CrewAI shims) | Custom MCPClient (httpx) | MCP SDK (streamablehttp_client + ClientSession) | None (LlamaStack handles MCP protocol) |
+| Use case | Extensible tool platform with UI management | Fixed integration with specific backend service | Data governance copilot with security-first tool access | Multi-agent IT service automation with per-user tool authorization |
+| Complexity | Higher (registration API, discovery, multi-framework) | Lower (single client, single server, no management layer) | Moderate (persistent session, validation layer, dual provider) | Lower (LlamaStack handles MCP, agent only provides URLs and headers) |
