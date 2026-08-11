@@ -1,7 +1,7 @@
 ---
 name: openshift-oauth-proxy-sidecar
 description: OAuth proxy sidecar with TLS re-encryption, session secrets, and auth-delegator RBAC
-summary: "Adds an origin-oauth-proxy sidecar (quay.io/openshift/origin-oauth-proxy:4.17) to a Deployment for platform-native OpenShift OAuth authentication with TLS termination (HTTPS 8888, HTTP 8887), cookie-based sessions, and token validation through a TLS re-encryption Route, without modifying application code. Use when OpenShift-deployed applications need transparent OAuth with configurable path exclusions (--skip-auth-regex), token delegation (--openshift-delegate-urls), and user identity forwarding (--pass-user-headers=true) to a backend on localhost:8000. Requires Service annotated with service.alpha.openshift.io/serving-cert-secret-name for auto-provisioned TLS, ServiceAccount with oauth-redirectreference annotation pointing to the Route name, system:auth-delegator ClusterRoleBinding (name includes Release.Namespace to avoid cross-namespace conflicts), and session secret auto-generated via randAlphaNum 32 if not overridden. The /validate endpoint must be in --skip-auth-regex because LlamaStack's auth provider calls back on HTTP port 8887 for token validation creating a circular auth dependency if protected; TLS and session-secret volumes must be defined in values.yaml under volumes: rather than inline in the deployment template."
+summary: "Adds an origin-oauth-proxy sidecar (quay.io/openshift/origin-oauth-proxy:4.17) to a Deployment for platform-native OpenShift OAuth authentication with TLS termination (HTTPS 8888, HTTP 8887), cookie-based sessions, and token validation through a TLS re-encryption Route, without modifying application code. Approach A targets Deployments using --openshift-delegate-urls for token delegation with --pass-user-headers=true and configurable --skip-auth-regex to forward identity to a backend on localhost:8000; Approach B conditionally includes a Red Hat ose-oauth-proxy (pinned by digest) in a Kubeflow Notebook, using inject-auth annotation on RHOAI v2+ via .Capabilities.APIVersions.Has detection and manual sidecar with --openshift-sar on older versions, requiring no Route or ClusterRoleBinding since the Notebook controller handles routing. Requires Service annotated with service.alpha.openshift.io/serving-cert-secret-name for auto-provisioned TLS, ServiceAccount with oauth-redirectreference annotation pointing to the Route name, system:auth-delegator ClusterRoleBinding (name includes Release.Namespace to avoid cross-namespace conflicts), and session secret auto-generated via randAlphaNum 32 if not overridden. The /validate endpoint must be in --skip-auth-regex because LlamaStack's auth provider calls back on HTTP port 8887 for token validation creating a circular auth dependency if protected; Approach B's .Capabilities.APIVersions.Has requires a live cluster connection -- helm template always returns false, including the sidecar regardless of RHOAI version; TLS and session-secret volumes must be defined in values.yaml under volumes: rather than inline in the deployment template."
 metadata:
   type: deployment-pattern
 tags:
@@ -13,6 +13,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
     notes: "OAuth proxy sidecar fronting FastAPI backend with TLS re-encryption Route and skip-auth for /validate"
     approach: "A"
+  - quickstart: "llm-cpu-serving"
+    repo: "https://github.com/rh-ai-quickstart/llm-cpu-serving"
+    notes: "Conditional OAuth proxy in Kubeflow Notebook -- uses inject-auth annotation on RHOAI v2+, manual ose-oauth-proxy sidecar on older versions"
+    approach: "B"
 ---
 
 # OpenShift OAuth Proxy Sidecar
@@ -162,7 +166,91 @@ stringData:
 - The ClusterRoleBinding name includes `{{ .Release.Namespace }}` to avoid conflicts across namespaces (see `rbac.yaml` line 57)
 - Both TLS and session secret Volumes are defined in `values.yaml` under `volumes:` rather than inline in the deployment template (see `values.yaml` lines 92-101)
 
+---
+
+## Approach B: Conditional OAuth Proxy in Kubeflow Notebook with RHOAI Version Detection (from llm-cpu-serving)
+
+### When to Use
+
+When deploying a Kubeflow Notebook workbench that must work across both newer RHOAI versions (v2+, which handle auth injection natively) and older RHOAI versions (which require a manual OAuth proxy sidecar). This approach avoids maintaining two separate chart versions.
+
+### Differences from Approach A
+
+- Uses `.Capabilities.APIVersions.Has "datasciencecluster.opendatahub.io/v2"` to detect RHOAI version at template time, conditionally including the sidecar only on older versions
+- On newer RHOAI: uses `notebooks.opendatahub.io/inject-auth: 'true'` annotation (operator handles auth injection)
+- On older RHOAI: uses `notebooks.opendatahub.io/inject-oauth: 'true'` annotation plus a manual `ose-oauth-proxy` sidecar
+- The sidecar targets a Kubeflow Notebook (not a Deployment), using `--openshift-sar` for notebook-specific authorization
+- Uses the Red Hat `ose-oauth-proxy` image pinned by digest rather than the upstream `origin-oauth-proxy` image
+- No Route or ClusterRoleBinding is needed -- the Notebook controller handles service creation and routing
+
+### Implementation
+
+```yaml
+# helm/templates/workbench.yaml (excerpt)
+apiVersion: kubeflow.org/v1
+kind: Notebook
+metadata:
+  annotations:
+    {{- if .Capabilities.APIVersions.Has "datasciencecluster.opendatahub.io/v2" }}
+    notebooks.opendatahub.io/inject-auth: 'true'
+    {{- else }}
+    notebooks.opendatahub.io/inject-oauth: 'true'
+    {{- end }}
+spec:
+  template:
+    spec:
+      containers:
+        - name: anythingllm
+          # ... main workbench container ...
+        {{- if not (.Capabilities.APIVersions.Has "datasciencecluster.opendatahub.io/v2") }}
+        - name: oauth-proxy
+          image: 'registry.redhat.io/openshift4/ose-oauth-proxy@sha256:4bef31eb...'
+          args:
+            - '--provider=openshift'
+            - '--https-address=:8443'
+            - '--http-address='
+            - '--openshift-service-account=anythingllm'
+            - '--cookie-secret-file=/etc/oauth/config/cookie_secret'
+            - '--cookie-expire=24h0m0s'
+            - '--tls-cert=/etc/tls/private/tls.crt'
+            - '--tls-key=/etc/tls/private/tls.key'
+            - '--upstream=http://localhost:8888'
+            - '--upstream-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+            - '--skip-provider-button'
+            - '--openshift-sar={"verb":"get","resource":"notebooks","resourceAPIGroup":"kubeflow.org","resourceName":"anythingllm","namespace":"{{ .Release.Namespace }}"}'
+          ports:
+            - containerPort: 8443
+              name: oauth-proxy
+          volumeMounts:
+            - mountPath: /etc/oauth/config
+              name: oauth-config
+            - mountPath: /etc/tls/private
+              name: tls-certificates
+        {{- end }}
+```
+
+### Gotchas
+
+- The `.Capabilities.APIVersions.Has` check requires a live cluster connection -- `helm template` (dry-run) will always return false, causing the sidecar to be included in template output regardless of RHOAI version (see `helm/templates/workbench.yaml`)
+- The `--openshift-sar` flag uses a Notebook-specific SubjectAccessReview (`"resource":"notebooks","resourceAPIGroup":"kubeflow.org"`) rather than a generic secret-based check as in Approach A (see `helm/templates/workbench.yaml`)
+- The OAuth proxy upstream is `http://localhost:8888` (Jupyter port) rather than `http://localhost:8000` (FastAPI) as in Approach A (see `helm/templates/workbench.yaml`)
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A | Approach B |
+|----------|-----------|-----------|
+| Target resource | Deployment | Kubeflow Notebook |
+| Version compatibility | Always includes sidecar | Conditional: inject-auth on v2+, sidecar on older |
+| OAuth proxy image | `origin-oauth-proxy:4.17` (upstream) | `ose-oauth-proxy` (Red Hat, pinned by digest) |
+| Auth check method | `--openshift-delegate-urls` (token delegation) | `--openshift-sar` (notebook-level RBAC) |
+| Route creation | Explicit Route resource in chart | Notebook controller handles routing |
+| ClusterRoleBinding | Required for `system:auth-delegator` | Not needed |
+
 ## Related Patterns
 
-- `helm-umbrella-all-remote-ai-arch-deps.md` -- the umbrella chart this sidecar is part of
-- `helm-rbac-toolhive-mcp-discovery.md` -- additional RBAC rules in the same Role
+- `helm-umbrella-all-remote-ai-arch-deps.md` -- the umbrella chart this sidecar is part of (Approach A)
+- `helm-rbac-toolhive-mcp-discovery.md` -- additional RBAC rules in the same Role (Approach A)
+- `helm-workbench-sqlite-sidecar-api-key-injection.md` -- the SQLite sidecar that runs alongside this OAuth proxy in Approach B
+- `helm-workbench-notebook-job-exec-git-clone.md` -- alternative workbench pattern that also uses inject-oauth annotation

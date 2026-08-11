@@ -1,14 +1,14 @@
 ---
 name: model-serving-app
 description: "Deploys and serves AI models via KServe/vLLM with optional orchestration layers, no custom app backend"
-summary: "Deploys and serves AI models on RHOAI via KServe InferenceServices with vLLM ServingRuntimes in RawDeployment mode, focusing on model deployment, inference configuration, GPU resource management, and optional multi-model orchestration via TrustyAI GuardrailsOrchestrator. Choose over rag-chatbot when no vector database or retrieval pipeline is needed, over agentic-app when no agent framework (LangGraph, LlamaStack, CrewAI) manages tool dispatch or multi-step reasoning, and over vendor-integration when all components are RHOAI-native (KServe, vLLM, TrustyAI); Approach A suits Jupyter-based interactive testing while Approach B suits production-ready chatbot applications with guardrail monitoring. Approach A coordinates safety detector KServe InferenceServices (gibberish, prompt injection, HAP, regex PII) around vLLM-served Llama 3.2 3B Instruct with OCI modelcar storage and Jupyter workbench; Approach B adds FastAPI backend with HTML/JS chat UI (SSE streaming, OpenShift Route with HAProxy timeout annotations), R Shiny dashboard with Prometheus metrics (per-detector, per-direction) and ServiceMonitor, MinIO + HuggingFace Hub init container for detector models, Lingua language detector, gRPC sentence chunker, CPU/GPU-configurable detectors via Helm values, client-side regex pre-filtering in 13 languages, ConfigMap-mounted system prompt, and BYO model support via conditional `model.endpoint`/`model.port` Helm values. Do not use when the app requires a persistent data store, custom backend business logic beyond guardrail proxying, document retrieval pipelines, agent-based tool dispatch, or ISV product integration -- this archetype covers RHOAI-native model serving infrastructure without an application layer (Approach A) or with a thin guardrail-proxying application layer (Approach B)."
+summary: "Deploys and serves AI models on RHOAI via KServe InferenceServices with vLLM ServingRuntimes (RawDeployment or Standard/Knative mode), optionally coordinating multi-model safety detection through TrustyAI GuardrailsOrchestrator, without requiring a full custom application backend or persistent data store. Choose over rag-chatbot when no vector DB or retrieval pipeline is needed, over agentic-app when no agent framework (LangGraph, LlamaStack, CrewAI) manages tool dispatch, and over vendor-integration when all components are RHOAI-native; Approach A suits Jupyter-based GPU testing with GuardrailsOrchestrator coordinating four detectors (gibberish, prompt injection, HAP, regex PII) via `guardrails-detector-huggingface-runtime` around Llama 3.2 3B Instruct with OCI modelcar, Approach B adds production chatbot with FastAPI + HTML/JS SSE chat UI (HAProxy Route timeout 300s), R Shiny Prometheus dashboard (per-detector/per-direction via ServiceMonitor), MinIO + HuggingFace Hub init container for detector models, Lingua language detector, gRPC sentence chunker, regex pre-filtering in 13 languages, 100-char input limit, ConfigMap system prompt, `enableBuiltInDetectors: true`, and BYO model via conditional Helm rendering (`{{ if not .Values.model }}`), and Approach C runs CPU-only TinyLlama-1.1B via `vllm-cpu-rhel9` (Intel AVX512 preferred) in Knative mode with AnythingLLM workbench (SQLite sidecar API key provisioning + init Job workspace creation), Llama Stack Distribution playground with inline Milvus RAG and `llama-stack-client` Job for HR document seeding, and tool calling (`--enable-auto-tool-choice --tool-call-parser hermes`). Critical config: A/B use RawDeployment with OCI modelcar while C uses `serving.kserve.io/deploymentMode: Standard` with `VLLM_CPU_KVCACHE_SPACE` for CPU KV-cache tuning and `maxModelLen: 2048`; B exposes Routes with `haproxy.router.openshift.io/timeout: 300s` for SSE and configures detector GPU/CPU via `detectors.hap.useGpu`/`detectors.promptInjection.useGpu` Helm values. Gotchas: Approach C requires OpenShift Service Mesh and Serverless for Knative deployment (not needed by A/B RawDeployment), the vLLM CPU image is Intel-compiled (suggest m6i.4xlarge equivalent), and do not use this archetype when the app requires persistent data stores, custom business logic beyond guardrail proxying, document retrieval pipelines, agent-based tool dispatch, or ISV product integration."
 metadata:
   type: archetype
 tags:
-  tech_stack: [jupyter, python, fastapi, r-shiny]
+  tech_stack: [jupyter, python, fastapi, r-shiny, anythingllm, llama-stack]
   ai_pattern: [model-serving, guardrails]
   platform: [kserve, vllm, rhoai, openshift]
-  data_layer: []
+  data_layer: [milvus]
 source_examples:
   - quickstart: "guardrailing-llms"
     repo: "https://github.com/rh-ai-quickstart/guardrailing-llms"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/lemonade-stand-assistant"
     notes: "Customer service chatbot with TrustyAI GuardrailsOrchestrator (HAP, prompt injection, language detection, regex competitor blocking), custom FastAPI backend with chat UI and Prometheus metrics, and R Shiny monitoring dashboard for real-time guardrail visualization"
     approach: "B"
+  - quickstart: "llm-cpu-serving"
+    repo: "https://github.com/rh-ai-quickstart/llm-cpu-serving"
+    notes: "CPU-only vLLM serving of TinyLlama-1.1B via KServe ServingRuntime with OCI modelcar storage, AnythingLLM workbench for chat, and Llama Stack Distribution playground with inline Milvus RAG and HR document seeding"
+    approach: "C"
 ---
 
 # Model Serving App
@@ -46,6 +50,7 @@ A model serving app deploys one or more AI models on Red Hat OpenShift AI via KS
 |------------|---------------------|
 | guardrailing-llms | Multi-model deployment with TrustyAI GuardrailsOrchestrator coordinating four safety detector services (gibberish, prompt injection, hate/profanity, regex PII) around a vLLM-served Llama 3.2 3B Instruct model, with a Jupyter workbench for interactive healthcare demo |
 | lemonade-stand-assistant | Customer service chatbot (FastAPI + HTML/JS chat UI) with TrustyAI GuardrailsOrchestrator coordinating HAP, prompt injection, language detection, and regex competitor blocking detectors around vLLM-served Llama 3.2 3B Instruct, with R Shiny monitoring dashboard for real-time guardrail metrics |
+| llm-cpu-serving | CPU-only vLLM serving TinyLlama-1.1B via dedicated CPU ServingRuntime (no GPU required), with AnythingLLM workbench for chat and Llama Stack Distribution playground with inline Milvus RAG and HR document seeding |
 
 ## Decision Criteria
 
@@ -97,18 +102,52 @@ When the model serving and guardrails pattern needs a complete application layer
 
 ---
 
+## Approach C: CPU-Only Lightweight Serving with AnythingLLM Workbench (from llm-cpu-serving)
+
+### When to Use
+
+When the deployment target has no GPU available or GPU is not necessary, and the goal is to quickly spin up a minimal vLLM instance serving a small model (e.g., TinyLlama 1.1B) on CPU with an out-of-the-box chat interface (AnythingLLM) and an optional Llama Stack Distribution playground with inline RAG capabilities -- no custom backend code or guardrails orchestration required.
+
+### Differences from Approach A
+
+- **Hardware requirements:** Approach A requires GPU resources for vLLM-served LLM and multiple detector models; Approach C requires CPU only (minimum 2 cores / 4Gi memory, recommended 32 cores / 64Gi memory) with no GPU (`README.md`)
+- **vLLM runtime:** Approach A uses the standard GPU-based vLLM ServingRuntime; Approach C uses a dedicated CPU-optimized vLLM image (`registry.redhat.io/rhaii/vllm-cpu-rhel9`) with `VLLM_CPU_KVCACHE_SPACE` environment variable for CPU KV-cache tuning (`helm/templates/servingruntime.yaml`)
+- **Deployment mode:** Approach A uses RawDeployment mode for KServe InferenceServices; Approach C uses Standard (Knative) deployment mode with `serving.kserve.io/deploymentMode: Standard` and `networking.knative.dev/visibility: cluster-local` labels (`helm/templates/inferenceservice.yaml`)
+- **Model size and packaging:** Approach A serves Llama 3.2 3B Instruct; Approach C serves TinyLlama-1.1B-Chat-v1.0 via OCI modelcar image (`oci://quay.io/rh-aiservices-bu/tinyllama:1.0`) with `maxModelLen: 2048` and `maxOutputTokens: 512` (`helm/values.yaml`)
+- **Orchestration:** Approach A uses TrustyAI GuardrailsOrchestrator for multi-model coordination; Approach C has no orchestration layer -- the model serves directly
+- **Frontend:** Approach A uses Jupyter Notebook workbench for interactive testing; Approach C uses AnythingLLM deployed as a Kubeflow Notebook workbench (`kubeflow.org/v1 Notebook` CR in `helm/templates/workbench.yaml`) with a SQLite sidecar (`keinos/sqlite3:latest`) that auto-provisions an API key (`sk-automation-workspace-setup`) for workspace automation
+- **Playground layer:** Approach C includes a Llama Stack Distribution CR (`llamastack.io/v1alpha1 LlamaStackDistribution` in `helm/templates/playground.yaml`) providing a separate playground with remote vLLM inference provider, inline Milvus vector storage (`inline::milvus` with SQLite-backed `milvus.db`), inline sentence-transformers embeddings (`ibm-granite/granite-embedding-125m-english`), and file-search tool runtime; this is absent in Approach A
+- **RAG capability:** Approach C includes a Kubernetes Job (`helm/templates/rag-seed-job.yaml`) that seeds HR policy documents from URLs into the Llama Stack vector store using `llama-stack-client` -- the Job fetches web content, strips HTML, and indexes into a per-user vector store (hashed username from namespace RoleBindings); Approach A has no RAG capability
+- **Document seeding for AnythingLLM:** Approach C includes a curl-based init Job (`helm/templates/init_job.yaml`) that creates an AnythingLLM workspace named "Assistant to the HR Representative", sets a domain-specific system prompt for financial services HR advisory, and uploads seed documents
+- **Tool calling:** Approach C enables vLLM tool calling with `--enable-auto-tool-choice` and `--tool-call-parser hermes` args on the ServingRuntime (`helm/templates/servingruntime.yaml`), enabling function calling even on a small CPU model
+- **Intel CPU optimization:** Approach C notes the vLLM CPU image is compiled for Intel CPUs (preferably with AVX512 for compressed models) per `README.md`, suggesting AWS m6i.4xlarge equivalent instances
+- **RHOAI software dependencies:** Approach C requires Red Hat OpenShift Service Mesh and Red Hat OpenShift Serverless for KServe Standard deployment mode (`README.md`); Approach A does not require these since it uses RawDeployment mode
+
+### Typical Components
+
+- **Model serving:** KServe InferenceService with CPU-optimized vLLM ServingRuntime (`vllm-cpu`) serving TinyLlama-1.1B-Chat via OCI modelcar storage, Standard (Knative) deployment mode, no GPU required
+- **Backend:** None -- model endpoint serves directly via KServe, AnythingLLM connects to vLLM OpenAI-compatible API
+- **Frontend:** AnythingLLM deployed as a Kubeflow Notebook workbench with workspace auto-provisioning (SQLite sidecar for API key setup, curl-based init Job for workspace creation, HR-focused system prompt configuration, and seed document upload)
+- **Data layer:** Inline Milvus (SQLite-backed `milvus.db`) within Llama Stack Distribution for vector storage of seeded documents
+- **Supporting:** Llama Stack Distribution CR (`LlamaStackDistribution`) as optional playground layer with remote vLLM inference provider, inline sentence-transformers embedding (`ibm-granite/granite-embedding-125m-english`), inline Milvus vector_io, file-search tool runtime, and MCP tool protocol support; Kubernetes Job (`rag-seed-job`) for seeding HR documents from URLs into the vector store using `llama-stack-client`; ConfigMap-based Llama Stack configuration (`llama-stack-config`)
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Jupyter-Based Testing) | Approach B (Chatbot Application with Monitoring) |
-|----------|-----------------------------------|------------------------------------------------|
-| User interface | Jupyter Notebook workbench | Browser-based HTML/JS chat UI with SSE streaming |
-| Backend | None (direct orchestrator interaction) | FastAPI proxy to GuardrailsOrchestrator |
-| Monitoring | None | R Shiny dashboard with real-time guardrail metrics |
-| Metrics | None | Prometheus-format metrics (per-detector, per-direction) with ServiceMonitor |
-| Detectors | Gibberish, prompt injection, HAP, regex PII | HAP, prompt injection, language detection (Lingua), regex competitor blocking |
-| Detector hosting | KServe InferenceServices | KServe InferenceServices (CPU/GPU configurable via Helm values) + Lingua standalone Deployment |
-| Client-side filtering | None | Regex pre-filtering for competitor fruit names in 13 languages before orchestrator |
-| Model storage | OCI modelcar for all models | MinIO + HuggingFace Hub init container for detectors, OCI modelcar for LLM |
-| BYO model | Not documented | Supported via `model.endpoint` and `model.port` Helm values |
-| System prompt | Not configurable | ConfigMap-mounted, changeable without image rebuild |
-| Best for | Interactive model serving exploration and demo via notebook | Production-ready customer-facing chatbot with guardrail monitoring |
+| Criteria | Approach A (Jupyter-Based Testing) | Approach B (Chatbot Application with Monitoring) | Approach C (CPU-Only Lightweight Serving) |
+|----------|-----------------------------------|------------------------------------------------|------------------------------------------|
+| User interface | Jupyter Notebook workbench | Browser-based HTML/JS chat UI with SSE streaming | AnythingLLM workbench + Llama Stack Distribution playground |
+| Backend | None (direct orchestrator interaction) | FastAPI proxy to GuardrailsOrchestrator | None (AnythingLLM connects directly to vLLM) |
+| Monitoring | None | R Shiny dashboard with real-time guardrail metrics | None |
+| Metrics | None | Prometheus-format metrics (per-detector, per-direction) with ServiceMonitor | None |
+| Hardware | GPU required | GPU required (CPU/GPU configurable per detector) | CPU only (no GPU required, minimum 2 cores / 4Gi) |
+| Model | Llama 3.2 3B Instruct (OCI modelcar) | Llama 3.2 3B Instruct (OCI modelcar) | TinyLlama-1.1B-Chat (OCI modelcar) |
+| Deployment mode | RawDeployment | RawDeployment | Standard (Knative) |
+| Orchestration | TrustyAI GuardrailsOrchestrator | TrustyAI GuardrailsOrchestrator | None |
+| Detectors | Gibberish, prompt injection, HAP, regex PII | HAP, prompt injection, language detection (Lingua), regex competitor blocking | None |
+| RAG capability | None | None | Llama Stack Distribution with inline Milvus and HR document seeding |
+| Tool calling | Not documented | Not documented | Enabled (`--enable-auto-tool-choice` with hermes parser) |
+| System prompt | Not configurable | ConfigMap-mounted, changeable without image rebuild | Configured via AnythingLLM workspace init Job |
+| RHOAI dependencies | KServe, vLLM | KServe, vLLM, TrustyAI | KServe, vLLM, OpenShift Service Mesh, OpenShift Serverless |
+| Best for | Interactive model serving exploration and demo via notebook | Production-ready customer-facing chatbot with guardrail monitoring | Quick lightweight model deployment on CPU-only environments with out-of-the-box chat and RAG playground |

@@ -17,6 +17,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/lemonade-stand-assistant"
     notes: "Flat chart with helm.sh/weight ordering, conditional LLM bypass, MinIO init container, and multi-resource template files"
     approach: "B"
+  - quickstart: "llm-cpu-serving"
+    repo: "https://github.com/rh-ai-quickstart/llm-cpu-serving"
+    notes: "Flat chart directly templates KServe ServingRuntime/InferenceService, LlamaStackDistribution CR, Kubeflow Notebook with SQLite sidecar, and dual seed Jobs"
+    approach: "A"
 ---
 
 # Helm Flat Chart with Direct CRD Templating

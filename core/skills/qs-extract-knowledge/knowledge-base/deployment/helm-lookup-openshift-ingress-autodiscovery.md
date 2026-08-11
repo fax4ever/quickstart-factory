@@ -1,7 +1,7 @@
 ---
 name: helm-lookup-openshift-ingress-autodiscovery
 description: Helm lookup function querying IngressController to auto-detect cluster domain at template time
-summary: "Solves automatic cluster application domain discovery in OpenShift Helm charts by querying the IngressController via Helm's `lookup` function in a named `app_domain` helper template, eliminating manual domain entry in `values.yaml`. Use when the chart needs the cluster's app domain (e.g., `apps.cluster.example.com`) at install time without user input; not suitable for `helm template` dry-run since `lookup` requires a live cluster connection and always falls back to `example.com`. The helper queries `operator.openshift.io/v1 IngressController/default` in `openshift-ingress-operator` namespace via `(lookup ...).status.domain`, falling back to `example.com`; the Helm service account must have read access to IngressController resources in that namespace. The `lookup` call appears twice (if-check and print) because Helm `define` blocks lack variable assignment in this pattern, and the chart may have a separate `clusterdomainurl` value for workbench/tornado settings that diverges from the auto-detected domain."
+summary: "Solves automatic cluster application domain discovery in OpenShift Helm charts by querying the IngressController via Helm's `lookup` function in a named `app_domain` helper template, eliminating manual domain entry in `values.yaml`. Use when the chart needs the cluster's app domain (e.g., `apps.cluster.example.com`) at install time without user input; not suitable for `helm template` dry-run since `lookup` requires a live cluster connection and returns empty, triggering the `example.com` fallback. The helper queries `operator.openshift.io/v1 IngressController/default` in `openshift-ingress-operator` namespace, extracts `.status.domain`, requires no chart configuration, but the Helm service account must have read access to IngressController resources in that namespace. The `lookup` call appears twice (if-check and print) because Helm `define` blocks lack variable assignment in this pattern, and the chart may have a separate `clusterdomainurl` value for workbench/tornado settings that diverges from the auto-detected domain."
 metadata:
   type: deployment-pattern
 tags:
@@ -12,6 +12,10 @@ source_examples:
   - quickstart: "guardrailing-llms"
     repo: "https://github.com/rh-ai-quickstart/guardrailing-llms"
     notes: "Helper template uses lookup on IngressController to auto-detect app domain, falls back to example.com"
+    approach: "A"
+  - quickstart: "llm-cpu-serving"
+    repo: "https://github.com/rh-ai-quickstart/llm-cpu-serving"
+    notes: "Identical app_domain helper template using lookup on IngressController, same fallback to example.com"
     approach: "A"
 ---
 
