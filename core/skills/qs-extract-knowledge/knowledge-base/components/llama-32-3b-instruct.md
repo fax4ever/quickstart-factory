@@ -1,13 +1,13 @@
 ---
 name: llama-32-3b-instruct
-description: "KServe vLLM InferenceService for Llama 3.2 3B with OCI modelcar storage and tool-calling for guardrails pipelines"
-summary: "Serves Llama 3.2 3B Instruct via KServe vLLM RawDeployment with OCI modelcar storage (oci://quay.io/redhat-ai-services/modelcar-catalog:llama-3.2-3b-instruct), eliminating HuggingFace token requirements and providing an OpenAI-compatible chat completions backend on port 8080 for TrustyAI GuardrailsOrchestrator safety pipelines with /all/ (regex, hap, prompt_injection, gibberish) and /passthrough/ detector routes. Use Approach A (guardrailing-llms) for production workloads needing tunable Helm-conditional vLLM args (enableAutoToolChoice, enableChunkedPrefill, toolCallParser: llama3_json, chatTemplate, maxModelLen: 32768, maxNumSeqs: 8), digest-pinned images, and always-on replicas wired as chat_generation backend via <name>-predictor.<namespace>.svc.cluster.local; use Approach B (lemonade-stand-assistant) for high-concurrency demos needing conditional self-hosted/MaaS toggle ({{ if not .Values.model }}), scale-to-zero (minReplicas: 0), hardcoded high-throughput args (384 seqs, 4096 context, 12288 batched tokens), tag-based rhoai-2.19-cuda image, and 20Gi memory -- both require 1 NVIDIA GPU (24GiB+ vRAM) and Memory-backed /dev/shm emptyDir (2Gi sizeLimit). A's ServingRuntime drives args from values.yaml with HF_HOME=/tmp/hf_home and chatTemplate: /app/data/template/tool_chat_template_llama3.2_json.jinja baked into the container image; B hardcodes all serving args in the template, splits tool-calling args (--enable-auto-tool-choice, --tool-call-parser=llama3_json) into InferenceService model args, sets VLLM_CONFIG_ROOT=/tmp, and uses served-model-name \"llama32\" vs A's {{.Name}} template variable. A's InferenceService hardcodes --max-model-len=20000, --dtype=half, and --gpu-memory-utilization=0.95 overriding ServingRuntime values.yaml, dual vLLM image digests exist between template default and values.yaml fallback, and chatTemplate Jinja2 path breaks if the vLLM image is updated without it; B's MaaS toggle skips all deployment when any sub-key is set under model without validating required fields, and the tag-based image may drift across RHOAI releases."
+description: "KServe vLLM InferenceService for Llama 3.2 3B with OCI modelcar storage, tool-calling, tracing, and GPU/CPU modes"
+summary: "Serves Llama 3.2 3B Instruct via KServe vLLM RawDeployment with OCI modelcar storage (oci://quay.io/redhat-ai-services/modelcar-catalog:llama-3.2-3b-instruct), eliminating HuggingFace token requirements and providing an OpenAI-compatible chat completions backend on port 8080 with tool-calling (llama3_json parser, enableAutoToolChoice) across three deployment patterns for guardrails pipelines, high-concurrency demos, and observable Llama Stack applications. Use Approach A (guardrailing-llms) for production workloads needing tunable Helm-conditional vLLM args (enableChunkedPrefill, maxModelLen: 32768, maxNumSeqs: 8), digest-pinned images, always-on replicas wired as chat_generation backend via <name>-predictor.<namespace>.svc.cluster.local, and TrustyAI GuardrailsOrchestrator with /all/ and /passthrough/ detector routes; Approach B (lemonade-stand-assistant) for high-concurrency demos needing conditional self-hosted/MaaS toggle ({{ if not .Values.model }}), scale-to-zero (minReplicas: 0), hardcoded high-throughput args (384 seqs, 4096 context, 12288 batched tokens), tag-based rhoai-2.19-cuda image, and 20Gi memory; Approach C (lls-observability) for observable Llama Stack deployments needing GPU/Xeon dual-device toggle via device-keyed maps, OpenTelemetry tracing via custom vLLM image with otlpTracesEndpoint to OTEL Collector, ConfigMap-mounted chat template via Helm Files.Get, NetworkPolicy restricting ingress to openshift-ingress + llama-stack, and standalone Helm chart supporting 24Gi GPU or 64Gi Xeon (VLLM_CPU_KVCACHE_SPACE=16) resource profiles. All approaches require 1 NVIDIA GPU (GPU mode) and Memory-backed /dev/shm emptyDir (2Gi sizeLimit); A drives args from values.yaml with HF_HOME=/tmp/hf_home and chatTemplate baked into the container at /app/data/template/tool_chat_template_llama3.2_json.jinja; B splits serving args in ServingRuntime and tool-calling args in InferenceService with VLLM_CONFIG_ROOT=/tmp and served-model-name \"llama32\"; C uses served-model-name \"llama3-2-3b\" with 50Gi PVC model cache and per-device env maps. A's InferenceService hardcodes --max-model-len=20000 overriding values.yaml 32768 and has dual vLLM image digests between template default and values.yaml fallback; B's MaaS toggle skips all deployment when any model sub-key is set without validating required fields and its tag-based image may drift across RHOAI releases; C's Xeon image requires a pre-built ImageStream in the openshift namespace, its maxModelLen default of 65000 may exceed memory capacity, and runAsNonRoot: false may conflict with restricted SCCs."
 metadata:
   type: component
 tags:
-  tech_stack: [vllm, kserve, helm]
+  tech_stack: [vllm, kserve, helm, opentelemetry]
   ai_pattern: [model-serving, guardrails]
-  platform: [kserve, vllm, rhoai, openshift]
+  platform: [kserve, vllm, rhoai, openshift, openvino]
   data_layer: []
 source_examples:
   - quickstart: "guardrailing-llms"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/lemonade-stand-assistant"
     notes: "Llama 3.2 3B Instruct with conditional self-hosted/MaaS toggle, hardcoded high-throughput vLLM args, scale-to-zero, and tag-based RHOAI vLLM image for guardrails demo"
     approach: "B"
+  - quickstart: "lls-observability"
+    repo: "https://github.com/rh-ai-quickstart/lls-observability"
+    notes: "Llama 3.2 3B Instruct with GPU/Xeon dual-device toggle, OpenTelemetry tracing via custom vLLM image, ConfigMap-mounted chat template, and network policies for Llama Stack integration"
+    approach: "C"
 ---
 
 # Llama 3.2 3B Instruct Model Server
@@ -321,16 +325,265 @@ The InferenceService enables scale-to-zero for idle GPU savings, with higher mem
 
 ---
 
+---
+
+## Approach C: GPU/Xeon Dual-Device with OpenTelemetry Tracing (from lls-observability)
+
+### When to Use
+
+Use this approach when deploying Llama 3.2 3B Instruct as the inference backend for a Llama Stack application where observability (distributed tracing) is a first-class concern, or when the deployment must support both NVIDIA GPU and Intel Xeon CPU-only nodes via a single chart with a device toggle. The lls-observability quickstart uses this pattern to serve the model behind Llama Stack with full OpenTelemetry trace export to an OTEL Collector.
+
+### Differences from Approach A
+
+- **GPU/Xeon dual-device toggle:** A single `device` value (`gpu` or `xeon`) selects the container image, environment variables, resource requests, node selectors, tolerations, and affinity rules -- all indexed from device-keyed maps in values.yaml
+- **Custom vLLM image with OTLP tracing:** Uses `quay.io/rcarrata/vllm-otlp-tracing` (GPU) or internal registry `vllm-xeon-opentelemetry` (Xeon) instead of the standard `quay.io/modh/vllm` RHOAI image -- these images have OpenTelemetry instrumentation baked in
+- **ConfigMap-mounted chat template:** The Jinja2 chat template is stored as a Helm `Files.Get` resource in a ConfigMap and volume-mounted into the container, rather than relying on the chat template being baked into the container image
+- **Standalone Helm chart:** Full independent chart with Chart.yaml, _helpers.tpl, and its own service account, vs templates embedded in a top-level chart
+- **Network policies:** Ingress restricted to openshift-ingress namespace and llama-stack pods
+- **PVC for model cache:** 50Gi persistent volume at `/root/.cache` for HuggingFace model cache
+- **S3 data connection:** Optional Secret for S3-compatible object storage to back the KServe model source
+
+### GPU/Xeon Dual-Device Toggle
+
+The chart uses a `device` value to index into device-keyed maps for images, resources, node selectors, tolerations, and affinity. Switching from GPU to Xeon requires only changing `device: "xeon"` in values.yaml:
+
+```yaml
+# From helm/03-ai-services/llama3.2-3b/values.yaml
+device: "gpu"  # Options: gpu, xeon
+image:
+  gpu:
+    repository: "quay.io/rcarrata/vllm-otlp-tracing@sha256"
+    tag: "16f83f5858fcc04bd56ea785126c04af823e8aacbeabb9db963f86d252178189"
+    chatTemplate: "/app/data/template/tool_chat_template_llama3.2_json.jinja"
+    env:
+      CUDA_VISIBLE_DEVICES: "0"
+      HF_HOME: "/root/.cache/huggingface"
+  xeon:
+    repository: 'image-registry.openshift-image-registry.svc:5000/openshift/vllm-xeon-opentelemetry'
+    tag: "v0.14.1-ubi9"
+    chatTemplate: "/app/data/template/tool_chat_template_llama3.2_json.jinja"
+    env:
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+      VLLM_CACHE_ROOT: /tmp/.cache/vllm
+      VLLM_CPU_KVCACHE_SPACE: "16"
+```
+
+The template resolves the device at render time:
+
+```yaml
+# From helm/03-ai-services/llama3.2-3b/templates/servingruntime.yaml
+{{- $device := lower (.Values.device | default "gpu") }}
+{{- $image := index .Values.image $device }}
+{{- $resources := index .Values.resources $device }}
+```
+
+Resource profiles differ significantly between devices:
+
+```yaml
+# From helm/03-ai-services/llama3.2-3b/values.yaml
+resources:
+  gpu:
+    requests:
+      nvidia.com/gpu: 1
+      memory: 16Gi
+      cpu: 2
+    limits:
+      nvidia.com/gpu: 1
+      memory: 24Gi
+      cpu: 4
+  xeon:
+    requests:
+      cpu: 16
+      memory: 32Gi
+    limits:
+      cpu: 32
+      memory: 64Gi
+```
+
+### OpenTelemetry Tracing Integration
+
+The ServingRuntime conditionally injects OTLP tracing flags and environment variables when `servingRuntime.tracing.enabled` is true. Traces are exported via gRPC to an OTEL Collector:
+
+```yaml
+# From helm/03-ai-services/llama3.2-3b/templates/servingruntime.yaml
+    {{- if .Values.servingRuntime.tracing.enabled }}
+    # tracing-specific flags and options
+    - --otlp-traces-endpoint
+    - {{ .Values.servingRuntime.tracing.otlpTracesEndpoint }}
+    - --collect-detailed-traces
+    - {{ .Values.servingRuntime.tracing.collectDetailedTraces | quote }}
+    {{- end }}
+    env:
+    {{- if .Values.servingRuntime.tracing.enabled }}
+    - name: OTEL_SERVICE_NAME
+      value: {{ .Values.servingRuntime.tracing.serviceName | quote }}
+    - name: OTEL_EXPORTER_OTLP_TRACES_INSECURE
+      value: {{ .Values.servingRuntime.tracing.insecure | quote }}
+    {{- end }}
+```
+
+```yaml
+# From helm/03-ai-services/llama3.2-3b/values.yaml
+servingRuntime:
+  tracing:
+    enabled: true
+    otlpTracesEndpoint: "grpc://otel-collector-collector.observability-hub.svc.cluster.local:4317"
+    collectDetailedTraces: "all"
+    serviceName: "vllm-llama32b"
+    insecure: true
+```
+
+### ConfigMap-Mounted Chat Template
+
+Unlike Approaches A and B which rely on the chat template file being baked into the container image, this approach stores the Jinja2 template in a ConfigMap and volume-mounts it into the container. The template file is included via Helm `Files.Get`:
+
+```yaml
+# From helm/03-ai-services/llama3.2-3b/templates/configmap-chat-template.yaml
+data:
+  tool_chat_template_llama3.2_json.jinja: |
+{{ .Files.Get "files/tool_chat_template_llama3.2_json.jinja" | nindent 4 }}
+```
+
+```yaml
+# From helm/03-ai-services/llama3.2-3b/templates/servingruntime.yaml
+    volumeMounts:
+    - name: chat-template
+      mountPath: {{ $chatTemplate | quote }}
+      subPath: tool_chat_template_llama3.2_json.jinja
+      readOnly: true
+  volumes:
+  - name: chat-template
+    configMap:
+      name: {{ include "llama3-2-3b.fullname" . }}-chat-template
+      items:
+      - key: tool_chat_template_llama3.2_json.jinja
+        path: tool_chat_template_llama3.2_json.jinja
+```
+
+### Tool-Calling with vLLM Auto Tool Choice
+
+The chart enables vLLM's built-in tool-calling support with the Llama 3 JSON parser, configured directly as ServingRuntime container args:
+
+```yaml
+# From helm/03-ai-services/llama3.2-3b/templates/servingruntime.yaml
+    - --served-model-name=llama3-2-3b
+    - --chat-template={{ $chatTemplate }}
+    - --enable-auto-tool-choice
+    - --tool-call-parser
+    - llama3_json
+```
+
+### KServe RawDeployment with OCI Modelcar
+
+The InferenceService uses the same RawDeployment mode and OCI modelcar storage as Approach A, with device-aware resource selection:
+
+```yaml
+# From helm/03-ai-services/llama3.2-3b/templates/inferenceservice.yaml
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  {{- $device := lower (.Values.device | default "gpu") }}
+  {{- $resources := index .Values.resources $device }}
+  predictor:
+    model:
+      modelFormat:
+        name: {{ .Values.inferenceService.modelFormat | default "vLLM" }}
+      resources:
+        {{- toYaml $resources | nindent 8 }}
+      runtime: llama3-2-3b
+      storageUri: {{ .Values.inferenceService.storageUri | default "oci://quay.io/redhat-ai-services/modelcar-catalog:llama-3.2-3b-instruct" }}
+```
+
+### Network Policy
+
+The chart includes a network policy restricting ingress to the model server to traffic from the openshift-ingress namespace and pods labeled as llama-stack:
+
+```yaml
+# From helm/03-ai-services/llama3.2-3b/values.yaml
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: openshift-ingress
+      ports:
+      - protocol: TCP
+        port: 8000
+    - from:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: llama-stack
+      ports:
+      - protocol: TCP
+        port: 8000
+```
+
+### Configuration (Approach C)
+
+- **Environment variables (GPU mode):**
+  - `CUDA_VISIBLE_DEVICES` - GPU device index (default: `"0"`, from `values.yaml` image.gpu.env)
+  - `HF_HOME` - HuggingFace cache directory (overridden to `/tmp/hf_home` in ServingRuntime template, from `servingruntime.yaml`)
+  - `OTEL_SERVICE_NAME` - OpenTelemetry service name (default: `"vllm-llama32b"`, from `values.yaml` servingRuntime.tracing)
+  - `OTEL_EXPORTER_OTLP_TRACES_INSECURE` - Allow insecure OTLP export (default: `true`, from `values.yaml` servingRuntime.tracing)
+
+- **Environment variables (Xeon mode):**
+  - `HOME` - Home directory (set to `/tmp`, from `values.yaml` image.xeon.env)
+  - `XDG_CACHE_HOME` - XDG cache directory (set to `/tmp/.cache`, from `values.yaml` image.xeon.env)
+  - `VLLM_CACHE_ROOT` - vLLM cache root (set to `/tmp/.cache/vllm`, from `values.yaml` image.xeon.env)
+  - `VLLM_CPU_KVCACHE_SPACE` - CPU KV cache size in GB (default: `"16"`, from `values.yaml` image.xeon.env)
+
+- **Helm values:**
+  - `device` - Device selector, `gpu` or `xeon` (default: `gpu`)
+  - `model.name` - HuggingFace model ID (default: `meta-llama/Llama-3.2-3B-Instruct`)
+  - `model.maxModelLen` - Maximum context length (default: `65000`)
+  - `servingRuntime.tracing.enabled` - Enable OTLP tracing (default: `true`)
+  - `servingRuntime.tracing.otlpTracesEndpoint` - OTEL Collector gRPC endpoint (default: `grpc://otel-collector-collector.observability-hub.svc.cluster.local:4317`)
+  - `servingRuntime.tracing.collectDetailedTraces` - Trace detail level (default: `"all"`)
+  - `servingRuntime.tensorParallelSize` - Tensor parallel size (default: `1`)
+  - `persistence.size` - PVC size for model cache (default: `50Gi`)
+  - `networkPolicy.enabled` - Enable network policy (default: `true`)
+  - `inferenceService.storageUri` - OCI modelcar URI (default: `oci://quay.io/redhat-ai-services/modelcar-catalog:llama-3.2-3b-instruct`)
+
+### Known Gotchas (Approach C)
+
+- **HF_HOME env var is overridden in the template:** The values.yaml sets `HF_HOME: "/root/.cache/huggingface"` under `image.gpu.env`, but the ServingRuntime template hardcodes `HF_HOME` to `/tmp/hf_home` before iterating device-specific env vars (and skips any `HF_HOME` key from the device env map via `{{- if ne $key "HF_HOME" }}`). The values.yaml setting for HF_HOME is effectively ignored. Found in `servingruntime.yaml` lines 49-62.
+
+- **GPU image uses sha256 in the repository field instead of tag:** The GPU image repository is `quay.io/rcarrata/vllm-otlp-tracing@sha256` and the tag field contains the digest hash. The template combines them as `repository:tag`, producing `quay.io/rcarrata/vllm-otlp-tracing@sha256:16f83f58...` which works but is unconventional -- the `@sha256` should be part of the tag or handled separately. Found in `values.yaml` lines 7-8 and `servingruntime.yaml` line 27.
+
+- **Xeon image comes from internal OpenShift registry:** The Xeon image (`image-registry.openshift-image-registry.svc:5000/openshift/vllm-xeon-opentelemetry:v0.14.1-ubi9`) requires a pre-built ImageStream in the `openshift` namespace. This image is not publicly available and must be built and pushed to the internal registry before deploying in Xeon mode. Found in `values.yaml` line 15.
+
+- **maxModelLen default of 65000 is very high for 3B model:** The `model.maxModelLen` default is set to `65000` in values.yaml, which may exceed the memory capacity on both GPU (24Gi limit) and Xeon (64Gi limit) configurations for a 3B parameter model, depending on quantization and batch size. Found in `values.yaml` line 52.
+
+- **runAsNonRoot: false in podSecurityContext:** The pod security context sets `runAsNonRoot: false` (from `values.yaml` line 37), which may conflict with restricted SCCs on OpenShift. The GPU image likely needs root access for CUDA operations but this should be documented explicitly.
+
+### Testing Notes (Approach C)
+
+- Deploy with `helm install llama3-2-3b helm/03-ai-services/llama3.2-3b/ --namespace <namespace>` with appropriate values override for `device`
+- The predictor service follows the KServe pattern `llama3-2-3b-predictor.<namespace>.svc.cluster.local` on port 80 (from OTEL Collector scrape config in `helm/02-observability/otel-collector/values.yaml`)
+- The served model name is `llama3-2-3b` (hardcoded in `servingruntime.yaml` via `--served-model-name=llama3-2-3b`)
+- Llama Stack connects to the model at `http://llama3-2-3b-predictor/v1` (from `helm/03-ai-services/llama-stack-instance/templates/configmap.yaml`)
+- Verify tracing by checking the OTEL Collector for spans with service name `vllm-llama32b`
+- For Xeon mode, ensure the `vllm-xeon-opentelemetry` ImageStream exists in the `openshift` namespace before deploying
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (guardrailing-llms) | Approach B (lemonade-stand-assistant) |
-|----------|-----------|-----------|
-| vLLM args | Helm-conditional from values.yaml | Hardcoded in template |
-| MaaS fallback | None (always self-hosted) | Conditional toggle via `{{ if not .Values.model }}` |
-| Image pinning | Digest-pinned (`@sha256:...`) | Tag-based (`rhoai-2.19-cuda`) |
-| Scaling | Always-on (`minReplicas: 1`) | Scale-to-zero (`minReplicas: 0`) |
-| Context window | 32768 tokens (or hardcoded 20000) | 4096 tokens |
-| Concurrent seqs | 8 | 384 |
-| Memory limit | 8Gi | 20Gi |
-| Config flexibility | High (values.yaml controls all args) | Low (must edit template to change args) |
-| Best for | Production workloads needing tunable config | High-concurrency demo/event with short responses |
+| Criteria | Approach A (guardrailing-llms) | Approach B (lemonade-stand-assistant) | Approach C (lls-observability) |
+|----------|-----------|-----------|-----------|
+| vLLM args | Helm-conditional from values.yaml | Hardcoded in template | Mixed: some conditional (tracing), some hardcoded (tool-calling) |
+| MaaS fallback | None (always self-hosted) | Conditional toggle via `{{ if not .Values.model }}` | None (always self-hosted) |
+| Image pinning | Digest-pinned (`@sha256:...`) | Tag-based (`rhoai-2.19-cuda`) | Digest-pinned (GPU), tag-based (Xeon) |
+| Scaling | Always-on (`minReplicas: 1`) | Scale-to-zero (`minReplicas: 0`) | Always-on (`minReplicas: 1`) |
+| Context window | 32768 tokens (or hardcoded 20000) | 4096 tokens | 65000 tokens |
+| Concurrent seqs | 8 | 384 | Not explicitly set |
+| Memory limit | 8Gi | 20Gi | 24Gi (GPU) / 64Gi (Xeon) |
+| CPU/GPU support | GPU only | GPU only | GPU and Xeon CPU via device toggle |
+| Tracing | None | None | OpenTelemetry via custom vLLM image |
+| Chat template | Baked into container image | Not configured | ConfigMap-mounted via Helm Files.Get |
+| Network isolation | None | None | NetworkPolicy restricting to ingress + llama-stack |
+| Chart structure | Embedded in top-level chart | Embedded in top-level chart | Standalone Helm chart |
+| Config flexibility | High (values.yaml controls all args) | Low (must edit template to change args) | High (device-keyed maps, tracing toggles) |
+| Best for | Production guardrails workloads | High-concurrency demo/event | Observable Llama Stack deployments on GPU or CPU |

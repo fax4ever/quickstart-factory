@@ -1,14 +1,14 @@
 ---
 name: notebooks
 description: "Jupyter notebooks for data ingestion, model download-to-S3, and Llama Stack testing in RHOAI workbenches"
-summary: "Jupyter notebooks in RHOAI workbenches handle AI quickstart data preparation and validation via two approaches: Approach A (data-governance-co-pilot) runs manually for CSV-to-PostgreSQL star-schema ingestion with SQL governance artifacts (COMMENT ON for certified/deprecated views), HuggingFace model download via snapshot_download with boto3 S3 upload using AWS_* workbench env vars, and Llama Stack 0.3.5 MCP/agent integration testing via client.alpha.agents; Approach B (RAG) automates repeatable PDF ingestion through KFP pipelines using docling DocumentConverter + HybridChunker (TEXT/PARAGRAPH filtering), storing into pgvector via Llama Stack vector_dbs.register with all-MiniLM-L6-v2 (384 dims) and rag_tool.insert, backed by ingestion-pipeline Helm subchart v0.7.5 and DSPA. Use Approach A for one-time data prep, model staging to MinIO, and Llama Stack validation in workbenches (no Helm); use Approach B when repeatable production RAG document ingestion is needed with DSPA + MinIO + Llama Stack + pgvector infrastructure -- notebooks/ directory serves dual purpose holding .ipynb files and source PDF subdirectories. Critical: Llama Stack requires SSE transport (/sse not /mcp) for MCP, Agents API for tool calling (chat.completions lacks tool_groups), model IDs with provider prefix vllm-inference/<model-name>, dynamically extracted provider_id (mcp-tools not model-context-protocol), and Approach B compiles KFP pipelines to YAML submitted to ds-pipeline-dspa:8888 with env vars captured at compilation time not pod runtime. Gotchas: MCP service names require -service suffix (pg-airman-mcp-service), data ingestion uses hardcoded localhost:5432 requiring port-forwarding, gated models need notebook_login(), workbench PVC must hold 14-16 GB per model, Approach B has vector_db_id mismatch between register (\"rag-db\") and insert (\"test\"), hardcoded pgvector credentials (postgres/rag_password), SSL verification disabled for MinIO and KFP clients, and vector table naming follows vector_store_<db_id>_v<version> convention."
+summary: "Jupyter notebooks in RHOAI workbenches handle AI quickstart data preparation, validation, and interactive demos via three approaches: Approach A (data-governance-co-pilot) runs manually for CSV-to-PostgreSQL star-schema ingestion with SQL governance artifacts (COMMENT ON for certified/deprecated views), HuggingFace model download via snapshot_download with boto3 S3 upload using AWS_* workbench env vars, and Llama Stack 0.3.5 MCP/agent testing via client.alpha.agents; Approach B (RAG) automates repeatable PDF ingestion through KFP pipelines using docling DocumentConverter + HybridChunker (TEXT/PARAGRAPH filtering), storing into pgvector via Llama Stack vector_dbs.register with all-MiniLM-L6-v2 (384 dims) and rag_tool.insert, backed by ingestion-pipeline Helm subchart v0.7.5 and DSPA; Approach C (lls-observability) provides interactive demos for RAG with Milvus, full LlamaStack evaluation (subset_of, llm_as_judge with ABCDE grading, HuggingFace dataset benchmarks, regex_parser multiple choice), and LangGraph StateGraph agents via ChatOpenAI on LlamaStack's OpenAI-compatible endpoint (/v1/openai/v1) with MCP tools bound via bind_tools. Use Approach A for one-time data prep, model staging to MinIO, and Llama Stack validation in workbenches (no Helm); Approach B when repeatable production RAG document ingestion is needed with DSPA + MinIO + pgvector infrastructure -- notebooks/ directory serves dual purpose holding .ipynb files and source PDF subdirectories; Approach C for guided capability exploration including evaluation framework and agentic integration with Milvus vector search, requiring openai_api_key=\"fake\" and use_responses_api=True on ChatOpenAI. Critical: Llama Stack requires SSE transport (/sse not /mcp) for MCP, Agents API for tool calling (chat.completions lacks tool_groups), model IDs with provider prefix vllm-inference/<model-name>, dynamically extracted provider_id (mcp-tools not model-context-protocol), Approach B compiles KFP pipelines to YAML submitted to ds-pipeline-dspa:8888 with env vars captured at compilation time not pod runtime, and Approach C uses conditional sampling (greedy at temp 0.0, else top_p) with timeout=600.0 for evaluation operations. Gotchas: MCP service names require -service suffix (pg-airman-mcp-service), data ingestion uses hardcoded localhost:5432 requiring port-forwarding, gated models need notebook_login(), workbench PVC must hold 14-16 GB per model, Approach B has vector_db_id mismatch between register (\"rag-db\") and insert (\"test\") with hardcoded pgvector credentials (postgres/rag_password) and SSL verification disabled, Approach C has model alias inconsistency across notebooks (llama32 vs llama3-2-3b) and self-judging limitation using same model as evaluator and judge, and vector table naming follows vector_store_<db_id>_v<version> convention."
 metadata:
   type: component
 tags:
-  tech_stack: [jupyter, python, pandas, psycopg2, boto3, huggingface-hub, llama-stack-client, kfp, docling, docling-core]
-  ai_pattern: [data-pipeline, model-serving, agents, rag, embeddings]
+  tech_stack: [jupyter, python, pandas, psycopg2, boto3, huggingface-hub, llama-stack-client, kfp, docling, docling-core, langgraph, langchain-openai, langchain-core]
+  ai_pattern: [data-pipeline, model-serving, agents, rag, embeddings, evaluation, vector-search]
   platform: [rhoai, openshift, vllm, kserve]
-  data_layer: [postgresql, minio, pgvector]
+  data_layer: [postgresql, minio, pgvector, milvus]
 source_examples:
   - quickstart: "data-governance-co-pilot"
     repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/RAG"
     notes: "Kubeflow Pipeline notebook for PDF ingestion via docling into pgvector, plus pgvector verification notebook"
     approach: "B"
+  - quickstart: "lls-observability"
+    repo: "https://github.com/rh-ai-quickstart/lls-observability"
+    notes: "Interactive demo notebooks for RAG with Milvus, LlamaStack evaluation framework, and LangGraph agent integration via OpenAI-compatible endpoint"
+    approach: "C"
 ---
 
 # Notebooks
@@ -337,15 +341,256 @@ TABLE_NAME = 'vector_store_demo_rag_vector_db_v1_0'
 
 ---
 
+## Approach C: Interactive LlamaStack Demo Notebooks -- RAG, Evaluation, and LangGraph Agents (from lls-observability)
+
+### When to Use
+
+Use this approach when the quickstart provides interactive, educational demo notebooks that walk users through LlamaStack capabilities: RAG with Milvus vector search, model evaluation (subset_of, llm_as_judge, benchmark datasets), and third-party agentic framework integration (LangGraph) via LlamaStack's OpenAI-compatible endpoint. These notebooks are designed for guided exploration on a running LlamaStack deployment with observability, not for data preparation or automated pipelines.
+
+### Differences from Approach A and B
+
+- **Purpose:** Interactive demos and tutorials vs data preparation (A) or automated ingestion pipelines (B)
+- **Vector DB backend:** Milvus via LlamaStack `provider_id="milvus"` vs PostgreSQL/psycopg2 (A) or pgvector via LlamaStack (B)
+- **LlamaStack APIs used:** Inference, RAG Tool, Evaluation/Scoring/Benchmarks, and OpenAI-compatible endpoint (`/v1/openai/v1`) vs basic client testing (A) or `vector_dbs.register` + `rag_tool.insert` only (B)
+- **Agentic framework:** LangGraph StateGraph with `ChatOpenAI` pointing to LlamaStack vs direct Agents API (A) or none (B)
+- **MCP tool binding:** Via `ChatOpenAI.bind_tools` with MCP server URL vs `toolgroups.register` (A) or none (B)
+- **Evaluation coverage:** Full LlamaStack eval framework (scoring functions, datasets, benchmarks) -- not present in A or B
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Python (RHOAI workbench or Jupyter environment on cluster)
+- **Container image:** Standard RHOAI workbench image (no custom Dockerfile)
+- **Key dependencies:**
+  - `llama_stack_client` + `fire` + `dotenv` -- LlamaStack client for RAG and evaluation notebooks
+  - `llama-stack-client==0.2.12` -- pinned version for evaluation notebook
+  - `langgraph==0.6.7` -- LangGraph agent framework for agent notebooks
+  - `langchain-openai==0.3.32` -- ChatOpenAI client bridging LangGraph to LlamaStack
+  - `langchain-core==0.3.75` -- LangChain core for tool definitions and message types
+  - `termcolor` -- colorized console output in RAG notebook
+- **Helm subchart:** None (notebooks run interactively against a deployed LlamaStack instance)
+
+### Key Patterns
+
+#### RAG with Milvus via LlamaStack RAG Tool
+
+The `1-simpleRAG.ipynb` notebook registers a Milvus-backed vector database, ingests PDF documents from URLs using LlamaStack's built-in RAG tool (which handles download, parsing, chunking, and embedding), then queries with semantic search and context injection for LLM generation.
+
+```python
+client.vector_dbs.register(
+    vector_db_id=vector_db_id,
+    embedding_model="all-MiniLM-L6-v2",
+    embedding_dimension=384,
+    provider_id="milvus",
+)
+
+client.tool_runtime.rag_tool.insert(
+    documents=documents,
+    vector_db_id=vector_db_id,
+    chunk_size_in_tokens=512,
+)
+```
+
+Documents are wrapped as `RAGDocument` objects with `content` pointing to a URL and `mime_type` set to `"application/pdf"`. LlamaStack handles the entire ingestion pipeline internally.
+
+#### RAG Context Injection Pattern
+
+The notebook demonstrates manual context injection: query the vector DB with `rag_tool.query`, then prepend the retrieved content as context in the LLM prompt rather than using an agent with automatic tool calling.
+
+```python
+rag_response = client.tool_runtime.rag_tool.query(
+    content=prompt,
+    vector_db_ids=[vector_db_id],
+    query_config={
+        "chunk_template": "Result {index}\nContent: {chunk.content}\nMetadata: {metadata}\n",
+    },
+)
+
+prompt_context = rag_response.content
+extended_prompt = f"Please answer the given query using the context below.\n\nCONTEXT:\n{prompt_context}\n\nQUERY:\n{prompt}"
+```
+
+#### LlamaStack Evaluation Framework -- subset_of Scoring
+
+The `2-evals.ipynb` notebook uses LlamaStack's built-in `basic::subset_of` scoring function for exact substring matching between generated and expected answers. Rows are structured with `input_query`, `generated_answer`, and `expected_answer` fields.
+
+```python
+scoring_response = client.scoring.score(
+    input_rows=handmade_eval_rows,
+    scoring_functions={"basic::subset_of": None}
+)
+
+results = scoring_response.results['basic::subset_of']
+accuracy = results.aggregated_results['accuracy']['accuracy']
+```
+
+#### LlamaStack Evaluation Framework -- LLM-as-Judge Scoring
+
+The same notebook demonstrates semantic evaluation using an LLM as judge. A custom prompt template classifies the relationship between generated and expected answers into categories (A through E), and a regex extracts the letter grade.
+
+```python
+scoring_response = client.scoring.score(
+    input_rows=handmade_eval_rows,
+    scoring_functions={
+        "llm-as-judge::base": {
+            "judge_model": model_id,
+            "prompt_template": JUDGE_PROMPT,
+            "type": "llm_as_judge",
+            "judge_score_regexes": ["Answer: (A|B|C|D|E)"],
+        }
+    }
+)
+```
+
+The judge prompt uses five categories: (A) subset, (B) superset, (C) same details, (D) factual disagreement, (E) immaterial differences. Categories A, B, C, E are treated as correct.
+
+#### LlamaStack Evaluation Framework -- Dataset Benchmarks
+
+The evaluation notebook registers external datasets from HuggingFace, creates benchmarks, and runs end-to-end evaluation with model inference and scoring in a single API call.
+
+```python
+client.datasets.register(
+    purpose="eval/messages-answer",
+    source={
+        "type": "uri",
+        "uri": "huggingface://datasets/llamastack/simpleqa?split=train",
+    },
+    dataset_id="huggingface::simpleqa",
+)
+
+client.benchmarks.register(
+    benchmark_id="meta-reference::simpleqa",
+    dataset_id="huggingface::simpleqa",
+    scoring_functions=["llm-as-judge::base"],
+)
+
+response = client.eval.evaluate_rows(
+    benchmark_id="meta-reference::simpleqa",
+    input_rows=eval_rows.data,
+    scoring_functions=["llm-as-judge::base"],
+    benchmark_config={
+        "eval_candidate": {
+            "type": "model",
+            "model": model_id,
+            "sampling_params": {"strategy": {"type": "greedy"}, "max_tokens": 512},
+        },
+    },
+)
+```
+
+The `evaluate_rows` API generates model responses and scores them in one call, returning both `generations` and `scores` arrays.
+
+#### Multiple Choice Evaluation with Regex Parser
+
+The evaluation notebook also demonstrates MMLU-style multiple choice evaluation using `basic::regex_parser_multiple_choice_answer`. Questions include options (A/B/C/D) in the prompt, and the scoring function extracts the letter answer from the model's response.
+
+```python
+response = client.eval.evaluate_rows(
+    benchmark_id="meta-reference::financial-sample",
+    input_rows=mmlu_sample_rows,
+    scoring_functions=["basic::regex_parser_multiple_choice_answer"],
+    benchmark_config={
+        "eval_candidate": {
+            "type": "model",
+            "model": model_id,
+            "sampling_params": {
+                "strategy": {"type": "top_p", "temperature": 0.1, "top_p": 0.95},
+                "max_tokens": 512,
+            },
+            "system_message": system_message,
+        },
+    },
+)
+```
+
+#### LangGraph Agent via LlamaStack OpenAI-Compatible Endpoint
+
+The `3-langgraph-agent.ipynb` and `4-langgraph-tools.ipynb` notebooks demonstrate using LangGraph with LlamaStack by pointing `ChatOpenAI` at LlamaStack's OpenAI-compatible endpoint. This enables using any OpenAI-compatible agentic framework without LlamaStack-specific client code.
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(
+    model="llama3-2-3b",
+    openai_api_key="fake",
+    openai_api_base="http://llama-stack-instance-service.llama-serve.svc.cluster.local:8321/v1/openai/v1",
+    use_responses_api=True,
+)
+```
+
+The LangGraph StateGraph pattern defines a `State` TypedDict with an `add_messages` annotated list, a chatbot node that invokes the LLM, and edges from START to chatbot to END.
+
+```python
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+
+def chatbot(state: State):
+    message = llm.invoke(state["messages"])
+    return {"messages": [message]}
+
+graph_builder = StateGraph(State)
+graph_builder.add_node("chatbot", chatbot)
+graph_builder.add_edge(START, "chatbot")
+graph_builder.add_edge("chatbot", END)
+graph = graph_builder.compile()
+```
+
+#### MCP Tool Binding via ChatOpenAI bind_tools
+
+The `4-langgraph-tools.ipynb` notebook binds MCP tools to the LLM using `ChatOpenAI.bind_tools()` with a dictionary specifying the MCP server URL. This is different from Approach A's `toolgroups.register` method -- tools are bound at the LangChain/LangGraph level rather than through LlamaStack's native Agents API.
+
+```python
+llm_with_tools = llm.bind_tools([
+    {
+        "type": "mcp",
+        "server_label": "weather",
+        "server_url": "http://mcp-weather.llama-serve.svc.cluster.local:80/sse",
+        "require_approval": "never",
+    },
+])
+```
+
+### Configuration
+
+- **Environment variables:** None explicitly used (all connection URLs are hardcoded in notebook cells)
+- **LlamaStack endpoint:** `http://llama-stack-instance-service.llama-serve.svc.cluster.local:8321` for native client, with `/v1/openai/v1` suffix for OpenAI-compatible access
+- **Model ID:** `llama32` (RAG notebook) or `llama3-2-3b` (evaluation and agent notebooks) -- the same underlying model referenced by different aliases
+- **Embedding model:** `all-MiniLM-L6-v2` with 384 dimensions (same as Approach B but stored in Milvus rather than pgvector)
+- **Config files:** None (all config inline in notebook cells)
+- **Helm values:** Not applicable (notebooks run interactively against pre-deployed services)
+
+### Known Gotchas
+
+- **Model ID alias inconsistency across notebooks:** The RAG notebook uses `model_id = "llama32"` while the evaluation and agent notebooks use `model_id = "llama3-2-3b"`. Both refer to the same deployed model but use different aliases. The evaluation notebook discovers the correct alias dynamically via `client.models.list()`.
+- **OpenAI API key set to `"fake"`:** The LangGraph notebooks set `openai_api_key="fake"` because LlamaStack's OpenAI-compatible endpoint does not require authentication in the default in-cluster deployment. This must be updated if authentication is enabled.
+- **`use_responses_api=True` required for ChatOpenAI:** The LangGraph notebooks explicitly set `use_responses_api=True` on the `ChatOpenAI` client when connecting to LlamaStack's OpenAI-compatible endpoint.
+- **MCP tool binding uses SSE endpoint:** The MCP weather tool URL uses the `/sse` path (`http://mcp-weather.llama-serve.svc.cluster.local:80/sse`), consistent with Approach A's finding that LlamaStack requires SSE transport for MCP.
+- **Extended timeout for evaluation:** The evaluation notebook sets `timeout=600.0` on the LlamaStack client because evaluation operations (especially `evaluate_rows` with LLM-as-judge) can be slow when running multiple inference calls.
+- **Self-judging limitation:** The evaluation notebook uses the same model (`llama3-2-3b`) as both the evaluated model and the judge in LLM-as-judge scoring. The notebook itself notes this is not ideal for production -- a more capable model should be used as judge.
+- **Sampling strategy conditional logic:** The RAG notebook implements a conditional sampling strategy: `{"type": "greedy"}` when `temperature == 0.0`, otherwise `{"type": "top_p", "temperature": temperature, "top_p": 0.95}`. This pattern is required by LlamaStack's inference API.
+
+### Testing Notes
+
+- All four notebooks require a running LlamaStack instance with vLLM-served Llama 3.2 3B model deployed in the cluster
+- The RAG notebook additionally requires Milvus to be configured as a vector store provider in LlamaStack
+- The agent notebooks require the MCP weather service to be deployed at `mcp-weather.llama-serve.svc.cluster.local:80`
+- The evaluation notebook requires network access to HuggingFace for dataset registration (`huggingface://datasets/llamastack/simpleqa`)
+- Run notebooks in order: 1 (RAG basics) -> 2 (evaluation) -> 3 (basic agent) -> 4 (agent with tools)
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Manual Workbench) | Approach B (KFP Pipeline) |
-|----------|-------------------------------|---------------------------|
-| Execution model | Manual notebook run in RHOAI workbench | Automated KFP pipeline compiled from notebook |
-| Data source | Local CSV files | PDFs from MinIO/S3 buckets |
-| Document processing | pandas DataFrame loading | docling PDF conversion + hybrid chunking |
-| Storage method | Direct psycopg2 `execute_batch` inserts | Llama Stack client `vector_dbs.register` + `rag_tool.insert` |
-| Repeatability | One-time manual execution | Repeatable pipeline runs via KFP |
-| Helm integration | None | `ingestion-pipeline` subchart v0.7.5 |
-| Infrastructure required | RHOAI workbench only | DSPA + MinIO + Llama Stack + pgvector |
-| Best for | Data preparation and integration testing | Production RAG document ingestion |
+| Criteria | Approach A (Manual Workbench) | Approach B (KFP Pipeline) | Approach C (Interactive Demos) |
+|----------|-------------------------------|---------------------------|-------------------------------|
+| Execution model | Manual notebook run in RHOAI workbench | Automated KFP pipeline compiled from notebook | Interactive tutorial notebooks run on cluster |
+| Data source | Local CSV files | PDFs from MinIO/S3 buckets | PDFs from URLs (fetched by LlamaStack) |
+| Document processing | pandas DataFrame loading | docling PDF conversion + hybrid chunking | LlamaStack RAG Tool handles parsing and chunking |
+| Vector DB backend | PostgreSQL (psycopg2) | pgvector via LlamaStack | Milvus via LlamaStack |
+| Storage method | Direct psycopg2 `execute_batch` inserts | LlamaStack `vector_dbs.register` + `rag_tool.insert` | LlamaStack `vector_dbs.register` + `rag_tool.insert` |
+| Agentic framework | LlamaStack native Agents API | None | LangGraph via OpenAI-compatible endpoint |
+| Evaluation coverage | None | None | subset_of, llm_as_judge, dataset benchmarks, multiple choice |
+| MCP tools | `toolgroups.register` (native API) | None | `ChatOpenAI.bind_tools` (OpenAI-compatible) |
+| Repeatability | One-time manual execution | Repeatable pipeline runs via KFP | Repeatable interactive demos |
+| Helm integration | None | `ingestion-pipeline` subchart v0.7.5 | None |
+| Infrastructure required | RHOAI workbench only | DSPA + MinIO + Llama Stack + pgvector | LlamaStack + vLLM + Milvus + MCP servers |
+| Best for | Data preparation and integration testing | Production RAG document ingestion | Guided learning and capability demonstration |

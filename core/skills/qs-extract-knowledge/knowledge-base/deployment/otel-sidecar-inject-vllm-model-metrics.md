@@ -1,7 +1,7 @@
 ---
 name: otel-sidecar-inject-vllm-model-metrics
 description: OpenTelemetry Collector sidecar mode auto-injecting into vLLM pods for metrics and traces collection
-summary: "Solves observability for vLLM model serving by deploying an OpenTelemetryCollector CR in sidecar mode (`charts/observability/helm/otel-collector/`) so the OTel Operator auto-injects a collector into any pod annotated with `sidecar.opentelemetry.io/inject: vllm-otelsidecar`, avoiding Helm chart modifications to model serving deployments. Use when you need per-pod metrics and traces from vLLM without altering model serving charts -- the sidecar is toggled via `sidecars.vllm.enabled` and complements PodMonitor-based collection (`helm-uwm-podmonitor-vllm`); requires OTel Operator installed and central OTel collector deployment in the `observability-hub` namespace. The sidecar scrapes vLLM's Prometheus `/metrics` at `localhost:8000` every 15s, accepts OTLP traces on grpc/http, and forwards all telemetry via OTLP HTTP to the central collector, which exports traces to Tempo gateway using `bearertokenauth` with the SA token. Critical gotcha: vLLM metrics port is 8000, not 8080 (serving port); sidecar-to-collector uses `insecure: true` TLS (in-cluster only); `targetAllocator` with `consistent-hashing` is configured in values but inactive for sidecar mode."
+summary: "Solves observability for vLLM model serving by deploying an OpenTelemetryCollector CR in sidecar mode (`charts/observability/helm/otel-collector/`) with `managementState: managed` so the OTel Operator auto-injects a collector into any pod annotated with `sidecar.opentelemetry.io/inject: vllm-otelsidecar`, avoiding Helm chart modifications to model serving deployments. Use when per-pod vLLM metrics and traces are needed without altering model serving charts -- toggle via `sidecars.vllm.enabled` with `injectAnnotation` controlling the annotation value, complements PodMonitor-based collection (`helm-uwm-podmonitor-vllm`); requires OTel Operator installed and central OTel collector deployment in the `observability-hub` namespace (`global.namespace`). The sidecar scrapes vLLM Prometheus `/metrics` at `localhost:8000` every 15s and accepts OTLP traces on grpc/http, forwarding via OTLP HTTP to the central collector which exports traces via `otlphttp/dev` to Tempo gateway at `tempo-tempostack-gateway.<namespace>.svc.cluster.local:8080/api/traces/v1/dev` using `bearertokenauth` with the SA token; both sidecar pipelines include a `debug` exporter. Critical gotcha: vLLM metrics port is 8000, not 8080 (KServe serving port); sidecar-to-collector uses `insecure: true` TLS (in-cluster only); `targetAllocator` with `consistent-hashing` and `filterStrategy: relabel-config` is configured in values but inactive for sidecar mode."
 metadata:
   type: deployment-pattern
 tags:
@@ -12,6 +12,10 @@ source_examples:
   - quickstart: "aml-rag-nvidia"
     repo: "https://github.com/rh-ai-quickstart/aml-rag-nvidia"
     notes: "OTel sidecar collector auto-injected into vLLM model server pods, scraping localhost:8000 metrics and forwarding to central OTel collector"
+    approach: "A"
+  - quickstart: "lls-observability"
+    repo: "https://github.com/rh-ai-kickstart/llama-stack-observability"
+    notes: "Same vLLM sidecar pattern plus a second llamastack sidecar (traces only, no prometheus scrape) and a duplicate sidecar defined within the llama-stack-instance chart"
     approach: "A"
 ---
 

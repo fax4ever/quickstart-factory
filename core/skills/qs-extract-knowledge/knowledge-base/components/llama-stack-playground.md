@@ -1,12 +1,12 @@
 ---
 name: llama-stack-playground
 description: "LlamaStack distribution deployed as RHOAI Playground proxy with inline Milvus vector I/O and RAG seed job"
-summary: "Deploys a LlamaStackDistribution CRD (`rh-dev` distribution, config version 2, image `registry.redhat.io/rhoai/odh-llama-stack-core-rhel9` pinned by digest) as a proxy between the RHOAI Early Access Playground UI and a vLLM CPU inference backend, with `remote::vllm` inference on KServe predictor port 8080/v1, `inline::sentence-transformers` for ibm-granite/granite-embedding-125m-english embeddings (768d), `inline::milvus` backed by local SQLite for vector I/O, and distribution config stored inline in a `llama-stack-config` ConfigMap with default vector store provider mapping Milvus to the sentence-transformers embedding model. Use when integrating LlamaStack with the RHOAI dashboard Playground feature (`opendatahub.io/dashboard: \"true\"`) to provide RAG-enabled chat with auto-provisioned vector stores; requires the OpenShift AI LlamaStack operator and KServe Standard deployment mode (not RawDeployment). The RAG seed job uses `llama_stack_client` SDK to auto-discover the namespace admin from RoleBindings, creates a SHA-256-hashed vector store name (`hashlib.sha256(username.encode()).hexdigest()[:32]`) matching the Playground BFF auto-provisioning scheme, fetches HTML documents (stripped of script/style/nav tags and truncated to 60,000 chars), and uploads them idempotently by checking existing vector stores. Key gotchas: vLLM inference uses port 8080 (not 8443) in KServe Standard mode; inline providers (sentence-transformers, Milvus) require 12Gi memory limit; `VLLM_API_TOKEN_1` is literal `fake` since auth is disabled via `security.opendatahub.io/enable-auth: 'false'`; all state is pod-local with no PVC so vector stores and documents are lost on reschedule; admin discovery fails if the namespace lacks a User-type admin RoleBinding."
+summary: "Provides a playground UI for LlamaStack-served models via two approaches: Approach A deploys a LlamaStackDistribution CRD (`rh-dev`, `registry.redhat.io/rhoai/odh-llama-stack-core-rhel9` pinned by digest, labeled `opendatahub.io/dashboard: \"true\"`) as an RHOAI Early Access Playground proxy with built-in RAG via `inline::milvus`/`inline::sentence-transformers` (ibm-granite/granite-embedding-125m-english, 768d) and a `llama_stack_client` SDK seed job; Approach B deploys a pre-built Streamlit container (`quay.io/rh-aiservices-bu/llama-stack-playground:0.2.11`, port 8501) as a standard Deployment with OpenShift Route (TLS edge) and NetworkPolicy, delegating inference/RAG to a separate Llama Stack backend. Use Approach A when tight RHOAI dashboard integration with managed RAG (inline Milvus with default vector store mapped to sentence-transformers embedding model, auto-provisioned vector stores) is needed -- requires the LlamaStack operator, KServe Standard mode, and 12Gi memory for inline providers; use Approach B for an independent lightweight testing UI (1Gi, standalone Helm subchart) without operator dependencies, deployed in Phase 3 of multi-chart Helm installation. Approach A stores distribution config inline in a `llama-stack-config` ConfigMap with `remote::vllm` on KServe predictor port 8080/v1, `VLLM_API_TOKEN_1` literal `fake` (auth disabled via `security.opendatahub.io/enable-auth: 'false'` on InferenceService), and `network.allowedFrom.namespaces` restricting access to the release namespace with `exposeRoute: false`; Approach B connects via `LLAMA_STACK_ENDPOINT` env var with NetworkPolicy restricting ingress to openshift-ingress namespace and egress to llama-stack backend pods only. Approach A gotchas: vLLM uses port 8080 not 8443 in KServe Standard mode, all state is pod-local SQLite with no PVC (lost on reschedule), RAG seed job admin discovery fails without User-type admin RoleBinding, and vector store names use `hashlib.sha256(username.encode()).hexdigest()[:32]` which must match the Playground BFF auto-provisioning scheme; Approach B: `readOnlyRootFilesystem: false` required for Streamlit cache, explicit UID/GID omitted for OpenShift restricted SCC, and feature toggles (`enableChat`/`enableAgents`/`enableTools`) declared in values.yaml but not injected as env vars."
 metadata:
   type: component
 tags:
-  tech_stack: [llamastack, vllm, milvus, sentence-transformers, helm, python, llama-stack-client]
-  ai_pattern: [rag, model-serving, vector-search, embeddings]
+  tech_stack: [llamastack, vllm, milvus, sentence-transformers, helm, python, llama-stack-client, streamlit]
+  ai_pattern: [rag, model-serving, vector-search, embeddings, agents]
   platform: [rhoai, openshift, kserve]
   data_layer: [milvus, sqlite]
 source_examples:
@@ -14,6 +14,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/llm-cpu-serving"
     notes: "LlamaStack as RHOAI Playground proxy with LlamaStackDistribution CRD, inline Milvus for vector I/O, sentence-transformers for embeddings, and RAG seed job for auto-provisioning vector stores"
     approach: "A"
+  - quickstart: "lls-observability"
+    repo: "https://github.com/rh-ai-quickstart/lls-observability"
+    notes: "Streamlit-based standalone playground UI deployed as standard Kubernetes Deployment with OpenShift Route, connecting to Llama Stack backend via LLAMA_STACK_ENDPOINT"
+    approach: "B"
 ---
 
 # Llama Stack Playground
@@ -206,3 +210,159 @@ def fetch_text(url):
 
 - Components: llamastack (comprehensive LlamaStack deployment patterns), model-serving (KServe InferenceService with vLLM CPU)
 - Deployment: Helm chart with LlamaStackDistribution CRD, RAG seed job pattern
+
+---
+
+## Approach B: Streamlit Standalone Playground (from lls-observability)
+
+### When to Use
+
+Use this approach when you need a standalone, interactive web UI for testing Llama Stack features (chat, agents, tools) without tight RHOAI dashboard integration. This is well-suited for observability-focused quickstarts where the playground is one component in a larger multi-chart Helm deployment and the UI is deployed as its own independent service with an OpenShift Route.
+
+### Differences from Approach A
+
+- **Deployment method:** Standard Kubernetes Deployment (not a LlamaStackDistribution CRD) -- no operator dependency
+- **Application runtime:** Pre-built Streamlit application served on port 8501 (container image `quay.io/rh-aiservices-bu/llama-stack-playground`)
+- **External access:** OpenShift Route with TLS edge termination (Approach A has no route, relies on RHOAI dashboard)
+- **RAG/vector stores:** Not included -- the playground connects directly to a separate Llama Stack instance that handles RAG/vector I/O
+- **Helm structure:** Standalone subchart under `helm/03-ai-services/llama-stack-playground/` with its own `Chart.yaml`, `values.yaml`, and templates (Approach A uses inline templates in a single Helm chart)
+- **Features:** Chat, agents, and tools via the Llama Stack backend (configured via `playground.enableChat`, `playground.enableAgents`, `playground.enableTools`)
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Streamlit (Python), port 8501
+- **Container image:** `quay.io/rh-aiservices-bu/llama-stack-playground:0.2.11`
+- **Key dependencies:** Llama Stack backend instance (connected via `LLAMA_STACK_ENDPOINT` env var)
+- **Helm subchart:** Standalone chart `llama-stack-playground` (version 1.0.0)
+
+### Key Patterns
+
+#### Standalone Helm Chart with Streamlit
+
+The playground is deployed as a standard Kubernetes Deployment with a pre-built Streamlit container image. It connects to a separate Llama Stack instance service via the `LLAMA_STACK_ENDPOINT` environment variable.
+
+```yaml
+# helm/03-ai-services/llama-stack-playground/templates/deployment.yaml
+env:
+  {{- range $key, $value := .Values.env }}
+  - name: {{ $key }}
+    value: {{ $value | quote }}
+  {{- end }}
+  - name: LLAMA_STACK_ENDPOINT
+    value: {{ .Values.playground.llamaStackUrl | quote }}
+  - name: DEFAULT_MODEL
+    value: {{ .Values.playground.defaultModel | quote }}
+```
+
+#### OpenShift Route with TLS Edge Termination
+
+The playground exposes an OpenShift Route for external browser access. TLS is terminated at the edge with automatic HTTP-to-HTTPS redirect.
+
+```yaml
+# helm/03-ai-services/llama-stack-playground/values.yaml
+route:
+  enabled: true
+  tls:
+    enabled: true
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+```
+
+#### OpenShift-Compatible Security Context
+
+The pod and container security contexts are configured for OpenShift's restricted SCC by omitting explicit UID/GID values and letting OpenShift assign them from the namespace range.
+
+```yaml
+# helm/03-ai-services/llama-stack-playground/values.yaml
+podSecurityContext:
+  runAsNonRoot: true
+  # Remove specific UID/GID to let OpenShift assign them
+  # fsGroup: 1001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+```
+
+#### Network Policy for Component Isolation
+
+Network policies restrict ingress to the OpenShift ingress controller only and egress to the Llama Stack backend pods only.
+
+```yaml
+# helm/03-ai-services/llama-stack-playground/values.yaml
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: openshift-ingress
+      ports:
+      - protocol: TCP
+        port: 8501
+  egress:
+    - to:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: llama-stack
+      ports:
+      - protocol: TCP
+        port: 80
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `LLAMA_STACK_ENDPOINT` -- Llama Stack backend URL (default: `http://llama-stack-instance-service:8321`)
+  - `DEFAULT_MODEL` -- Default model ID for the playground (default: `meta-llama/Llama-3.2-3B-Instruct`)
+  - `STREAMLIT_SERVER_PORT` -- Streamlit listening port (default: `8501`)
+  - `STREAMLIT_SERVER_ADDRESS` -- Streamlit bind address (default: `0.0.0.0`)
+  - `STREAMLIT_BROWSER_GATHER_USAGE_STATS` -- Disable Streamlit telemetry (default: `false`)
+- **Helm values:**
+  - `image.repository` / `image.tag` -- Container image (default: `quay.io/rh-aiservices-bu/llama-stack-playground:0.2.11`)
+  - `playground.llamaStackUrl` -- Backend URL passed as `LLAMA_STACK_ENDPOINT`
+  - `playground.defaultModel` -- Model ID passed as `DEFAULT_MODEL`
+  - `playground.enableChat` / `playground.enableAgents` / `playground.enableTools` -- Feature toggles (all `true` by default)
+  - `route.enabled` -- Whether to create an OpenShift Route (default: `true`)
+  - `networkPolicy.enabled` -- Whether to create NetworkPolicy (default: `true`)
+
+### Known Gotchas
+
+- The Streamlit server runs on port 8501 inside the container, but the Service exposes port 80 externally (`service.port: 80`, `service.targetPort: 8501`). The Route targets the `http` named port on the Service, so the Service-to-container port mapping must remain consistent.
+- The `readOnlyRootFilesystem` is set to `false` in the security context. Streamlit requires write access to the filesystem for its runtime cache (`.streamlit/` directory).
+- The `values.yaml` comments out `fsGroup`, `runAsUser`, and `runAsGroup` with the note "Remove specific UID/GID to let OpenShift assign them." This is required for the restricted SCC on OpenShift; setting explicit UIDs would cause pod scheduling failures.
+- The liveness probe has an `initialDelaySeconds: 30` while the readiness probe has `initialDelaySeconds: 5`. The Streamlit app may take up to 30 seconds to start serving on the root path (`/`).
+- The `playground.enableChat`, `playground.enableAgents`, and `playground.enableTools` values appear in `values.yaml` but are not injected as environment variables in the deployment template. These may be intended for future use or are handled by the Streamlit app's own configuration discovery.
+- Resource requests are 500m CPU / 512Mi memory with a limit of 1Gi memory (no CPU limit). This is significantly lighter than Approach A's 12Gi memory requirement since the Streamlit app is only a UI client -- all inference, embeddings, and vector I/O happen in the separate Llama Stack backend.
+
+### Testing Notes
+
+- Verify the Route is created: `oc get route llama-stack-playground -n <namespace>` should return a hostname.
+- Access the playground in a browser via the Route URL; the Streamlit UI should load on the root path (`/`).
+- The readiness probe checks `GET /` on port 8501. If the pod is not ready, check Streamlit startup logs: `oc logs deployment/llama-stack-playground -n <namespace>`.
+- Confirm the playground can reach the Llama Stack backend: test inference through the chat interface. Connection failures will appear in the Streamlit UI.
+- The playground is deployed in Phase 3 of the installation, after MCP servers and other AI services. The Llama Stack instance must be running before the playground can function.
+
+### Related Patterns
+
+- Components: llamastack (Llama Stack instance configuration), streamlit-frontend (Streamlit deployment patterns)
+- Deployment: Multi-phase Helm installation with dependency ordering (operators -> observability -> AI services)
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (RHOAI CRD Proxy) | Approach B (Streamlit Standalone) |
+|----------|-------------------------------|-----------------------------------|
+| Operator dependency | Requires OpenShift AI LlamaStack operator | No operator needed |
+| RHOAI dashboard integration | Integrated with Early Access Playground UI | Standalone web app via OpenShift Route |
+| RAG capabilities | Built-in (inline Milvus, seed job) | Delegated to separate Llama Stack backend |
+| Memory footprint | 12Gi (inline providers run in-process) | 1Gi (UI client only) |
+| External access | No route (dashboard-only) | OpenShift Route with TLS edge |
+| Helm structure | Inline templates in parent chart | Standalone subchart with full Chart.yaml |
+| Use case | Tight RHOAI platform integration with managed RAG | Independent testing UI in multi-component observability stack |
+| State persistence | Pod-local SQLite (lost on reschedule) | Stateless (all state in Llama Stack backend) |

@@ -1,14 +1,14 @@
 ---
 name: llamastack
 description: "LlamaStack distribution server providing inference, agents, safety, tool runtime, and vector I/O APIs"
-summary: "LlamaStack provides a unified AI orchestration server exposing inference, agents, safety, tool runtime, vector I/O, and files APIs between the application backend and model providers (Ollama or vLLM), with Approach A (ai-virtual-agent, v0.6.1) using compose with Responses API and StreamAggregator-based SSE streaming in a pluggable LlamaStack/LangGraph/CrewAI runner dispatch, Approach B (data-governance-co-pilot, v0.3.5) deploying a LlamaStackDistribution CRD via OpenShift AI operator with alpha.agents API managing the full agentic loop and session-to-conversation event mapping, Approach C (f5-ai-guardrails/f5-api-security/RAG, v0.6.1) using ai-architecture-charts llama-stack subchart v0.8.6 with dual-client pattern (LlamaStackClient + OpenAI SDK) or single LlamaStackClient (files API for document upload, XC URL dynamic endpoint switching, direct pgvector access) for RAG with optional F5 guardrails proxy dual-panel comparison, fileProcessors (pypdf) for PDF extraction, vector DB register/insert/query via tool_runtime.rag_tool with 600s client timeout for large uploads, MaaS e2e testing with initContainers override, and TAVILY secrets via llama-stack.secrets Helm values, and Approach D (it-self-service-agent) using Helm subchart v0.8.5 with Responses API, PostgreSQL persistence (kv_postgres + sql_postgres) for multi-replica horizontal scaling, centralized client factory with K8s auto-discovery, MCP + file_search tools with per-request headers, knowledge base registration via vector_stores API with provider_id: pgvector, post-init scaler Job, retry with exponential backoff (1s-16s cap), and fault injection decorator for resilience testing. Use Approach A for local dev or when the application manages the agentic loop with dynamic MCP toolgroup resolution, input shield validation via client.safety.run_shield(), and automatic tool retry with exclusion; use Approach B for production OpenShift AI deployments where the operator manages LlamaStack lifecycle (600s DeploymentReady wait, 100m/256Mi lightweight proxy resources), vLLM serves inference via KServe, and Makefile populates Helm model.name/url/apiKey values at install time; use Approach C for RAG apps needing shared Helm subcharts with global.models across llm-service/llama-stack, Streamlit frontend with URL normalization for 0.6+ and auto-detected route via start.sh, rawDeploymentMode toggle for non-OpenShift environments, and optional external guardrails proxy; use Approach D for production multi-agent apps needing horizontal scaling with PostgreSQL-backed shared state, lazy model discovery via models.list() filtering by custom_metadata.model_type, and post-init scaler Job coordinating initialization before scaling replicas -- Nemotron models are incompatible with llama_stack mode (enforced by check-model-provider-compatibility, use mcp_direct). Configured via llamastack-run.yaml (RUN_CONFIG_PATH) declaring providers -- Approach A uses remote::ollama with AsyncLlamaStackClient (180s timeout, K8s SA token + X-Forwarded-User/Email auth headers for RBAC); Approach B uses remote::vllm with provider-prefixed model name (vllm-inference/<model>), vLLM URL derived from KServe predictor (https://<model>-predictor.<ns>.svc.cluster.local:8443/v1), VLLM_TLS_VERIFY='false' for self-signed certs, and static MCP endpoint in Helm-templated ConfigMap; Approach C uses dual clients with OpenAI SDK targeting LlamaStack /v1/chat/completions or single client with files API, HTTPX verify=False for cluster TLS, vector_dbs fallback to vector_stores on 404, auto-detects LlamaStack route via start.sh for TLS protocol selection, and Kind e2e requires stub OpenShift Route CRD; Approach D uses centralized client factory with LLAMASTACK_SERVICE_HOST (avoiding LLAMASTACK_PORT tcp:// format), OpenAI client at /v1/openai/v1, metadataStore with db_path: null to prevent SQLite fallback, pgvector max_connections=200 shared across all consumers, and max output tokens set server-side per-model (no per-request max_tokens in Responses API). Container runs as root (user 0:0) with 90s healthcheck start_period, SDK attribute names changed between 0.3.x and 0.6.1 (identifier to id, api_model_type to model_type) requiring _get_model_type/_get_model_id helpers, SQLite storage is dev-only, platform linux/amd64 causes ARM emulation perf hit, regex-based tool retry parsing (Tool '(\\w+)' not found) is fragile, has_output_text=False emits error event to prevent silent empty responses, LLAMA_STACK_ENDPOINT vs LLAMA_STACK_SERVER env var name inconsistency across contexts, Approach B values.yaml has empty placeholders requiring Makefile --set population, static agent instructions require conversation restart on policy update via requires_conversation_restart_on_policy_update(), Approach C guardrails_state.json on emptyDir is lost on pod replacement, legacy URL suffix /v1/openai/v1 must be stripped for 0.6+ compatibility, llama-stack-client version pinning differs between frontend (0.6.0) and integration tests (>=0.2.9,<0.2.13), and Approach D must avoid LLAMASTACK_PORT (K8s sets to tcp://host:port format) using LLAMASTACK_CLIENT_PORT or LLAMASTACK_SERVICE_PORT instead, with post-init scaler requiring bitnami/kubectl image mirroring in air-gapped environments."
+summary: "LlamaStack provides a unified AI orchestration server exposing inference, agents, safety, tool runtime, vector I/O, and files APIs between the application backend and model providers (Ollama or vLLM), with Approach A (ai-virtual-agent, v0.6.1) using compose with Responses API and StreamAggregator-based SSE streaming in a pluggable LlamaStack/LangGraph/CrewAI runner dispatch, Approach B (data-governance-co-pilot, v0.3.5) deploying a LlamaStackDistribution CRD via OpenShift AI operator with alpha.agents API managing the full agentic loop and session-to-conversation event mapping, Approach C (f5-ai-guardrails/f5-api-security/RAG, v0.6.1) using ai-architecture-charts llama-stack subchart v0.8.6 with dual-client pattern (LlamaStackClient + OpenAI SDK) or single LlamaStackClient (files API for document upload, XC URL dynamic endpoint switching, direct pgvector access) for RAG with optional F5 guardrails proxy dual-panel comparison, fileProcessors (pypdf) for PDF extraction, vector DB register/insert/query via tool_runtime.rag_tool with 600s client timeout for large uploads, MaaS e2e testing with initContainers override, and TAVILY secrets via llama-stack.secrets Helm values, Approach D (it-self-service-agent) using Helm subchart v0.8.5 with Responses API, PostgreSQL persistence (kv_postgres + sql_postgres) for multi-replica horizontal scaling, centralized client factory with K8s auto-discovery, MCP + file_search tools with per-request headers, knowledge base registration via vector_stores API with provider_id: pgvector, post-init scaler Job, retry with exponential backoff (1s-16s cap), and fault injection decorator for resilience testing, and Approach E (lls-observability) using standalone Helm chart with Red Hat ET image (quay.io/redhat-et/llama:vllm-0.2.6), OpenTelemetry collector sidecar for distributed tracing via OpenTelemetryCollector CRD in sidecar mode, inline::milvus for vector I/O, dual vLLM inference providers (primary + Llama Guard safety), network policies restricting access to openshift-ingress and playground pods, PVC-backed /.llama persistence, optional MaaS provider via LiteLLM, and ArgoCD sync-wave deployment ordering. Use Approach A for local dev or when the application manages the agentic loop with dynamic MCP toolgroup resolution, input shield validation via client.safety.run_shield(), and automatic tool retry with exclusion; use Approach B for production OpenShift AI deployments where the operator manages LlamaStack lifecycle (600s DeploymentReady wait, 100m/256Mi lightweight proxy resources), vLLM serves inference via KServe, and Makefile populates Helm model.name/url/apiKey values at install time; use Approach C for RAG apps needing shared Helm subcharts with global.models across llm-service/llama-stack, Streamlit frontend with URL normalization for 0.6+ and auto-detected route via start.sh, rawDeploymentMode toggle for non-OpenShift environments, and optional external guardrails proxy; use Approach D for production multi-agent apps needing horizontal scaling with PostgreSQL-backed shared state, lazy model discovery via models.list() filtering by custom_metadata.model_type, and post-init scaler Job coordinating initialization before scaling replicas; use Approach E for observability-focused deployments needing OpenTelemetry integration with traces and metrics exported to a central collector (observability-hub namespace), Milvus Lite for embedded vector search, network policy-restricted access, and optional MaaS model alongside local vLLM -- Nemotron models are incompatible with llama_stack mode (enforced by check-model-provider-compatibility, use mcp_direct). Configured via llamastack-run.yaml (RUN_CONFIG_PATH) declaring providers -- Approach A uses remote::ollama with AsyncLlamaStackClient (180s timeout, K8s SA token + X-Forwarded-User/Email auth headers for RBAC); Approach B uses remote::vllm with provider-prefixed model name (vllm-inference/<model>), vLLM URL derived from KServe predictor (https://<model>-predictor.<ns>.svc.cluster.local:8443/v1), VLLM_TLS_VERIFY='false' for self-signed certs, and static MCP endpoint in Helm-templated ConfigMap; Approach C uses dual clients with OpenAI SDK targeting LlamaStack /v1/chat/completions or single client with files API, HTTPX verify=False for cluster TLS, vector_dbs fallback to vector_stores on 404, auto-detects LlamaStack route via start.sh for TLS protocol selection, and Kind e2e requires stub OpenShift Route CRD; Approach D uses centralized client factory with LLAMASTACK_SERVICE_HOST (avoiding LLAMASTACK_PORT tcp:// format), OpenAI client at /v1/openai/v1, metadataStore with db_path: null to prevent SQLite fallback, pgvector max_connections=200 shared across all consumers, and max output tokens set server-side per-model (no per-request max_tokens in Responses API); Approach E uses dual vLLM providers (vllm-inference at VLLM_URL + vllm-safety at SAFETY_MODEL with separate max_tokens), TELEMETRY_SINKS='console, sqlite, otel_trace, otel_metric' with endpoints pointing to central collector, MILVUS_DB_PATH for inline Milvus at working directory, configmap checksum annotation for pod restart on config changes, and OpenShift-compatible securityContext (runAsNonRoot, drop ALL, readOnlyRootFilesystem: false). Container runs as root (user 0:0) with 90s healthcheck start_period, SDK attribute names changed between 0.3.x and 0.6.1 (identifier to id, api_model_type to model_type) requiring _get_model_type/_get_model_id helpers, SQLite storage is dev-only, platform linux/amd64 causes ARM emulation perf hit, regex-based tool retry parsing (Tool '(\\w+)' not found) is fragile, has_output_text=False emits error event to prevent silent empty responses, LLAMA_STACK_ENDPOINT vs LLAMA_STACK_SERVER env var name inconsistency across contexts, Approach B values.yaml has empty placeholders requiring Makefile --set population, static agent instructions require conversation restart on policy update via requires_conversation_restart_on_policy_update(), Approach C guardrails_state.json on emptyDir is lost on pod replacement, legacy URL suffix /v1/openai/v1 must be stripped for 0.6+ compatibility, llama-stack-client version pinning differs between frontend (0.6.0) and integration tests (>=0.2.9,<0.2.13), Approach D must avoid LLAMASTACK_PORT (K8s sets to tcp://host:port format) using LLAMASTACK_CLIENT_PORT or LLAMASTACK_SERVICE_PORT instead, with post-init scaler requiring bitnami/kubectl image mirroring in air-gapped environments, and Approach E's MILVUS_DB_PATH as relative path resolves outside the PVC mount at /.llama (lost on pod replacement), VLLM_API_TOKEN is hardcoded to 'fake' (not from Secret), CUSTOM_TIKTOKEN_CACHE_DIR at /app/cache differs from /.cache emptyDir mount, and pythainlp emptyDir at /pythainlp-data is required to prevent startup write failures."
 metadata:
   type: component
 tags:
-  tech_stack: [llamastack, ollama, python, fastapi, llama-stack-client, vllm, helm, streamlit, openai-sdk, langgraph]
-  ai_pattern: [agents, model-serving, guardrails, rag, vector-search, mcp, embeddings]
+  tech_stack: [llamastack, ollama, python, fastapi, llama-stack-client, vllm, helm, streamlit, openai-sdk, langgraph, opentelemetry]
+  ai_pattern: [agents, model-serving, guardrails, rag, vector-search, mcp, embeddings, observability]
   platform: [openshift, kubernetes, rhoai, kserve]
-  data_layer: [sqlite, faiss, pgvector]
+  data_layer: [sqlite, faiss, pgvector, milvus]
 source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
@@ -34,6 +34,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/RAG"
     notes: "LlamaStack as ai-architecture-charts Helm subchart v0.8.7 for RAG with dual-client pattern, fileProcessors (pypdf), vector DB register/insert/query via tool_runtime.rag_tool, 600s client timeout for large uploads, MaaS e2e testing with initContainers override, and shield management"
     approach: "C"
+  - quickstart: "lls-observability"
+    repo: "https://github.com/rh-ai-quickstart/lls-observability"
+    notes: "LlamaStack as standalone Helm chart with direct Kubernetes Deployment, Red Hat ET image (quay.io/redhat-et/llama:vllm-0.2.6), OpenTelemetry collector sidecar for distributed tracing, inline Milvus for vector I/O, network policies, and optional MaaS provider"
+    approach: "E"
 ---
 
 # LlamaStack
@@ -1013,19 +1017,346 @@ The `create_response_with_retry` method wraps response creation with configurabl
 
 ---
 
+## Approach E: Standalone Helm Chart with OpenTelemetry Observability (from lls-observability)
+
+### When to Use
+
+Use this approach when deploying LlamaStack as a standalone Helm chart with a direct Kubernetes Deployment, integrated OpenTelemetry collector sidecar for distributed tracing and metrics, Milvus for vector I/O, and network policies restricting access to specific pods. This is the pattern for observability-focused deployments where LlamaStack telemetry data needs to flow through an enterprise observability stack (Tempo, Grafana, OpenTelemetry Collector).
+
+### Differences from Approach A
+
+- **Deployment**: Standalone Helm chart with Kubernetes Deployment instead of docker-compose service
+- **Inference provider**: `remote::vllm` instead of `remote::ollama`
+- **Container image**: Red Hat ET image (`quay.io/redhat-et/llama:vllm-0.2.6`) instead of `ogxai/distribution-starter:0.6.1`
+- **Observability**: OpenTelemetry collector sidecar via `OpenTelemetryCollector` CRD with traces and metrics export
+- **Vector I/O**: `inline::milvus` instead of no vector DB / SQLite-only
+- **Network policies**: Built-in restricting access to openshift-ingress and llama-stack-playground pods
+
+### Differences from Approach B
+
+- **Deployment**: Direct Kubernetes Deployment managed by Helm instead of `LlamaStackDistribution` CRD managed by OpenShift AI operator
+- **Container image**: Explicit Red Hat ET image (`quay.io/redhat-et/llama:vllm-0.2.6`) instead of operator-managed distribution
+- **Observability**: Integrated OTel collector sidecar with `otel_trace` and `otel_metric` telemetry sinks instead of no observability integration
+- **Vector I/O**: `inline::milvus` with file-based DB instead of no vector DB
+- **MCP integration**: Dynamic MCP servers from Helm values array with auto-appended `/sse` suffix instead of static endpoint
+
+### Differences from Approach C
+
+- **Deployment**: Standalone Helm chart instead of `ai-architecture-charts` Helm subchart
+- **No application-level client**: No Python application consuming LlamaStack APIs; serves as an API endpoint accessed through llama-stack-playground
+- **Vector I/O**: `inline::milvus` instead of pgvector
+- **Observability**: Native OpenTelemetry integration via sidecar injection instead of no observability
+
+### Differences from Approach D
+
+- **Deployment**: Standalone Helm chart instead of `ai-architecture-charts` Helm subchart
+- **Persistence**: PVC-backed storage at `/.llama` (single replica) instead of PostgreSQL-backed multi-replica
+- **Scaling**: Single replica with PVC (ReadWriteOnce) instead of horizontal scaling with PostgreSQL shared state
+- **Observability**: Integrated OTel collector sidecar instead of no observability integration
+- **Vector I/O**: `inline::milvus` instead of pgvector
+
+### Tech Stack & Dependencies
+
+- **Runtime:** LlamaStack distribution server (pre-built Red Hat ET image)
+- **Container image:** `quay.io/redhat-et/llama:vllm-0.2.6`
+- **Key dependencies:** vLLM model server (via KServe predictor), Llama Guard for safety, sentence-transformers for embeddings, Milvus (inline) for vector I/O, OpenTelemetry Operator for sidecar injection
+- **Helm subchart:** None (standalone chart at `helm/03-ai-services/llama-stack/`)
+
+### Key Patterns
+
+#### Standalone Helm Chart with Direct Deployment
+
+LlamaStack is deployed as a standard Kubernetes Deployment managed directly by Helm, not through an operator CRD or a shared subchart. The chart includes its own templates for Deployment, Service, ConfigMap, PVC, network policies, and an OpenTelemetry collector sidecar.
+
+```yaml
+# helm/03-ai-services/llama-stack/Chart.yaml
+apiVersion: v2
+name: llama-stack
+description: A Helm chart for Llama Stack server
+type: application
+version: 1.0.0
+appVersion: "latest"
+keywords:
+  - llama-stack
+  - ai
+  - mcp
+  - agents
+```
+
+#### OpenTelemetry Collector Sidecar via Operator CRD
+
+The chart deploys an `OpenTelemetryCollector` CRD in sidecar mode. Any pod with the annotation `sidecar.opentelemetry.io/inject: <collector-name>` gets an OTel collector sidecar injected by the OpenTelemetry Operator. The sidecar receives traces and metrics via OTLP and exports them to a central OTel collector in the `observability-hub` namespace.
+
+```yaml
+# templates/otel-collector-sidecar.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ .Values.otelCollector.name | default "llamastack-otelsidecar" }}
+spec:
+  mode: sidecar
+  config:
+    exporters:
+      otlphttp:
+        # all sidecars export to the central observability-hub otel-collector
+        endpoint: {{ .Values.otelCollector.exporter.endpoint | quote }}
+        tls:
+          insecure: {{ .Values.otelCollector.exporter.tls.insecure }}
+    receivers:
+      otlp:
+        protocols:
+          grpc: {}
+          http: {}
+    service:
+      pipelines:
+        traces:
+          exporters:
+            - debug
+            - otlphttp
+          receivers:
+            - otlp
+```
+
+The Deployment template injects the sidecar via annotation:
+
+```yaml
+# templates/deployment.yaml
+template:
+  metadata:
+    annotations:
+      sidecar.opentelemetry.io/inject: {{ .Values.otelCollector.name | default "llamastack-otelsidecar" }}
+```
+
+#### Telemetry Sinks Configuration
+
+LlamaStack's built-in telemetry provider is configured to emit traces and metrics to both SQLite (local) and the OTel collector sidecar. The `TELEMETRY_SINKS` env var enables all four sinks simultaneously.
+
+```yaml
+# templates/deployment.yaml (env section)
+- name: OTEL_SERVICE_NAME
+  value: llamastack
+- name: OTEL_TRACE_ENDPOINT
+  value: http://otel-collector-collector.observability-hub.svc.cluster.local:4318/v1/traces
+- name: OTEL_METRIC_ENDPOINT
+  value: http://otel-collector-collector.observability-hub.svc.cluster.local:4318/v1/metrics
+- name: TELEMETRY_SINKS
+  value: "console, sqlite, otel_trace, otel_metric"
+```
+
+The telemetry provider in the ConfigMap wires these environment variables:
+
+```yaml
+# templates/configmap.yaml (telemetry provider)
+telemetry:
+- provider_id: meta-reference
+  provider_type: inline::meta-reference
+  config:
+    service_name: ${env.OTEL_SERVICE_NAME:llama-stack}
+    sinks: ${env.TELEMETRY_SINKS:console, sqlite}
+    otel_trace_endpoint: ${env.OTEL_TRACE_ENDPOINT:}
+    sqlite_db_path: ${env.SQLITE_DB_PATH:~/.llama/distributions/remote-vllm/trace_store.db}
+```
+
+#### Inline Milvus for Vector I/O
+
+Vector I/O uses `inline::milvus` which runs Milvus Lite as an embedded library inside the LlamaStack process, storing data in a file on the PVC. No external Milvus server is required.
+
+```yaml
+# templates/configmap.yaml (vector_io provider)
+vector_io:
+- provider_id: milvus
+  provider_type: inline::milvus
+  config:
+    db_path: ${env.MILVUS_DB_PATH}
+```
+
+The `MILVUS_DB_PATH` env var is set to `milvus.db` (relative path) in the Deployment, which resolves to the working directory inside the container.
+
+#### Dual Safety Model with Separate vLLM Provider
+
+The run config registers two vLLM inference providers: one for the primary LLM and one for the safety model (Llama Guard). Each has its own URL, max_tokens, and TLS settings.
+
+```yaml
+# templates/configmap.yaml (safety provider)
+inference:
+- provider_id: vllm-inference
+  provider_type: remote::vllm
+  config:
+    url: ${env.VLLM_URL:http://localhost:8000/v1}
+    max_tokens: ${env.VLLM_MAX_TOKENS:4096}
+- provider_id: vllm-safety
+  provider_type: remote::vllm
+  config:
+    url: ${env.SAFETY_MODEL:http://llama-guard-3-1b-predictor:8080/v1}
+    max_tokens: ${env.VLLM_SAFETY_MAX_TOKENS:20000}
+```
+
+#### Dynamic MCP Server Registration via Helm Values
+
+MCP servers are declared as a list in Helm values and templated into the run config as `mcp::` toolgroups. The weather endpoint gets a `/sse` suffix appended automatically.
+
+```yaml
+# templates/configmap.yaml (tool_groups)
+{{- range .Values.mcpServers }}
+- toolgroup_id: mcp::{{ .name }}
+  provider_id: model-context-protocol
+  mcp_endpoint:
+    uri: {{ .uri }}{{ if eq .name "weather" }}/sse{{ end }}
+{{- end }}
+```
+
+#### Network Policy Restricting Access
+
+The chart includes network policies limiting inbound traffic to port 8321 from two sources: the OpenShift ingress namespace and pods labeled as `llama-stack-playground`.
+
+```yaml
+# values.yaml (networkPolicy section)
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: openshift-ingress
+      ports:
+      - protocol: TCP
+        port: 8321
+    - from:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: llama-stack-playground
+      ports:
+      - protocol: TCP
+        port: 8321
+```
+
+#### OpenShift-Compatible Security Context
+
+The security context drops all capabilities and runs as non-root without specifying a UID/GID, letting OpenShift assign them from the project's SCC range. The root filesystem is not read-only because LlamaStack and Milvus write state files at runtime.
+
+```yaml
+# values.yaml
+podSecurityContext:
+  runAsNonRoot: true
+  # Remove specific UID/GID to let OpenShift assign them
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+```
+
+#### PVC Persistence for LlamaStack State
+
+A 5Gi PVC named `llama-persist` is mounted at `/.llama` for LlamaStack's internal state (SQLite stores, Milvus DB, model metadata). Two `emptyDir` volumes handle ephemeral caches (`/.cache` and `/pythainlp-data`).
+
+```yaml
+# templates/deployment.yaml (volumes)
+volumes:
+  - name: run-config-volume
+    configMap:
+      name: run-config
+  - name: llama-persist
+    persistentVolumeClaim:
+      claimName: llama-persist
+  - name: cache
+    emptyDir: {}
+  - name: pythain
+    emptyDir: {}
+```
+
+#### Optional MaaS Provider
+
+The chart supports an optional Model-as-a-Service provider (via LiteLLM gateway) that registers an additional model alongside the local vLLM-served one. The MaaS provider is conditionally included in both the run config and the models list.
+
+```yaml
+# values.yaml (maas section)
+maas:
+  enabled: false
+  apiToken: "your-api-token-here"
+  url: "https://litellm-litemaas.apps.prod.rhoai.rh-aiservices-bu.com/v1"
+  maxTokens: 200000
+  tlsVerify: false
+  modelId: "Llama-4-Scout-17B-16E-W4A16"
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `VLLM_URL` -- vLLM inference endpoint URL (default: `http://llama3-2-3b-predictor:8080/v1`)
+  - `INFERENCE_MODEL` -- Model ID for the primary LLM (default: `llama3-2-3b`)
+  - `VLLM_MAX_TOKENS` / `MAX_TOKENS` -- Max token limit for inference (default: `60000`)
+  - `VLLM_API_TOKEN` -- API token for vLLM auth (default: `fake`)
+  - `SAFETY_MODEL` -- Safety model URL (default: `http://llama-guard-3-1b-predictor:8080/v1`)
+  - `VLLM_SAFETY_MAX_TOKENS` -- Max tokens for safety model (default: `20000`)
+  - `MILVUS_DB_PATH` -- File path for Milvus Lite DB (default: `milvus.db`)
+  - `OTEL_SERVICE_NAME` -- Service name for OTel traces (default: `llamastack`)
+  - `OTEL_TRACE_ENDPOINT` -- OTel collector trace endpoint
+  - `OTEL_METRIC_ENDPOINT` -- OTel collector metric endpoint
+  - `TELEMETRY_SINKS` -- Comma-separated sinks: `console, sqlite, otel_trace, otel_metric`
+  - `LLAMA_STACK_LOGGING` -- Logging level (default: `all=debug`)
+  - `LLAMA_STACK_PORT` -- Server port (default: `8321`)
+  - `LLAMA_STACK_HOST` -- Bind address (default: `0.0.0.0`)
+  - `CUSTOM_TIKTOKEN_CACHE_DIR` -- Tiktoken cache path (default: `/app/cache`)
+- **Config files:**
+  - ConfigMap `run-config` containing `config.yaml` -- Full distribution run config with providers, models, shields, and tool groups
+- **Helm values:**
+  - `image.repository` / `image.tag` -- Container image (default: `quay.io/redhat-et/llama:vllm-0.2.6`)
+  - `llamaStack.configFile` -- Run config filename (default: `run-vllm.yaml`)
+  - `llamaStack.inferenceModel` -- Model ID for vLLM provider
+  - `llamaStack.vllmUrl` -- vLLM service URL
+  - `llamaStack.storage.size` -- PVC size (default: `5Gi`)
+  - `otelCollector.enabled` -- Enable OTel collector sidecar (default: `true`)
+  - `otelCollector.name` -- Collector name for sidecar injection annotation (default: `llamastack-otelsidecar`)
+  - `otelCollector.exporter.endpoint` -- Central OTel collector endpoint (default: `http://otel-collector-collector.observability-hub.svc.cluster.local:4318`)
+  - `networkPolicy.enabled` -- Enable network policies (default: `true`)
+  - `route.enabled` -- Create OpenShift Route with TLS edge termination (default: `true`)
+  - `maas.enabled` -- Enable MaaS provider (default: `false`)
+  - `mcpServers` -- List of MCP server entries with `name` and `uri`
+
+### Known Gotchas
+
+- The container image `quay.io/redhat-et/llama:vllm-0.2.6` is a Red Hat Emerging Technology image, not the upstream `llamastack/distribution-remote-vllm`. The original upstream image is commented out in `values.yaml` (line 6-7), indicating a deliberate switch to the Red Hat ET build.
+- The `readOnlyRootFilesystem` is set to `false` in the security context because LlamaStack writes SQLite databases and Milvus Lite writes its DB file to the container filesystem. The `/.llama` path is backed by a PVC, but other paths (e.g., the Milvus `milvus.db` at the working directory) may write outside the PVC mount.
+- The `MILVUS_DB_PATH` is set to the relative path `milvus.db` in the Deployment env, meaning it resolves to the container's working directory. This file is NOT on the PVC mount at `/.llama` and would be lost on pod replacement unless the working directory is also a volume mount.
+- The `VLLM_API_TOKEN` is hardcoded to `"fake"` in the Deployment template (line 74), not sourced from a Kubernetes Secret. This works for cluster-internal communication but is not suitable for external-facing deployments.
+- The `pythain` emptyDir volume at `/pythainlp-data` is required because the `pythainlp` library (transitive dependency) attempts to write data files there at startup, which would fail without a writable mount.
+- The `CUSTOM_TIKTOKEN_CACHE_DIR` is set to `/app/cache` in the container env, but the `cache` emptyDir volume is mounted at `/.cache`. These are different paths -- tiktoken will write to `/app/cache` which is on the root filesystem, not the emptyDir.
+- The PVC comment in `pvc.yaml` says "MinIO Persistent Volume Claim" (line 1) but the PVC is actually for LlamaStack state at `/.llama` -- this is a copy-paste artifact from another chart.
+- The ArgoCD sync-wave annotation on the Deployment is set to `"5"`, indicating LlamaStack should be deployed after lower-priority components (operators at wave 1-2, observability infrastructure at 3-4).
+- The liveness probe has a 60-second `initialDelaySeconds` and the readiness probe has a 30-second `initialDelaySeconds`, giving LlamaStack time to initialize providers and load model metadata from the vLLM endpoints.
+- The configmap checksum annotation (`checksum/config`) on the Deployment pod template ensures pods are restarted when the ConfigMap content changes, preventing config drift after Helm upgrades.
+- The `LLAMA3B_URL` and `LLAMA3B_MODEL` env vars (lines 69-72 of deployment.yaml) reference a separate Llama 3.2 3B endpoint at `llama32-3b.llama-serve.svc.cluster.local` but these are not wired into the run config providers -- they appear to be leftover from an earlier configuration iteration.
+
+### Testing Notes
+
+- Verify LlamaStack health: `curl -f http://llama-stack:80/health` (through the Service at port 80, mapped to container port 8321)
+- Check OTel sidecar injection: `oc get pod -l app.kubernetes.io/name=llama-stack -o jsonpath='{.items[0].spec.containers[*].name}'` should show both `llama-stack` and the sidecar container
+- Verify traces reaching the central collector: check the `observability-hub` namespace for traces with service name `llamastack`
+- Confirm network policies: `oc get networkpolicy -l app.kubernetes.io/name=llama-stack` should show the policy, and only llama-stack-playground pods and openshift-ingress should be able to reach port 8321
+- Check PVC binding: `oc get pvc llama-persist` should show `Bound` status
+- Verify MCP servers are registered: after deployment, the tool_groups section of the running config should include entries for each declared `mcpServers` value
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (data-governance-co-pilot) | Approach C (f5-ai-guardrails) | Approach D (it-self-service-agent) |
-|----------|-------------------------------|---------------------------------------|-------------------------------|-------------------------------------|
-| Deployment method | docker-compose service | Helm chart + LlamaStackDistribution CRD (OpenShift AI operator) | ai-architecture-charts Helm subchart | ai-architecture-charts Helm subchart |
-| Inference backend | Ollama (local) | Remote vLLM via KServe InferenceService | Remote vLLM via llm-service subchart | Remote vLLM via llm-service subchart |
-| LlamaStack version | 0.6.1 | 0.3.5 | 0.6.1 (subchart v0.8.6) | subchart v0.8.5 (llama-stack-client 0.5.0) |
-| Client API | Responses API with Conversations | Agents alpha API with sessions | OpenAI chat.completions + LlamaStackClient | Responses API via centralized client factory |
-| Agent management | Runner handles agentic loop, LlamaStack streams responses | LlamaStack manages full agentic loop, provider maps events | No agent loop; direct chat completions for RAG Q&A | Custom Agent class with retry, MCP tools, and file_search |
-| MCP integration | Dynamic toolgroup resolution at runtime | Static MCP endpoint in run.yaml ConfigMap | Tool groups listed from LlamaStack for UI display | MCP tools in responses tools array with per-request headers |
-| Auth model | K8s SA token + X-Forwarded headers | API key in K8s Secret, no user header forwarding | Optional bearer token, TLS via HTTPX client factory | Dummy API key (in-cluster only), user ID via MCP headers |
-| Safety | Input shields via `client.safety.run_shield()` | `inline::llama-guard` provider declared in run.yaml | External F5 AI Guardrails Moderator proxy | Optional NeMo Guardrails via external endpoint |
-| Storage | SQLite at container-local path | SQLite at operator-managed path | Subchart defaults | PostgreSQL (kv_postgres + sql_postgres) for multi-replica |
-| Platform | Local dev (compose), OpenShift (future) | OpenShift AI with operator | OpenShift with shared Helm subcharts | OpenShift with shared Helm subcharts |
-| Multi-framework | Pluggable runner (LlamaStack/LangGraph/CrewAI) | Pluggable provider (mcp_direct/llama_stack) | Single path (OpenAI SDK for chat) | Agent class per agent config YAML |
-| Horizontal scaling | Single instance | Operator-managed replicas | Single instance | Post-init scaler Job, PostgreSQL-backed shared state |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (data-governance-co-pilot) | Approach C (f5-ai-guardrails) | Approach D (it-self-service-agent) | Approach E (lls-observability) |
+|----------|-------------------------------|---------------------------------------|-------------------------------|-------------------------------------|-------------------------------|
+| Deployment method | docker-compose service | Helm chart + LlamaStackDistribution CRD (OpenShift AI operator) | ai-architecture-charts Helm subchart | ai-architecture-charts Helm subchart | Standalone Helm chart with direct Kubernetes Deployment |
+| Inference backend | Ollama (local) | Remote vLLM via KServe InferenceService | Remote vLLM via llm-service subchart | Remote vLLM via llm-service subchart | Remote vLLM via KServe predictor |
+| LlamaStack version | 0.6.1 | 0.3.5 | 0.6.1 (subchart v0.8.6) | subchart v0.8.5 (llama-stack-client 0.5.0) | Red Hat ET image (vllm-0.2.6) |
+| Client API | Responses API with Conversations | Agents alpha API with sessions | OpenAI chat.completions + LlamaStackClient | Responses API via centralized client factory | Server-only (consumed via playground or direct API) |
+| Agent management | Runner handles agentic loop, LlamaStack streams responses | LlamaStack manages full agentic loop, provider maps events | No agent loop; direct chat completions for RAG Q&A | Custom Agent class with retry, MCP tools, and file_search | LlamaStack-native agents API (no custom application code) |
+| MCP integration | Dynamic toolgroup resolution at runtime | Static MCP endpoint in run.yaml ConfigMap | Tool groups listed from LlamaStack for UI display | MCP tools in responses tools array with per-request headers | Dynamic MCP servers from Helm values array with /sse suffix |
+| Auth model | K8s SA token + X-Forwarded headers | API key in K8s Secret, no user header forwarding | Optional bearer token, TLS via HTTPX client factory | Dummy API key (in-cluster only), user ID via MCP headers | Hardcoded VLLM_API_TOKEN, network policy for access control |
+| Safety | Input shields via `client.safety.run_shield()` | `inline::llama-guard` provider declared in run.yaml | External F5 AI Guardrails Moderator proxy | Optional NeMo Guardrails via external endpoint | `inline::llama-guard` with separate vLLM safety provider |
+| Storage | SQLite at container-local path | SQLite at operator-managed path | Subchart defaults | PostgreSQL (kv_postgres + sql_postgres) for multi-replica | PVC at /.llama (SQLite) + inline Milvus for vector I/O |
+| Platform | Local dev (compose), OpenShift (future) | OpenShift AI with operator | OpenShift with shared Helm subcharts | OpenShift with shared Helm subcharts | OpenShift with standalone chart, ArgoCD sync-wave |
+| Multi-framework | Pluggable runner (LlamaStack/LangGraph/CrewAI) | Pluggable provider (mcp_direct/llama_stack) | Single path (OpenAI SDK for chat) | Agent class per agent config YAML | Single path (LlamaStack native APIs) |
+| Horizontal scaling | Single instance | Operator-managed replicas | Single instance | Post-init scaler Job, PostgreSQL-backed shared state | Single instance (PVC ReadWriteOnce) |
+| Observability | None | None | None | None | OpenTelemetry sidecar with traces + metrics to central collector |
+| Vector I/O | None | None | pgvector via subchart | pgvector via subchart | inline::milvus (file-based Milvus Lite) |

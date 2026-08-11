@@ -1,7 +1,7 @@
 ---
 name: helm-uwm-podmonitor-vllm
 description: Helm chart enabling OpenShift User Workload Monitoring with PodMonitors targeting vLLM model server pods
-summary: "Helm chart (charts/observability/helm/uwm/) enables OpenShift User Workload Monitoring and deploys PodMonitors to scrape vLLM model server metrics by managing cluster-monitoring-config (enableUserWorkload: true, 168h retention, 40Gi nfs-client PVC) and user-workload-monitoring-config (72h retention, alertmanager with enableAlertmanagerConfig: true). Use when vLLM models are served via KServe InferenceService and Prometheus-based metrics collection is needed; complements OTel sidecar injection for distributed traces alongside Prometheus scraping. Two PodMonitors enabled by default -- vllm-llama-serve-monitor (30s interval, selector app.kubernetes.io/name: nim-llm) and vllm-metrics (15s interval, port h2c for gRPC HTTP/2 cleartext, selector app: nim-llm) -- cover different KServe deployment label formats. Requires cluster-admin privileges for ConfigMap deployment to openshift-monitoring and openshift-user-workload-monitoring namespaces; storageClassName nfs-client is environment-specific and must match the target cluster's available StorageClass."
+summary: "Helm chart (charts/observability/helm/uwm/) enables OpenShift User Workload Monitoring and deploys PodMonitors to scrape vLLM model server metrics by managing cluster-monitoring-config (enableUserWorkload: true) and user-workload-monitoring-config ConfigMaps across openshift-monitoring namespaces. Approach A uses two matchLabels PodMonitors (30s/15s intervals, selectors app.kubernetes.io/name: nim-llm and app: nim-llm) with nfs-client PVC (40Gi), 168h/72h retention, alertmanager via helm install; Approach B uses matchExpressions IN operator for multi-model scraping (safety, llama32-3b, granite-8b, llama31-70b), KServe isvc-prefixed selectors (app: isvc.llama3-2-3b-predictor), no PVC, 15d retention, and helm template | oc apply for idempotent deployment when platform ConfigMaps already exist. Two PodMonitors cover different KServe deployment label formats with the second specifying port h2c for gRPC HTTP/2 cleartext; pattern complements OTel sidecar injection for distributed traces alongside Prometheus scraping. Requires cluster-admin privileges for ConfigMap deployment to openshift-monitoring and openshift-user-workload-monitoring namespaces; storageClassName nfs-client is environment-specific and must match the target cluster's available StorageClass."
 metadata:
   type: deployment-pattern
 tags:
@@ -13,6 +13,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/aml-rag-nvidia"
     notes: "UWM chart manages cluster-monitoring-config and user-workload-monitoring-config ConfigMaps plus two PodMonitors for vLLM metrics"
     approach: "A"
+  - quickstart: "lls-observability"
+    repo: "https://github.com/rh-ai-kickstart/llama-stack-observability"
+    notes: "UWM chart with no PVC storage config, matchExpressions IN selector for multi-model scraping, and deploy via helm template | oc apply"
+    approach: "B"
 ---
 
 # User Workload Monitoring with vLLM PodMonitors
@@ -148,3 +152,96 @@ vllmMetricsMonitor:
 - `otel-sidecar-inject-vllm-model-metrics.md` -- complementary OTel-based metrics and traces collection for the same vLLM pods
 - `observability-olm-operator-helm-install.md` -- the Cluster Observability Operator that may interact with these monitoring configurations
 - `kserve-multi-model-mig-gpu-slicing.md` -- the vLLM model pods whose metrics are scraped by these PodMonitors
+
+---
+
+## Approach B: Lightweight UWM with matchExpressions Multi-Model Selector (from lls-observability)
+
+### When to Use
+
+When UWM needs to scrape multiple model types using a single PodMonitor with `matchExpressions` IN operator, and when the cluster monitoring stack should use default storage (no PVC) rather than dedicated persistent volumes.
+
+### Differences from Approach A
+
+- Cluster monitoring ConfigMap enables `enableUserWorkload: true` without PVC volumeClaimTemplate or retention settings -- relies on cluster defaults
+- User workload monitoring ConfigMap sets `retention: 15d` and `logLevel: debug` without a PVC
+- First PodMonitor uses `matchExpressions` with `IN` operator to target multiple model app labels in a single resource instead of `matchLabels` for a single label value
+- Second PodMonitor targets KServe InferenceService pod labels (`app: isvc.llama3-2-3b-predictor`) instead of generic `app: nim-llm`
+- Deployed via `helm template uwm ... | oc apply -f-` instead of `helm install` because platform ConfigMaps may already exist
+
+### PodMonitor with matchExpressions
+
+```yaml
+# helm/02-observability/uwm/templates/vllm-llama-serve-monitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: vllm-llama-serve-monitor
+spec:
+  podMetricsEndpoints:
+  - interval: 30s
+    path: /metrics
+    bearerTokenSecret:
+      name: ""
+      key: ""
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - safety
+          - llama32-3b
+          - granite-8b
+          - llama31-70b
+```
+
+### KServe InferenceService Label Selector
+
+```yaml
+# helm/02-observability/uwm/templates/vllm-metrics-monitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: vllm-metrics
+  labels:
+    release: prometheus
+spec:
+  podMetricsEndpoints:
+  - interval: 15s
+    path: /metrics
+    port: h2c
+  selector:
+    matchLabels:
+      app: isvc.llama3-2-3b-predictor
+```
+
+### Lightweight ConfigMap (No PVC)
+
+```yaml
+# helm/02-observability/uwm/values.yaml (Approach B)
+clusterMonitoring:
+  enabled: true
+  enableUserWorkload: true
+  # No prometheusK8s volumeClaimTemplate -- uses cluster defaults
+
+userWorkloadMonitoring:
+  enabled: true
+  prometheus:
+    logLevel: debug
+    retention: 15d
+  alertmanager:
+    enabled: true
+    enableAlertmanagerConfig: true
+```
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A | Approach B |
+|----------|-----------|-----------|
+| Storage configuration | PVC with nfs-client StorageClass (40Gi) | No PVC; cluster defaults |
+| Retention | 168h cluster / 72h user workload | Not configured (cluster default) / 15d user workload |
+| Multi-model selector | Two PodMonitors with matchLabels for single label | matchExpressions IN operator for 4+ model labels in one PodMonitor |
+| Pod label targeting | `app.kubernetes.io/name: nim-llm` / `app: nim-llm` | `app: safety/llama32-3b/granite-8b/llama31-70b` / `app: isvc.llama3-2-3b-predictor` |
+| Install method | `helm install` | `helm template | oc apply -f-` (idempotent for existing ConfigMaps) |
