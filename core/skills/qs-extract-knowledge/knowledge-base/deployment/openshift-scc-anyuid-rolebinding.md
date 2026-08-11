@@ -1,7 +1,7 @@
 ---
 name: openshift-scc-anyuid-rolebinding
 description: SCC anyuid granted via RoleBinding to default and NV-Ingest service accounts for third-party containers
-summary: "Enables third-party containers (NV-Ingest, Milvus, Redis, Loki, Grafana, pgAdmin) that hardcode UIDs or require root to run under OpenShift's restricted SCC by granting anyuid or privileged SCC to service accounts via three approaches. Approach A (dedicated RoleBinding templates in custom subcharts, Helm-lifecycle-managed) suits charts you control, binding default SA and {{ .Release.Name }}-nv-ingest SA to system:openshift:scc:anyuid with a separate ingestor-server-rbac.yaml for OBC SA anyuid; Approach B (extraObjects in values.yaml) suits third-party charts, using namespace-scoped Role for Loki anyuid (loki/loki-canary/minio-sa SAs) and direct ClusterRole RoleBinding for Grafana privileged SCC; Approach C (imperative oc adm policy add-scc-to-user privileged -z pgadmin in Makefile before helm install) suits optional components needing a simple pre-step outside Helm lifecycle with a dedicated pre-created SA. Approach A references system:openshift:scc:anyuid ClusterRole unconditionally with no values toggle; Approach B embeds inconsistent patterns -- namespace-scoped Role with use verb on securitycontextconstraints (Loki) vs ClusterRole reference (Grafana) -- in extraObjects; Approach C requires fsGroup: 5050 and allowPrivilegeEscalation: true in the deployment spec and is the only non-restricted-SCC component in its quickstart. Helm release name changes break the {{ .Release.Name }}-nv-ingest SA reference, default SA grants elevate SCC namespace-wide, Loki's extraObjects mixes RBAC with Route definitions (minio-sa refers to Loki's built-in MinIO not a separate subchart), Approach C grants survive helm uninstall requiring manual cleanup with 2>/dev/null silently swallowing genuine errors, and Grafana requires privileged SCC despite initChownData being disabled."
+summary: "Enables third-party containers (NV-Ingest, Milvus, Redis, Loki, Grafana, pgAdmin) that hardcode UIDs or require root to run under OpenShift's restricted SCC by granting anyuid or privileged SCC to service accounts via four approaches. Approach A (dedicated RoleBinding templates in custom subcharts, Helm-lifecycle-managed) suits charts you control, binding default SA and {{ .Release.Name }}-nv-ingest SA to system:openshift:scc:anyuid unconditionally with separate ingestor-server-rbac.yaml for OBC SA; Approach B (extraObjects in values.yaml) suits third-party charts with inconsistent namespace-scoped Role for Loki anyuid (loki/loki-canary/minio-sa SAs) vs direct ClusterRole RoleBinding for Grafana privileged; Approach C (imperative oc adm policy in Makefile before helm install) suits optional components with a dedicated pre-created SA outside Helm lifecycle; Approach D (Helm range over dict list of 7 SA/namespace pairs across 3 parameterized productNamespaces, sccBindings.enabled toggle) suits vendor operators with SAs spanning multiple namespaces. Approach A references system:openshift:scc:anyuid ClusterRole with no values toggle; Approach B embeds inconsistent patterns -- namespace-scoped Role with use verb on securitycontextconstraints (Loki) vs ClusterRole reference (Grafana) -- in extraObjects; Approach C requires fsGroup: 5050 and allowPrivilegeEscalation: true and is the only non-restricted-SCC component in its quickstart; Approach D parameterizes namespaces via productNamespaces values but hardcodes SA names with all-or-nothing toggle. Helm release name changes break the {{ .Release.Name }}-nv-ingest SA reference, default SA grants elevate SCC namespace-wide (A, D), Loki's extraObjects mixes RBAC with Route definitions (minio-sa refers to Loki's built-in MinIO not a separate subchart), Approach C grants survive helm uninstall requiring manual cleanup with 2>/dev/null silently swallowing genuine errors, Grafana requires privileged SCC despite initChownData being disabled, and Approach D's hardcoded SA names break if the vendor operator changes its naming convention."
 metadata:
   type: deployment-pattern
 tags:
@@ -20,6 +20,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
     notes: "Privileged SCC via imperative oc CLI command in Makefile before helm install for pgAdmin"
     approach: "C"
+  - quickstart: "f5-ai-guardrails"
+    repo: "https://github.com/rh-ai-quickstart/f5-ai-guardrails"
+    notes: "Iterated dict-based multi-namespace anyuid RoleBindings for 7 SAs across 3 product namespaces in Helm template"
+    approach: "D"
 ---
 
 # OpenShift SCC Anyuid via RoleBinding
@@ -235,14 +239,75 @@ spec:
 
 ---
 
+## Approach D: Iterated Dict-Based Multi-Namespace Anyuid Bindings (from f5-ai-guardrails)
+
+### When to Use
+
+When a vendor operator deploys service accounts across multiple product namespaces (moderator, prefect, inference) and each SA needs the anyuid SCC. This approach uses a list of `(namespace, serviceAccount)` dicts iterated in a single Helm template to generate all RoleBindings declaratively.
+
+### Differences from Approaches A, B, and C
+
+- Uses a Helm `range` over a list of namespace/SA dict pairs rather than hardcoding individual RoleBindings or using `extraObjects`
+- All bindings are `anyuid` only (not `privileged`) and use direct ClusterRole reference (like Approach A)
+- Spans three distinct namespaces (moderator, prefect, inference) managed by the same Helm release
+- Namespace names are parameterized via values.yaml (`productNamespaces.moderator`, etc.), not hardcoded
+
+### Iterated Dict-Based RoleBinding Template
+
+The template generates 7 RoleBindings from a single `range` loop over a list of dicts:
+
+```yaml
+# deploy/helm/f5-ai-security/templates/50-scc-anyuid-bindings.yaml
+{{- if .Values.sccBindings.enabled }}
+{{- $m := .Values.productNamespaces.moderator }}
+{{- $p := .Values.productNamespaces.prefect }}
+{{- $i := .Values.productNamespaces.inference }}
+{{- $pairs := list
+  (dict "namespace" $m "serviceAccount" "cai-moderator-sa")
+  (dict "namespace" $m "serviceAccount" "default")
+  (dict "namespace" $p "serviceAccount" "default")
+  (dict "namespace" $p "serviceAccount" "prefect-server")
+  (dict "namespace" $p "serviceAccount" "prefect-worker")
+  (dict "namespace" $i "serviceAccount" "f5-ai-sec-inference")
+  (dict "namespace" $i "serviceAccount" "f5-ai-sec-inference-models")
+}}
+{{- range $pairs }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: anyuid-{{ .namespace }}-{{ .serviceAccount }}
+  namespace: {{ .namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+subjects:
+  - kind: ServiceAccount
+    name: {{ .serviceAccount }}
+    namespace: {{ .namespace }}
+{{- end }}
+{{- end }}
+```
+
+### Gotchas (Approach D)
+
+- The SA names (e.g., `cai-moderator-sa`, `prefect-server`, `f5-ai-sec-inference-models`) match the operator's defaults and are hardcoded in the template, not parameterized via values -- if the operator changes its SA naming convention, the template must be updated
+- The `default` SA is granted anyuid in both the moderator and prefect namespaces, elevating SCC for all pods using the default SA in those namespaces
+- The `sccBindings.enabled` toggle (default true) controls all 7 bindings as a group -- individual SA pairs cannot be selectively disabled
+- RoleBinding names follow the pattern `anyuid-<namespace>-<serviceAccount>`, which makes them discoverable but creates long names (e.g., `anyuid-f5-ai-sec-inference-f5-ai-sec-inference-models`)
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A | Approach B | Approach C |
-|----------|-----------|-----------|-----------|
-| SCC grant location | Dedicated RoleBinding template in chart | `extraObjects` in values.yaml | Imperative `oc adm policy` in Makefile |
-| When to use | Custom subcharts where you control templates | Third-party charts configured via values | Simple pre-step for optional components |
-| SCC level used | anyuid only | anyuid and privileged | privileged |
-| Role indirection | Direct ClusterRole reference | Mix of Role (Loki) and ClusterRole (Grafana) | None (direct oc adm policy) |
-| Visibility | Separate template file, easy to find | Buried in values.yaml among other config | Visible in Makefile target |
-| Lifecycle management | Managed by Helm (created/deleted with release) | Managed by Helm via extraObjects | Imperative -- survives helm uninstall |
-| Service account scope | default SA + chart-specific SA | Chart-specific SAs (loki, grafana) | Dedicated pre-created SA |
+| Criteria | Approach A | Approach B | Approach C | Approach D |
+|----------|-----------|-----------|-----------|-----------|
+| SCC grant location | Dedicated RoleBinding template in chart | `extraObjects` in values.yaml | Imperative `oc adm policy` in Makefile | Iterated dict list in a single template |
+| When to use | Custom subcharts where you control templates | Third-party charts configured via values | Simple pre-step for optional components | Vendor operator with SAs across multiple namespaces |
+| SCC level used | anyuid only | anyuid and privileged | privileged | anyuid only |
+| Role indirection | Direct ClusterRole reference | Mix of Role (Loki) and ClusterRole (Grafana) | None (direct oc adm policy) | Direct ClusterRole reference |
+| Visibility | Separate template file, easy to find | Buried in values.yaml among other config | Visible in Makefile target | Consolidated in one template, easy to audit |
+| Lifecycle management | Managed by Helm (created/deleted with release) | Managed by Helm via extraObjects | Imperative -- survives helm uninstall | Managed by Helm (created/deleted with release) |
+| Service account scope | default SA + chart-specific SA | Chart-specific SAs (loki, grafana) | Dedicated pre-created SA | Explicit SA list across 3 namespaces |
+| Namespace span | Single namespace | Single namespace per chart | Single namespace | Multiple namespaces from one release |

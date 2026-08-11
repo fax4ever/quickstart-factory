@@ -1,7 +1,7 @@
 ---
 name: llm-service
 description: "Helm subchart for deploying LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI"
-summary: "Deploys LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI via the llm-service Helm subchart (v0.5.9 from ai-architecture-charts), with LlamaStack orchestrating inference between backend and model servers across three runner types -- LlamaStack (via LLAMASTACK_URL), LangGraph (direct OpenAI-compat API, falls back to LlamaStack /v1), and CrewAI (LiteLLM routing requiring `openai/`-prefixed model names via `_to_litellm_model()`). Use when deploying GPU-backed LLM inference on RHOAI/OpenShift AI (24GB+ VRAM, HF_TOKEN for gated models) with support for multiple runner frameworks; pre-existing model URLs skip InferenceService creation, and local dev uses Ollama via LlamaStack's `remote::ollama` provider with silent fallback to first available model. Models configured entirely through `global.models.<name>.enabled/id/url/apiToken/tolerations` at `helm install` via install_with_env.sh (values.yaml only has commented examples), GPU tolerations passed as `--set-json`, safety/shield models share same mechanism with separate SAFETY parameter and are filtered from `/api/v1/llama-stack/llms`, and dynamic provider registration patches the LlamaStack ConfigMap at runtime with deployment restart. Gotchas: no explicit `llm-service:` block in values.yaml (check install script or `helm get values`), LLM (YAML-safe config key) vs LLM_ID (model identifier) distinction where LLM_ID defaults to LLM, LlamaStack API breaks between 0.3.x and 0.6.1 handled by multi-attribute fallback helpers, init container waits for LlamaStack not llm-service causing 10-30min startup for large model downloads, and CrewAI install script auto-prepends `openai/` prefix for LiteLLM routing."
+summary: "Deploys LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI via the llm-service Helm subchart (v0.5.9 from ai-architecture-charts), with LlamaStack orchestrating inference between backend and model servers across three runner types -- LlamaStack (via LLAMASTACK_URL), LangGraph (direct OpenAI-compat API, falls back to LlamaStack /v1), and CrewAI (LiteLLM routing requiring `openai/`-prefixed model names via `_to_litellm_model()`). Use when deploying GPU-backed LLM inference on RHOAI/OpenShift AI (24GB+ VRAM, HF_TOKEN for gated models) with multi-device support (cpu/gpu/hpu via DEVICE variable); pre-existing model URLs skip InferenceService creation, `rawDeploymentMode` bypasses KServe for non-KServe clusters, and local dev uses Ollama via LlamaStack's `remote::ollama` provider with silent fallback to first available model. Models configured entirely through `global.models.<name>.enabled/id/url/apiToken/tolerations` at `helm install` via install_with_env.sh or Makefile with rag-values.yaml catalog (values.yaml only has commented examples), GPU tolerations passed as `--set-json`, safety/shield models use same mechanism with separate SAFETY parameter and `registerShield: true` flag (filtered from `/api/v1/llama-stack/llms`), per-model `device`/`accelerators` overrides, and dynamic provider registration patches the LlamaStack ConfigMap at runtime with deployment restart. Gotchas: no explicit `llm-service:` block in ai-virtual-agent values.yaml (f5-ai-guardrails has one with `secret.enabled` for HF token validation; check install script or `helm get values`), LLM (YAML-safe config key) vs LLM_ID (model identifier) distinction where LLM_ID defaults to LLM, LlamaStack API breaks between 0.3.x and 0.6.1 handled by multi-attribute fallback helpers, init container waits for LlamaStack not llm-service causing 10-30min startup for large model downloads, HPU models need different vLLM args (`--max-num-seqs 32`) and max-model-len than GPU counterparts, and CrewAI install script auto-prepends `openai/` prefix for LiteLLM routing."
 metadata:
   type: component
 tags:
@@ -13,6 +13,10 @@ source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
     notes: "Multi-runner LLM serving via llm-service subchart + LlamaStack + MaaS fallback"
+    approach: "A"
+  - quickstart: "f5-ai-guardrails"
+    repo: "https://github.com/rh-ai-quickstart/f5-ai-guardrails"
+    notes: "Makefile-driven llm-service deployment with multi-device support (cpu/gpu/hpu), values-file model catalog, rawDeploymentMode, and registerShield for safety models"
     approach: "A"
 ---
 
@@ -62,6 +66,71 @@ The `list-models` target uses Helm's template rendering with a debug flag to enu
 list-models: deps
 	@helm template dummy-release $(AI_VIRTUAL_AGENT_CHART) \
 	  --set llm-service._debugListModels=true | grep ^model:
+```
+
+### Makefile-Driven Model Deployment with Values File (from f5-ai-guardrails)
+
+Unlike script-driven installs, f5-ai-guardrails uses a Makefile with a `rag-values.yaml` values file containing a pre-defined model catalog. Models can be enabled in the file or overridden via CLI:
+
+```makefile
+# From deploy/helm/Makefile
+helm_llm_service_args = \
+    --set llm-service.secret.hf_token=$(HF_TOKEN) \
+    $(if $(DEVICE),--set llm-service.device='$(DEVICE)',) \
+    $(if $(LLM),--set global.models.$(LLM).enabled=true,) \
+    $(if $(SAFETY),--set global.models.$(SAFETY).enabled=true,) \
+    $(if $(RAW_DEPLOYMENT),--set llm-service.rawDeploymentMode=$(RAW_DEPLOYMENT),)
+```
+
+The example values file (`rag-values.yaml.example`) ships a full model catalog with pre-configured tolerations:
+
+```yaml
+# From deploy/helm/rag-values.yaml.example
+global:
+  models:
+    llama-3-2-3b-instruct:
+      id: meta-llama/Llama-3.2-3B-Instruct
+      enabled: false
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: Exists
+          effect: NoSchedule
+```
+
+### Multi-Device Support (from f5-ai-guardrails)
+
+The llm-service subchart supports three device types configured per model or globally via the `DEVICE` Make variable:
+
+```yaml
+# From deploy/helm/rag/values.yaml (commented examples)
+# Device Support:
+# - Use DEVICE=cpu for CPU-only deployment
+# - Use DEVICE=gpu for NVIDIA GPU deployment (default)
+# - Use DEVICE=hpu for Intel Gaudi HPU deployment
+```
+
+Per-model device and accelerator count can also be set in the model entry:
+
+```yaml
+# From deploy/helm/rag/values.yaml (commented example)
+#     llama-3-2-3b-instruct:
+#       id: meta-llama/Llama-3.2-3B-Instruct
+#       enabled: true
+#       device: "hpu"
+#       accelerators: "1"
+```
+
+### Safety Model Shield Registration (from f5-ai-guardrails)
+
+Safety/guard models can be registered as LlamaStack shields by setting `registerShield: true` in the model entry. This is separate from the `SAFETY` parameter used to enable the model:
+
+```yaml
+# From deploy/helm/rag/values.yaml (commented example)
+#     llama-guard-3-8b:
+#       id: meta-llama/Llama-Guard-3-8B
+#       enabled: true
+#       registerShield: true
+#       device: "hpu"
 ```
 
 ### GPU Tolerations for Tainted Nodes
@@ -184,8 +253,18 @@ def _get_model_type(model):
 
 - **Config files:**
   - `deploy/local/llamastack-run.yaml` - LlamaStack provider config for local dev (Ollama-backed)
-  - `deploy/cluster/scripts/install_with_env.sh` - Install script that wires `global.models` to Helm
-  - `deploy/cluster/scripts/collect_env_vars.sh` - Interactive env var collection for install
+  - `deploy/cluster/scripts/install_with_env.sh` - Install script that wires `global.models` to Helm (ai-virtual-agent)
+  - `deploy/cluster/scripts/collect_env_vars.sh` - Interactive env var collection for install (ai-virtual-agent)
+  - `deploy/helm/rag-values.yaml.example` - Full model catalog with pre-configured tolerations (f5-ai-guardrails)
+  - `deploy/helm/Makefile` - Makefile-driven install with `helm_llm_service_args` and interactive HF token validation (f5-ai-guardrails)
+
+- **Additional Helm values (from f5-ai-guardrails):**
+  - `llm-service.secret.enabled` - Enable secret creation for HF token (default `true`)
+  - `llm-service.device` - Global device type (`cpu`, `gpu`, `hpu`; default `gpu`)
+  - `llm-service.rawDeploymentMode` - Use raw Deployments instead of KServe InferenceServices
+  - `global.models.<name>.device` - Per-model device override
+  - `global.models.<name>.accelerators` - Number of accelerators (defaults to `1`)
+  - `global.models.<name>.registerShield` - Register as LlamaStack shield (for safety/guard models)
 
 ## Known Gotchas
 
@@ -203,6 +282,12 @@ def _get_model_type(model):
 
 - **Safety models share the same llm-service pattern:** Safety/shield models (e.g., `llama-guard-3-8b`) are deployed via the same `global.models` mechanism with a separate `SAFETY` parameter. They get their own InferenceService and GPU allocation.
 
+- **rawDeploymentMode for non-KServe clusters (from f5-ai-guardrails):** The `rawDeploymentMode` flag can be set on both `llm-service` and `llama-stack` subcharts via `RAW_DEPLOYMENT` Make variable. This is passed as `--set llm-service.rawDeploymentMode=$(RAW_DEPLOYMENT)` and `--set llama-stack.rawDeploymentMode=$(RAW_DEPLOYMENT)` simultaneously, ensuring both subcharts use the same deployment method.
+
+- **HPU models need different args than GPU (from f5-ai-guardrails):** Intel Gaudi HPU models require HPU-specific vLLM args (e.g., `--max-num-seqs 32`) and have different `--max-model-len` values than their GPU counterparts. The values.yaml commented examples show the same model (`Llama-3.2-3B-Instruct`) configured differently for GPU vs HPU, including different max model lengths (`30444` for GPU vs `14336` for HPU).
+
+- **Explicit llm-service block for secrets (from f5-ai-guardrails):** Unlike ai-virtual-agent where the `llm-service:` block is absent from values.yaml, f5-ai-guardrails has an explicit block with `secret.hf_token` and `secret.enabled: true`. The Makefile validation parses `hf_token` from this block with `grep -A 40 "^llm-service:" $(VALUES_FILE) | grep "hf_token:"` and prompts interactively if empty.
+
 ## Testing Notes
 
 - Use `make list-models` to verify available model definitions before installation
@@ -210,6 +295,9 @@ def _get_model_type(model):
 - The backend filters out shield models from the LLM list to avoid exposing safety models as inference options
 - Monitor model server startup with `make install-status NAMESPACE=<ns>` - llm-service pods need GPU scheduling
 - For local dev, confirm Ollama has pulled the model: the compose healthcheck waits for `ollama list | grep llama3.2:1b`
+- In f5-ai-guardrails, `make validate` runs `helm lint` and `helm template --dry-run` on the RAG chart, and `make validate-infra` checks KServe CRDs, webhook endpoints, and GPU availability before install
+- Use `make logs-llm` (f5-ai-guardrails) to tail llm-service pod logs: `oc logs -n $(NAMESPACE) -l app=llm-service --tail=100`
+- `make health` checks pods, services, routes, huggingface-secret, and PVCs in one pass
 
 ## Related Patterns
 

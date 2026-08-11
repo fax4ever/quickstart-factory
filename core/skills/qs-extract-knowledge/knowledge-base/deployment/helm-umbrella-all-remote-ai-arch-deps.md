@@ -1,7 +1,7 @@
 ---
 name: helm-umbrella-all-remote-ai-arch-deps
 description: Umbrella Helm chart where every dependency is a remote ai-architecture-charts subchart
-summary: "Deploys a complete AI quickstart stack (pgvector, mcp-servers, llm-service, llama-stack, configure-pipeline, ingestion-pipeline, oracle-db) via a single umbrella Helm chart at deploy/cluster/helm/ where all 7 dependencies are sourced from the ai-architecture-charts remote repository (https://rh-ai-quickstart.github.io/ai-architecture-charts). Use when every infrastructure component is available as an ai-architecture-charts subchart and no local chart customization is needed -- the parent chart contains only app-specific templates (deployment, service, route, RBAC, secrets) while delegating all infrastructure to versioned remote subcharts configured through nested values.yaml overrides. oracle-db is conditionally enabled via oracle-db.enabled (default false); llama-stack supports custom auth delegation to the app's /validate endpoint with RBAC access policies; MCP server definitions use streamable-http transport under double-nested subchart-name keys. The mcp-servers subchart requires double-nested keys (mcp-servers.mcp-servers.<server-name>) due to the chart's internal values structure, configure-pipeline MinIO credentials must be manually synced with any MinIO settings elsewhere, and helm dependency update (Makefile deps target) must run before install."
+summary: "Deploys a complete AI quickstart stack (pgvector, mcp-servers, llm-service, llama-stack, configure-pipeline, ingestion-pipeline, oracle-db) via a single umbrella Helm chart at deploy/cluster/helm/ where all 7 dependencies are sourced from the ai-architecture-charts remote repository (https://rh-ai-quickstart.github.io/ai-architecture-charts). Use when every infrastructure component is available as an ai-architecture-charts subchart and no local chart customization is needed -- the parent chart contains only app-specific templates (deployment, service, route, RBAC, secrets) while delegating all infrastructure to versioned remote subcharts configured through nested values.yaml overrides. oracle-db is conditionally enabled via oracle-db.enabled (default false); llama-stack supports custom auth provider delegation (provider_config.type: \"custom\") pointing to the app's /validate endpoint with permit/forbid RBAC access policies; MCP server definitions use streamable-http transport under double-nested keys (mcp-servers.mcp-servers.<name>). The double-nested mcp-servers key structure is required by the chart's internal values layout, configure-pipeline MinIO credentials must be manually synced with any MinIO settings elsewhere in the release, and helm dependency update (Makefile deps target) must run before install."
 metadata:
   type: deployment-pattern
 tags:
@@ -13,6 +13,10 @@ source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
     notes: "All 7 dependencies sourced from ai-architecture-charts; no local subcharts"
+    approach: "A"
+  - quickstart: "f5-ai-guardrails"
+    repo: "https://github.com/rh-ai-quickstart/f5-ai-guardrails"
+    notes: "3 remote ai-architecture-charts deps (pgvector, llm-service, llama-stack) in RAG umbrella chart at deploy/helm/rag/"
     approach: "A"
 ---
 

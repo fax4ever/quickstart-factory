@@ -1,12 +1,12 @@
 ---
 name: rag-chatbot
 description: "Conversational AI app that answers questions using retrieval-augmented generation over user documents"
-summary: "Grounds LLM responses in user-uploaded documents by chunking, embedding into a vector store (pgvector or GPU-accelerated Milvus), and performing similarity search at query time to provide source-grounded conversational Q&A rather than generic LLM output on RHOAI/OpenShift. Choose over agentic-app when the core value is document-grounded Q&A without external tool calls or multi-step agent reasoning; choose over model-serving-app when retrieval-augmented answers via vector search are needed beyond direct inference — Approach A (ai-virtual-agent) suits lightweight custom-built RAG with FastAPI+LlamaStack, pgvector, K8s Job ingestion, and 1-2 GPUs, while Approach B (aml-rag-nvidia) suits enterprise document-heavy RAG using NVIDIA RAG Blueprint with NV-Ingest (OCR, table/graphic detection, VLM captioning), GPU-accelerated Milvus, 4 KServe/vLLM models (Nemotron-Super-49B-FP8, VLM, embedding, reranking), and 3-5 H100/A100 GPUs with optional MIG partitioning. Approach A integrates via LlamaStack RAG tool with MinIO/S3 storage; Approach B requires embedding and ranking translation proxies to convert NIM API formats to vLLM-compatible formats, NGC cloud-hosted NIMs for document detection/OCR (NGC API key required), Redis for NV-Ingest task queue, ODF ObjectBucketClaim, and OpenTelemetry+Grafana+Tempo observability. Key archetype boundary: if the app needs dynamic tool selection or multi-step workflow orchestration beyond retrieval, use agentic-app instead; Approach B's hybrid processing (local KServe/vLLM + NGC cloud NIMs) creates external cloud dependency, and its GPU-accelerated Milvus indexing/search requires explicit enablement in charts/ingest/values.yaml."
+summary: "Grounds LLM responses in user-uploaded documents via chunking, embedding into a vector store (pgvector or GPU-accelerated Milvus), and similarity search at query time for source-grounded conversational Q&A on RHOAI/OpenShift. Choose over agentic-app when core value is document-grounded Q&A without tool calls or multi-step reasoning, over model-serving-app when retrieval beyond direct inference is needed — Approach A (ai-virtual-agent) suits lightweight custom RAG with FastAPI+LlamaStack, pgvector, K8s Job ingestion, MinIO/S3, React/PatternFly, and 1-2 GPUs; Approach B (aml-rag-nvidia) suits enterprise document-heavy RAG using NVIDIA RAG Blueprint with NV-Ingest (OCR, table/graphic detection, VLM captioning), GPU-accelerated Milvus, 4 KServe/vLLM models (Nemotron-Super-49B-FP8, VLM, embedding, reranking), embedding/ranking translation proxies, Redis task queue, ODF ObjectBucketClaim, OpenTelemetry+Grafana+Tempo observability, and 3-5 H100/A100 GPUs with optional MIG partitioning; Approach C (f5-ai-guardrails) suits security-focused RAG with LlamaStack+pgvector, F5 AI Guardrails (Calypso AI) proxy for prompt injection/PII/toxicity/topic enforcement, OLM-managed F5 operator across 5 namespaces, Llama-3.2-1B-Instruct + all-MiniLM-L6-v2, dual-panel Streamlit UI (guardrailed vs direct), and Calypso AI Red Team for adversarial testing. Approach B requires NGC API key for cloud-hosted NV-Ingest NIMs and explicit GPU Milvus enablement (`APP_VECTORSTORE_ENABLEGPUINDEX` in charts/ingest/values.yaml); Approach C requires F5 license key + private registry credentials (harbor.calypsoai.app), anyuid SCC bindings for F5 namespaces, Helm retry logic for operator namespace races (`F5_HELM_MAX_ATTEMPTS=8`), and persists guardrail state to emptyDir (lost on pod replacement — use PVC for persistence)."
 metadata:
   type: archetype
 tags:
-  tech_stack: [fastapi, react, patternfly, postgresql, python, nvidia-rag-blueprint, redis]
-  ai_pattern: [rag, embeddings, vector-search, model-serving, multimodal]
+  tech_stack: [fastapi, react, patternfly, postgresql, python, nvidia-rag-blueprint, redis, streamlit, llama-stack]
+  ai_pattern: [rag, embeddings, vector-search, model-serving, multimodal, guardrails]
   platform: [rhoai, openshift, vllm, kserve]
   data_layer: [pgvector, milvus]
 source_examples:
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/aml-rag-nvidia"
     notes: "NVIDIA RAG Blueprint adapted for RHOAI with NV-Ingest document processing, GPU-accelerated Milvus, 4-model KServe/vLLM serving, translation proxies, and full observability stack"
     approach: "B"
+  - quickstart: "f5-ai-guardrails"
+    repo: "https://github.com/rh-ai-quickstart/f5-ai-guardrails"
+    notes: "LlamaStack RAG chatbot secured by F5 AI Guardrails proxy for AI-layer content inspection -- prompt injection detection, PII filtering, toxicity scanning, and topic enforcement via OLM-managed operator"
+    approach: "C"
 ---
 
 # RAG Chatbot
@@ -46,6 +50,7 @@ A RAG chatbot combines a large language model with a retrieval system to answer 
 |------------|---------------------|
 | ai-virtual-agent | RAG as an integrated capability within an agent platform -- knowledge bases with pgvector, document ingestion pipeline, and LlamaStack RAG tool for grounded responses |
 | aml-rag-nvidia | NVIDIA RAG Blueprint adapted for RHOAI -- NV-Ingest enterprise document processing, GPU-accelerated Milvus vector search, 4-model KServe/vLLM serving (LLM, VLM, embedding, reranking), and built-in observability |
+| f5-ai-guardrails | LlamaStack RAG chatbot secured by F5 AI Guardrails (Calypso AI) -- Moderator proxy intercepts prompts and responses for policy evaluation (prompt injection, PII, toxicity, topic), with dual-panel Streamlit UI comparing guardrailed vs direct model access |
 
 ## Decision Criteria
 
@@ -87,15 +92,49 @@ When the RAG application is built on top of a vendor-provided blueprint (NVIDIA 
 
 ---
 
+## Approach C: Guardrails-Secured RAG (from f5-ai-guardrails)
+
+### When to Use
+
+When the primary objective is demonstrating or enforcing AI-layer security on model inference endpoints -- protecting a RAG chatbot against prompt injection attacks, PII leakage, toxic content generation, and off-topic misuse using a vendor-managed guardrails proxy, rather than building guardrails into the application code.
+
+### Differences from Approach A
+
+- **Security layer:** Approach A has no AI-layer security; Approach C deploys F5 AI Guardrails (Calypso AI) as a transparent proxy between the client and LlamaStack, scanning both prompts and responses against configurable policies (`deploy/helm/f5-ai-security/values.yaml`)
+- **Deployment topology:** Approach A deploys all components in a single namespace; Approach C spans 5 namespaces -- the RAG app namespace plus 4 F5 namespaces (`f5-ai-sec` for the operator, `cai-moderator` for the Moderator UI + PostgreSQL, `prefect` for workflow orchestration, `f5-ai-sec-inference` for guardrail/red-team model serving) managed by the F5 AI Security Operator via OLM (`deploy/helm/f5-ai-security/templates/20-subscription.yaml`)
+- **Operator management:** Approach C uses an OLM-managed operator (`f5-ai-security-operator` from `certified-operators` catalog, channel `stable`, CSV `f5-ai-security-operator.v0.8.1`) with a `SecurityOperator` custom resource (`ai.security.f5.com/v1alpha1`) that deploys Moderator, PostgreSQL, Prefect job manager, and inference components (`deploy/helm/f5-ai-security/templates/40-security-operator.yaml`)
+- **Data flow:** Approach A sends requests directly to LlamaStack; Approach C routes requests through the F5 Moderator endpoint, which evaluates against active guardrail policies before forwarding to LlamaStack, and scans responses on the return path -- if either prompt or response violates a policy, the request is blocked with a `cai_error` response body containing `scanner_results` (`frontend/llama_stack_ui/distribution/ui/page/playground/chat.py` lines 42-73)
+- **Frontend:** Approach A uses React/PatternFly; Approach C uses Streamlit with a dual-panel layout -- left panel sends requests through the F5 Guardrails Moderator endpoint, right panel sends directly to LlamaStack, allowing side-by-side comparison of guardrailed vs unguarded responses (`frontend/llama_stack_ui/distribution/ui/page/playground/chat.py` lines 258-277)
+- **AI security capabilities:** Approach C includes four out-of-the-box guardrail types: prompt injection detection, PII filtering (SSNs, credit card numbers), toxicity scanning, and topic restriction/enforcement (`docs/ai_guardrails_use_cases.md`); custom guardrails can be created via GenAI, Keyword, and Regex patterns in the Moderator UI
+- **Red Team:** Approach C includes Calypso AI Red Team for adversarial testing and vulnerability assessment of model endpoints, deployed alongside guardrails via the `SecurityOperator` CR (`securityOperator.inference.redteam: true` in `deploy/helm/f5-ai-security/values.yaml`)
+- **Registry credentials:** Approach C requires private registry access to `harbor.calypsoai.app` for F5 component images, plus an F5 license key (`securityOperator.moderator.license` in `deploy/helm/f5-ai-security/values.yaml`)
+- **Model serving:** Both use vLLM + LlamaStack via `ai-architecture-charts` subcharts (`deploy/helm/rag/Chart.yaml` dependencies: `llm-service` 0.5.2, `llama-stack` 0.8.6, `pgvector` 0.1.0); Approach C defaults to `Llama-3.2-1B-Instruct` (quantized) with `all-MiniLM-L6-v2` embeddings (README architecture table)
+- **Guardrail state persistence:** Approach C persists the F5 Guardrails URL and API token to a JSON file on an `emptyDir` volume (`F5_GUARDRAILS_STATE_FILE=/data/guardrails_state.json` in `deploy/helm/rag/values.yaml`); state is lost on pod replacement -- comment in values.yaml notes: "use a PVC on /data for values that must survive rescheduling"
+- **SCC requirements:** F5 components require `anyuid` SCC bindings for Moderator and inference namespaces (`deploy/helm/f5-ai-security/templates/50-scc-anyuid-bindings.yaml`); additional inference model SCC must be pre-applied before operator install (`deploy/helm/f5-ai-security/extras/openshift-inference-models-scc.yaml`)
+- **Helm install resilience:** Approach C Makefile includes retry logic for F5 chart installation (`F5_HELM_MAX_ATTEMPTS=8`, `F5_HELM_RETRY_SLEEP=6`) to handle namespace and API races on cold clusters (`deploy/helm/Makefile`)
+
+### Typical Components
+
+- **Model serving:** vLLM via KServe InferenceService (ai-architecture-charts `llm-service` subchart) for LLM inference; LlamaStack for RAG orchestration and OpenAI-compatible API
+- **Backend:** LlamaStack server providing RAG tool query/insert APIs, vector DB management, and model routing
+- **Frontend:** Streamlit (`frontend/llama_stack_ui/`) with dual-panel chat UI (guardrailed vs direct), document collection management, and F5 Guardrails endpoint configuration sidebar
+- **Data layer:** PostgreSQL + pgvector (ai-architecture-charts `pgvector` subchart) for document embeddings and semantic retrieval
+- **Supporting:** F5 AI Security Operator (OLM, `certified-operators`) managing Moderator, Prefect workflow orchestration, and inference components; F5 AI Guardrails Moderator for prompt/response policy evaluation; Calypso AI Red Team for adversarial testing; private F5 container registry (`harbor.calypsoai.app`)
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Custom-built) | Approach B (NVIDIA Blueprint) |
-|----------|--------------------------|-------------------------------|
-| RAG pipeline | Custom FastAPI + LlamaStack | NVIDIA RAG Server pre-built container |
-| Document processing | Simple chunking pipeline | NV-Ingest with OCR, table/graphic detection, VLM captioning |
-| Vector database | pgvector (CPU) | Milvus (GPU-accelerated) |
-| Models required | 1-2 (LLM + optional embedding) | 4 (LLM, VLM, embedding, reranking) |
-| GPU requirements | Low (1-2 GPUs) | High (3-5 H100/A100 GPUs, MIG optional) |
-| External dependencies | None | NGC API key for cloud-hosted NV-Ingest NIMs |
-| Observability | Not included | Full stack (OpenTelemetry, Grafana, Tempo) |
-| Best for | Lightweight RAG within a broader app | Enterprise document-heavy RAG with GPU resources |
+| Criteria | Approach A (Custom-built) | Approach B (NVIDIA Blueprint) | Approach C (Guardrails-Secured) |
+|----------|--------------------------|-------------------------------|--------------------------------|
+| RAG pipeline | Custom FastAPI + LlamaStack | NVIDIA RAG Server pre-built container | LlamaStack (ai-architecture-charts subchart) |
+| Document processing | Simple chunking pipeline | NV-Ingest with OCR, table/graphic detection, VLM captioning | LlamaStack RAG tool chunking |
+| Vector database | pgvector (CPU) | Milvus (GPU-accelerated) | pgvector (CPU) |
+| Models required | 1-2 (LLM + optional embedding) | 4 (LLM, VLM, embedding, reranking) | 1 LLM + 1 embedding (Llama-3.2-1B + MiniLM) |
+| GPU requirements | Low (1-2 GPUs) | High (3-5 H100/A100 GPUs, MIG optional) | Low (1 GPU for LLM) + dedicated GPU for F5 guardrail scanners |
+| AI security | None | None | F5 AI Guardrails (prompt injection, PII, toxicity, topic) |
+| External dependencies | None | NGC API key for cloud-hosted NV-Ingest NIMs | F5 license key + private registry credentials |
+| Namespace topology | Single namespace | Single namespace | 5 namespaces (RAG + 4 F5 operator-managed) |
+| Frontend | React/PatternFly | React (NVIDIA Blueprint UI) | Streamlit (dual-panel guardrailed vs direct) |
+| Observability | Not included | Full stack (OpenTelemetry, Grafana, Tempo) | F5 Moderator dashboard (allowed/blocked counts, audit logs) |
+| Best for | Lightweight RAG within a broader app | Enterprise document-heavy RAG with GPU resources | Demonstrating AI-layer security for model inference endpoints |

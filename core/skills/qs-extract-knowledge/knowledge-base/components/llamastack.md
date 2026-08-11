@@ -1,14 +1,14 @@
 ---
 name: llamastack
 description: "LlamaStack distribution server providing inference, agents, safety, tool runtime, and vector I/O APIs"
-summary: "LlamaStack provides a unified AI orchestration server exposing inference, agents, safety, tool runtime, vector I/O, and files APIs between the application backend and model providers (Ollama or vLLM), with Approach A (ai-virtual-agent, v0.6.1) using compose with Responses API and StreamAggregator-based SSE streaming in a pluggable LlamaStack/LangGraph/CrewAI runner dispatch, and Approach B (data-governance-co-pilot, v0.3.5) using a Helm-deployed LlamaStackDistribution CRD on OpenShift AI operator with alpha.agents API managing the full agentic loop and session-to-conversation event mapping. Use Approach A for local dev or when the application manages the agentic loop with dynamic MCP toolgroup resolution, input shield validation via client.safety.run_shield(), and automatic tool retry with exclusion; use Approach B for production OpenShift AI deployments where the operator manages LlamaStack lifecycle (600s DeploymentReady wait, 100m/256Mi lightweight proxy resources), vLLM serves inference via KServe, and Makefile populates Helm model.name/url/apiKey values at install time -- Nemotron models are incompatible with llama_stack mode (enforced by check-model-provider-compatibility, use mcp_direct). Configured via llamastack-run.yaml (RUN_CONFIG_PATH) declaring providers -- Approach A uses remote::ollama with AsyncLlamaStackClient (180s timeout, K8s SA token + X-Forwarded-User/Email auth headers for RBAC); Approach B uses remote::vllm with provider-prefixed model name (vllm-inference/<model>), vLLM URL derived from KServe predictor (https://<model>-predictor.<ns>.svc.cluster.local:8443/v1), VLLM_TLS_VERIFY='false' for self-signed certs, and static MCP endpoint in Helm-templated ConfigMap. Container runs as root (user 0:0) with 90s healthcheck start_period, SDK attribute names changed between 0.3.x and 0.6.1 (identifier to id, api_model_type to model_type) requiring _get_model_type/_get_model_id helpers, SQLite storage is dev-only, platform linux/amd64 causes ARM emulation perf hit, regex-based tool retry parsing (Tool '(\\w+)' not found) is fragile, has_output_text=False emits error event to prevent silent empty responses, Approach B values.yaml has empty placeholders requiring Makefile --set population, and static agent instructions require conversation restart on policy update via requires_conversation_restart_on_policy_update()."
+summary: "LlamaStack provides a unified AI orchestration server exposing inference, agents, safety, tool runtime, vector I/O, and files APIs between the application backend and model providers (Ollama or vLLM), with Approach A (ai-virtual-agent, v0.6.1) using compose with Responses API and StreamAggregator-based SSE streaming in a pluggable LlamaStack/LangGraph/CrewAI runner dispatch, Approach B (data-governance-co-pilot, v0.3.5) deploying a LlamaStackDistribution CRD via OpenShift AI operator with alpha.agents API managing the full agentic loop and session-to-conversation event mapping, and Approach C (f5-ai-guardrails, v0.6.1) using ai-architecture-charts llama-stack subchart v0.8.6 with dual-client pattern (LlamaStackClient + OpenAI SDK) for RAG with F5 guardrails proxy dual-panel comparison. Use Approach A for local dev or when the application manages the agentic loop with dynamic MCP toolgroup resolution, input shield validation via client.safety.run_shield(), and automatic tool retry with exclusion; use Approach B for production OpenShift AI deployments where the operator manages LlamaStack lifecycle (600s DeploymentReady wait, 100m/256Mi lightweight proxy resources), vLLM serves inference via KServe, and Makefile populates Helm model.name/url/apiKey values at install time; use Approach C for RAG apps needing shared Helm subcharts with global.models across llm-service/llama-stack, Streamlit frontend with URL normalization for 0.6+, and external guardrails proxy -- Nemotron models are incompatible with llama_stack mode (enforced by check-model-provider-compatibility, use mcp_direct). Configured via llamastack-run.yaml (RUN_CONFIG_PATH) declaring providers -- Approach A uses remote::ollama with AsyncLlamaStackClient (180s timeout, K8s SA token + X-Forwarded-User/Email auth headers for RBAC); Approach B uses remote::vllm with provider-prefixed model name (vllm-inference/<model>), vLLM URL derived from KServe predictor (https://<model>-predictor.<ns>.svc.cluster.local:8443/v1), VLLM_TLS_VERIFY='false' for self-signed certs, and static MCP endpoint in Helm-templated ConfigMap; Approach C uses dual clients with OpenAI SDK targeting LlamaStack /v1/chat/completions, HTTPX verify=False for cluster TLS, and auto-detects LlamaStack route via start.sh for TLS protocol selection. Container runs as root (user 0:0) with 90s healthcheck start_period, SDK attribute names changed between 0.3.x and 0.6.1 (identifier to id, api_model_type to model_type) requiring _get_model_type/_get_model_id helpers, SQLite storage is dev-only, platform linux/amd64 causes ARM emulation perf hit, regex-based tool retry parsing (Tool '(\\w+)' not found) is fragile, has_output_text=False emits error event to prevent silent empty responses, Approach B values.yaml has empty placeholders requiring Makefile --set population, static agent instructions require conversation restart on policy update via requires_conversation_restart_on_policy_update(), Approach C guardrails_state.json on emptyDir is lost on pod replacement, and legacy URL suffix /v1/openai/v1 must be stripped for 0.6+ compatibility."
 metadata:
   type: component
 tags:
-  tech_stack: [llamastack, ollama, python, fastapi, llama-stack-client, vllm, helm]
+  tech_stack: [llamastack, ollama, python, fastapi, llama-stack-client, vllm, helm, streamlit, openai-sdk]
   ai_pattern: [agents, model-serving, guardrails, rag, vector-search, mcp]
   platform: [openshift, kubernetes, rhoai, kserve]
-  data_layer: [sqlite, faiss]
+  data_layer: [sqlite, faiss, pgvector]
 source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
     notes: "LlamaStack deployed via OpenShift AI operator CRD with remote vLLM inference, Agents alpha API for agentic orchestration, and Helm chart"
     approach: "B"
+  - quickstart: "f5-ai-guardrails"
+    repo: "https://github.com/rh-ai-quickstart/f5-ai-guardrails"
+    notes: "LlamaStack as ai-architecture-charts Helm subchart for RAG + guardrails, dual-client pattern (LlamaStackClient + OpenAI SDK), Streamlit frontend with URL normalization for 0.6+"
+    approach: "C"
 ---
 
 # LlamaStack
@@ -424,18 +428,202 @@ if event_type == "step_start":
 
 ---
 
+## Approach C: ai-architecture-charts Helm Subchart with Dual-Client Pattern (from f5-ai-guardrails)
+
+### When to Use
+
+Use this approach when deploying LlamaStack as a shared Helm subchart from `ai-architecture-charts` alongside other subcharts (`llm-service`, `pgvector`), with a Streamlit frontend that communicates via both the LlamaStack Python SDK and the OpenAI Python SDK. This is the pattern for RAG applications where LlamaStack provides OpenAI-compatible chat completions plus native vector DB and tool runtime APIs, optionally routed through an external guardrails proxy.
+
+### Differences from Approach A
+
+- **Deployment**: `ai-architecture-charts` Helm subchart (`llama-stack` v0.8.6) instead of docker-compose service
+- **Client pattern**: Dual clients (`LlamaStackClient` for resource management + `OpenAI` SDK for chat completions) instead of single `AsyncLlamaStackClient` with Responses API
+- **Frontend**: Streamlit app (`llama_stack_ui`) talks directly to LlamaStack instead of going through a FastAPI backend
+- **Model configuration**: `global.models` Helm values shared across `llm-service` and `llama-stack` subcharts instead of per-provider run.yaml
+- **RAG**: Uses LlamaStack's tool_runtime rag_tool insert/query endpoints for document management instead of vector_io only
+
+### Differences from Approach B
+
+- **Deployment**: `ai-architecture-charts` shared subchart instead of standalone chart creating a `LlamaStackDistribution` CRD
+- **LlamaStack version**: 0.6+ (subchart default image `ogxai/distribution-starter:0.6.1`) instead of 0.3.5
+- **Client API**: OpenAI-compatible `/v1/chat/completions` for inference instead of `alpha.agents` API
+- **Lifecycle**: Helm manages the Deployment directly instead of an operator reconciling a CRD
+
+### Tech Stack & Dependencies
+
+- **Runtime:** LlamaStack distribution server (subchart default: `ogxai/distribution-starter:0.6.1`)
+- **Container image:** Managed by `ai-architecture-charts` `llama-stack` subchart
+- **Key dependencies:** `llama-stack-client==0.6.0`, `openai` Python SDK, `httpx`, `streamlit` (frontend)
+- **Helm subchart:** `llama-stack` v0.8.6 from `https://rh-ai-quickstart.github.io/ai-architecture-charts`
+
+### Key Patterns
+
+#### Shared Helm Subchart Deployment
+
+LlamaStack is declared as a dependency in `Chart.yaml` alongside `pgvector` and `llm-service`, all from the same chart repository. The `global.models` values map is shared between `llm-service` (which deploys vLLM model servers) and `llama-stack` (which registers them as providers).
+
+```yaml
+# deploy/helm/rag/Chart.yaml
+dependencies:
+  - name: pgvector
+    version: 0.1.0
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+  - name: llm-service
+    version: 0.5.2
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+  - name: llama-stack
+    version: 0.8.6
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+```
+
+#### Dual-Client Pattern (LlamaStackClient + OpenAI SDK)
+
+The frontend uses two client types: `LlamaStackClient` for native LlamaStack APIs (models, vector DBs, tool groups, RAG tool operations) and `OpenAI` for chat completions via the OpenAI-compatible `/v1/chat/completions` endpoint on LlamaStack 0.6+.
+
+```python
+# frontend/llama_stack_ui/distribution/ui/modules/api.py
+class LlamaStackApi:
+    def __init__(self):
+        base = os.environ.get("LLAMA_STACK_ENDPOINT", "http://localhost:8321")
+        token = os.environ.get("LLAMA_STACK_API_TOKEN", "")
+        self.client = self.create_client_with_url(base, token)
+
+    def create_openai_client_for_llamastack(self, base_url: str = "", api_token: str = "") -> OpenAI:
+        """Create an OpenAI client targeting LlamaStack chat at {origin}/v1/chat/completions."""
+        raw = base_url or os.environ.get("LLAMA_STACK_ENDPOINT", "http://localhost:8321")
+        openai_base = llamastack_openai_chat_base_url(raw)
+        hx = _httpx_client_for_url(origin) or httpx.Client(follow_redirects=True, timeout=_HTTPX_TIMEOUT)
+        return OpenAI(base_url=openai_base, api_key=api_token or "no-key", http_client=hx)
+```
+
+#### URL Normalization for LlamaStack 0.6+
+
+LlamaStack 0.6+ serves chat at `/v1/chat/completions`. Older builds used `/v1/openai/v1/...`. The frontend includes a normalization function that strips legacy suffixes and ensures the base_url ends with `/v1` for the OpenAI Python SDK.
+
+```python
+# frontend/llama_stack_ui/distribution/ui/modules/api.py
+_LLAMA_OPENAI_SDK_SUFFIX = "/v1"
+
+def llamastack_openai_chat_base_url(endpoint: str) -> str:
+    u = (endpoint or "").strip().rstrip("/")
+    legacy = "/v1/openai/v1"
+    while u.endswith(legacy):
+        u = u[: -len(legacy)].rstrip("/")
+    if not u.endswith(suf):
+        u = u + suf
+    return u
+```
+
+#### HTTPX Client Factory for Cluster TLS
+
+OpenShift edge routes use HTTPS with cluster-signed certificates. The frontend creates HTTPX clients with `verify=False` for HTTPS endpoints and relaxed redirects, while keeping defaults for local dev.
+
+```python
+# frontend/llama_stack_ui/distribution/ui/modules/api.py
+def _httpx_client_for_url(url: str) -> httpx.Client | None:
+    u = (url or "").lower().rstrip("/")
+    if "localhost" in u or "127.0.0.1" in u:
+        return httpx.Client(follow_redirects=True, timeout=_HTTPX_TIMEOUT)
+    if u.startswith("http://llamastack") and ".apps." not in u:
+        return httpx.Client(follow_redirects=True, timeout=_HTTPX_TIMEOUT)
+    if u.startswith("http://") or u.startswith("https://"):
+        return httpx.Client(verify=False, follow_redirects=True, timeout=_HTTPX_TIMEOUT)
+    return None
+```
+
+#### Vector DB Operations with Fallback
+
+The frontend lists vector databases using the `vector_dbs` resource when available, falling back to the OpenAI-compatible `vector_stores` endpoint for LlamaStack 0.6+ distributions that may not expose `/v1/vector-dbs`.
+
+```python
+# frontend/llama_stack_ui/distribution/ui/modules/api.py
+def list_vector_catalog(client: LlamaStackClient) -> List[Any]:
+    vd = getattr(client, "vector_dbs", None)
+    if vd is not None:
+        return list(vd.list()) if vd.list() is not None else []
+    try:
+        raw = client.get("/v1/vector-dbs", cast_to=object)
+    except Exception as e:
+        if getattr(e, "status_code", None) == 404:
+            return _vector_catalog_from_vector_stores(client)
+        raise
+```
+
+#### Guardrails Proxy Dual-Panel Comparison
+
+The Chat page sends the same prompt to both the F5 AI Guardrails Moderator endpoint and the direct LlamaStack endpoint, displaying results side by side. Both paths use the OpenAI `chat.completions.create()` API but with different base URLs.
+
+```python
+# frontend/llama_stack_ui/distribution/ui/page/playground/chat.py
+# F5 Guardrails path (OpenAI client → Moderator proxy → LlamaStack → vLLM)
+f5_oai = llama_stack_api.create_openai_client(f5_ep.strip(), f5_tk.strip())
+resp = f5_oai.chat.completions.create(model=f5_model, messages=messages_for_api, ...)
+
+# Direct LlamaStack path (OpenAI client → LlamaStack /v1/chat/completions → vLLM)
+ls_oai = llama_stack_api.create_openai_client_for_llamastack(...)
+resp = ls_oai.chat.completions.create(model=ls_model, messages=messages_for_api, ...)
+```
+
+#### Auto-Detection of LlamaStack Route
+
+The `start.sh` script auto-detects the LlamaStack endpoint from the OpenShift route `llamastack-http`, detecting TLS edge termination to use the correct protocol.
+
+```bash
+# frontend/start.sh
+ROUTE_HOST=$(oc get route llamastack-http -n "$_NS" -o jsonpath='{.spec.host}')
+TLS=$(oc get route llamastack-http -n "$_NS" -o jsonpath='{.spec.tls.termination}')
+if [ -n "$TLS" ] && [ "$TLS" != "null" ]; then
+    export LLAMA_STACK_ENDPOINT="https://$ROUTE_HOST"
+else
+    export LLAMA_STACK_ENDPOINT="http://$ROUTE_HOST"
+fi
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `LLAMA_STACK_ENDPOINT` -- LlamaStack server URL (default: `http://llamastack:8321`); auto-detected from OpenShift route by `start.sh`
+  - `LLAMA_STACK_API_TOKEN` -- Optional bearer token for LlamaStack
+  - `F5_GUARDRAIL_URL` -- F5 AI Guardrails Moderator endpoint (persisted to `guardrails_state.json`)
+  - `F5_GUARDRAIL_API_TOKEN` -- Bearer token for the Moderator proxy
+  - `F5_GUARDRAILS_STATE_FILE` -- Path to persist guardrail URL and token (default: `/data/guardrails_state.json`)
+- **Config files:**
+  - Subchart defaults managed by `ai-architecture-charts`; no local `run.yaml` needed
+- **Helm values:**
+  - `global.models` -- Shared model map controlling both `llm-service` (vLLM ServingRuntimes) and `llama-stack` (model registration)
+  - `llm-service.secret.hf_token` -- Hugging Face token for model downloads
+  - `llama-stack.rawDeploymentMode` -- Toggle raw deployment mode (bypasses KServe)
+  - `llama-stack.secrets` -- Extra environment variables as JSON (via `LLAMA_STACK_ENV` Makefile var)
+
+### Known Gotchas
+
+- The `LLAMA_STACK_ENDPOINT` env var in the parent chart's `values.yaml` points to `http://llamastack:8321` (in-cluster service name). When running the frontend locally with `dev-on-cluster.sh`, the script auto-detects the route or uses `PORT_FORWARD=1` to tunnel to the cluster service (`deploy/helm/rag/values.yaml` line 27, `frontend/dev-on-cluster.sh`).
+- The Makefile `logs` target shows logs from the LlamaStack pod specifically (`oc logs -n $(NAMESPACE) -l app=llamastack`) and the `install` target waits for `oc rollout status deploy/llamastack` with a 900-second timeout (`deploy/helm/Makefile` lines 467, 584).
+- The `guardrails_state.json` file is stored on an `emptyDir` volume at `/data`. If the pod is replaced, the persisted F5 Guardrails URL and API token are lost. Use a PVC on `/data` for persistence across rescheduling (`deploy/helm/rag/values.yaml` comment on line 38).
+- LlamaStack 0.6+ changed the chat completions path from `/v1/openai/v1/chat/completions` to `/v1/chat/completions`. The URL normalization function strips legacy suffixes, but if users paste old-format URLs from documentation, they must be normalized before use (`frontend/llama_stack_ui/distribution/ui/modules/api.py` lines 32-54).
+- The `vector_dbs` resource may not exist on all LlamaStack 0.6+ distributions (e.g., the `distribution-starter` image). The code falls back to `client.vector_stores.list()` (OpenAI-compatible endpoint) when `/v1/vector-dbs` returns 404 (`api.py` lines 270-301).
+
+### Testing Notes
+
+- Verify LlamaStack is running after Helm install: `oc rollout status deploy/llamastack -n <namespace>`
+- Check LlamaStack health: `oc logs -n <namespace> -l app=llamastack --tail=100`
+- Test OpenAI compatibility: `curl -sk https://<route>/v1/models` should return registered models
+- The `dev-on-cluster.sh` script provides local development against a cluster-deployed LlamaStack (`NAMESPACE=my-rag ./dev-on-cluster.sh`)
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (data-governance-co-pilot) |
-|----------|-------------------------------|---------------------------------------|
-| Deployment method | docker-compose service | Helm chart + LlamaStackDistribution CRD (OpenShift AI operator) |
-| Inference backend | Ollama (local) | Remote vLLM via KServe InferenceService |
-| LlamaStack version | 0.6.1 | 0.3.5 |
-| Client API | Responses API with Conversations | Agents alpha API with sessions |
-| Agent management | Runner handles agentic loop, LlamaStack streams responses | LlamaStack manages full agentic loop, provider maps events |
-| MCP integration | Dynamic toolgroup resolution at runtime | Static MCP endpoint in run.yaml ConfigMap |
-| Auth model | K8s SA token + X-Forwarded headers | API key in K8s Secret, no user header forwarding |
-| Safety | Input shields via `client.safety.run_shield()` | `inline::llama-guard` provider declared in run.yaml |
-| Storage | SQLite at container-local path | SQLite at operator-managed path |
-| Platform | Local dev (compose), OpenShift (future) | OpenShift AI with operator |
-| Multi-framework | Pluggable runner (LlamaStack/LangGraph/CrewAI) | Pluggable provider (mcp_direct/llama_stack) |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (data-governance-co-pilot) | Approach C (f5-ai-guardrails) |
+|----------|-------------------------------|---------------------------------------|-------------------------------|
+| Deployment method | docker-compose service | Helm chart + LlamaStackDistribution CRD (OpenShift AI operator) | ai-architecture-charts Helm subchart |
+| Inference backend | Ollama (local) | Remote vLLM via KServe InferenceService | Remote vLLM via llm-service subchart |
+| LlamaStack version | 0.6.1 | 0.3.5 | 0.6.1 (subchart v0.8.6) |
+| Client API | Responses API with Conversations | Agents alpha API with sessions | OpenAI chat.completions + LlamaStackClient |
+| Agent management | Runner handles agentic loop, LlamaStack streams responses | LlamaStack manages full agentic loop, provider maps events | No agent loop; direct chat completions for RAG Q&A |
+| MCP integration | Dynamic toolgroup resolution at runtime | Static MCP endpoint in run.yaml ConfigMap | Tool groups listed from LlamaStack for UI display |
+| Auth model | K8s SA token + X-Forwarded headers | API key in K8s Secret, no user header forwarding | Optional bearer token, TLS via HTTPX client factory |
+| Safety | Input shields via `client.safety.run_shield()` | `inline::llama-guard` provider declared in run.yaml | External F5 AI Guardrails Moderator proxy |
+| Storage | SQLite at container-local path | SQLite at operator-managed path | Subchart defaults |
+| Platform | Local dev (compose), OpenShift (future) | OpenShift AI with operator | OpenShift with shared Helm subcharts |
+| Multi-framework | Pluggable runner (LlamaStack/LangGraph/CrewAI) | Pluggable provider (mcp_direct/llama_stack) | Single path (OpenAI SDK for chat) |

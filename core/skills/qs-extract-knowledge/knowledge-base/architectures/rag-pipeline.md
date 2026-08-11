@@ -1,11 +1,11 @@
 ---
 name: rag-pipeline
 description: RAG patterns from LlamaStack vector stores to NVIDIA Blueprints to standalone FAISS microservices
-summary: "Implements retrieval-augmented generation via three approaches: (A) custom FastAPI backend coordinating PostgreSQL metadata (async SQLAlchemy) and LlamaStack vector stores (AsyncLlamaStackClient) with an external ingestion pipeline, wiring retrieval into agent responses via file_search tools in the Responses API; (B) NVIDIA's pre-built RAG Blueprint server with NV-Ingest document processing (cloud NIMs for OCR/table/graphic detection), GPU-accelerated Milvus (GPU_CAGRA index), 4 vLLM models on KServe with MIG-sliced GPUs, and NIM-to-vLLM translation proxies -- no custom backend code; (C) standalone FAISS microservice with custom PDF parser (PyPDF-based), TEI embeddings (nomic-embed-text-v1.5 with search_document:/search_query: task prefixes), MinIO index storage via LATEST.json pointer file, serving as context enrichment within an agent pipeline rather than user-facing chat. Choose Approach A (builtin::rag toolgroup + LlamaStackRunner) for custom RAG logic with agent orchestration integration and lower GPU requirements -- LangGraph/CrewAI runners lack built-in RAG; choose Approach B when multimodal VLM inference, built-in reranking/query rewriting/reflection, and no-code Helm-only deployment are needed, accepting cloud NIM dependencies and 4-5 GPU or MIG-partitioned resource costs; choose Approach C for static curated PDF knowledge bases feeding internal agent graphs with minimal GPU needs (TEI only), using RAGHandler singleton with configurable RAG_TOP_K/RAG_TOP_N/RAG_SIMILARITY_THRESHOLD. A defaults ingestion pipeline URL to http://llamastack:8321/ingestion_pipeline/ (override via INGESTION_PIPELINE_URL), with build_responses_tools mapping builtin::rag to file_search using vector_store_ids resolved from knowledge_base_ids; B injects retrieved chunks via {context} placeholder in rag_template with /no_think directive for Nemotron models, provisions S3 via ODF ObjectBucketClaim, and uses embedding/ranking proxies to strip NIM-specific fields (input_type, truncate, dimensions, query.text/passages format) for vLLM compatibility; C's RAGHandler lazily initializes on first use, queries /rag/query, and polls MinIO every 20 seconds for hot index reload (RAG_FORCE_REBUILD=true). A's dual-state metadata (PostgreSQL + LlamaStack) requires update_vector_store_ids sync on every list operation (stale IDs persist on failure) with cascade deletes across three systems after verifying no agents reference the KB; B requires ingest chart before rag-server (cross-chart ConfigMap dependency), hardcodes NV-Ingest Redis hostname to ingest-redis-master (breaks on release rename), needs anyuid SCC for three service accounts, and embedding proxy strips input_type so vLLM cannot distinguish query vs passage embeddings; C's FAISS index must fit in RAM (faiss.read_index requires file paths, not buffers), and wait_for_rag_service blocks the init pipeline up to 10 minutes."
+summary: "Implements retrieval-augmented generation across four approaches: (A) LlamaStack with external ingestion pipeline, pgvector vector stores, and transparent file_search retrieval via Responses API requiring no RAG-specific prompting; (B) NVIDIA RAG Blueprint with NV-Ingest document processing, GPU-accelerated Milvus GPU_CAGRA, vLLM on KServe with MIG-sliced GPUs, NIM-to-vLLM translation proxies for embedding/reranking, and optional query rewriting/reflection/decomposition with /no_think Nemotron directive; (C) standalone FAISS microservice with TEI nomic-embed-text-v1.5 (search_document:/search_query: prefixes), MinIO LATEST.json pointer file for init-job-to-service coordination, and results consumed as agent-internal context enrichment from static PDFs; (D) frontend-only Streamlit using LlamaStack rag_tool APIs with manual CONTEXT: prompt injection, direct pgvector access via asyncpg, all-MiniLM-L6-v2 at 384 dimensions, and triple-fallback vector DB registration. Choose A for custom FastAPI backends needing LlamaStack-integrated transparent retrieval; B for no-custom-code GPU-heavy deployments with pre-built NVIDIA RAG server and built-in multimodal/reranking capabilities; C for agent-pipeline context enrichment from curated PDF knowledge bases with minimal GPU requirements (TEI only); D for minimal-complexity frontend-only demos where RAG is a supporting feature alongside other capabilities like guardrails. Critical config: A requires update_vector_store_ids() to sync dual metadata (PostgreSQL + LlamaStack); B needs cross-chart ConfigMap (ingestor-server-prompt) installed before rag-server, anyuid SCC for three service accounts, and NV-Ingest MESSAGE_CLIENT_HOST hardcoded to ingest-redis-master; C requires TEI connection pooling and FAISS index files on disk (faiss.read_index needs file paths not buffers); D hardcodes embedding dimension 384 and uses direct pgvector queries with vs_{id.replace('-','_')} table naming. Common gotchas: A's dual metadata can desync if update_vector_store_ids fails and RAG only works with LlamaStack runner (not LangGraph/CrewAI); B depends on NVIDIA cloud NIMs for OCR/table/graphic detection (external network dependency) and embedding proxy strips input_type losing query-vs-passage distinction; C's FAISS index must fit entirely in RAM and RAGHandler singleton silently returns empty strings if RAG is disabled; D bypasses LlamaStack for document management via direct pgvector access that breaks if LlamaStack changes its internal schema."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, llamastack, python, vllm, nvidia-rag-blueprint, langchain, langgraph, gradio]
+  tech_stack: [fastapi, llamastack, python, vllm, nvidia-rag-blueprint, langchain, langgraph, gradio, streamlit]
   ai_pattern: [rag, embeddings, vector-search, reranking, multimodal]
   platform: [llamastack, rhoai, openshift, kubernetes, kserve, vllm, tei]
   data_layer: [pgvector, milvus, faiss, minio]
@@ -22,6 +22,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
     notes: "Standalone FAISS microservice with PDF knowledge base ingestion, MinIO index storage, TEI embeddings, and RAG used as context enrichment within an agent pipeline"
     approach: "C"
+  - quickstart: "f5-ai-guardrails"
+    repo: "https://github.com/rh-ai-quickstart/f5-ai-guardrails"
+    notes: "Frontend-only Streamlit RAG using LlamaStack rag_tool APIs for retrieval and manual prompt context injection, with direct pgvector access for document management"
+    approach: "D"
 ---
 
 # RAG Pipeline
@@ -556,18 +560,218 @@ The nomic embedding model requires task-specific prefixes: `search_document:` fo
 
 ---
 
+## Approach D: Frontend-Driven LlamaStack RAG with Manual Context Injection (from f5-ai-guardrails)
+
+### When to Use
+
+Use this approach when building a RAG application where the frontend (Streamlit) orchestrates all RAG operations directly -- vector database creation, document ingestion, retrieval, and prompt context injection -- without a custom backend server. This approach suits scenarios where: the primary focus is demonstrating a different capability (e.g., AI guardrails) with RAG as a supporting feature, the application needs simple document management via a UI, LlamaStack's built-in rag_tool APIs are sufficient without custom retrieval logic, and minimal architectural complexity is preferred.
+
+### Differences from Approaches A, B, and C
+
+| Aspect | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach C (FAISS Microservice) | Approach D (Frontend-Driven) |
+|--------|------------------------|-----------------------------------|-------------------------------|------------------------------|
+| RAG orchestration | Custom FastAPI backend | Pre-built NVIDIA RAG server | Standalone RAG microservice | Streamlit frontend (no backend) |
+| Vector database | pgvector via LlamaStack vector stores | GPU-accelerated Milvus | FAISS in-memory | pgvector via LlamaStack vector stores |
+| Document ingestion | External pipeline via LlamaStack API | NV-Ingest with cloud NIMs | Custom PDF parser + init job | Direct `rag_tool.insert` from Streamlit UI |
+| Context injection | Transparent via file_search tool in Responses API | `{context}` placeholder in rag_template | HTTP API results formatted as markdown | Manual `CONTEXT: {text}` prepended to user prompt |
+| Retrieval API | `build_responses_tools` maps builtin::rag to file_search | RAG server built-in | RAG service `/rag/query` endpoint | `rag_tool_query(client, content=..., vector_db_ids=...)` |
+| Document management | FastAPI CRUD API with PostgreSQL metadata | Frontend + NV-Ingest APIs | Init job with curated PDFs | Streamlit UI with direct pgvector access (asyncpg) |
+| Embedding model | LlamaStack embedding API | vLLM via NIM-to-vLLM proxies | TEI (nomic-embed-text-v1.5) | all-MiniLM-L6-v2 via LlamaStack |
+| Application code | Custom backend (FastAPI + SQLAlchemy + httpx) | No custom code (Helm-only) | Custom RAG service + init pipeline | Streamlit frontend only (no backend) |
+| Knowledge base type | Dynamic (user-uploaded via API) | Dynamic (user-uploaded via frontend) | Static (curated PDFs) | Dynamic (user-uploaded via Streamlit UI) |
+
+### Data Flow
+
+**Document Ingestion (via Streamlit UI):**
+
+1. User navigates to the Vector Databases page in the Streamlit frontend
+2. User creates a new vector database via `register_vector_db()`, specifying `all-MiniLM-L6-v2` as the embedding model with 384 dimensions, resolved against the LlamaStack `vector_io` provider
+3. User uploads files (PDF, TXT, DOC/DOCX) through the Streamlit file uploader
+4. Frontend converts files to base64 data URLs via `data_url_from_file()`
+5. Frontend calls `rag_tool_insert()` with the vector_db_id, documents, and chunk_size_in_tokens=512
+6. LlamaStack handles chunking, embedding, and indexing into the pgvector-backed vector store
+
+**Query Flow (Chat with RAG):**
+
+1. User selects one or more Document Collections (vector databases) in the chat sidebar
+2. User submits a query via the chat input
+3. Frontend resolves selected vector DB names to IDs via `get_vector_db_id()`
+4. Frontend calls `rag_tool_query(client, content=prompt, vector_db_ids=vdb_ids)` via the LlamaStack client
+5. LlamaStack embeds the query, searches the vector stores, and returns relevant chunks as `rag_resp.content`
+6. Frontend builds an extended prompt: `"Please answer the following query using the context below.\n\nCONTEXT:\n{prompt_context}\n\nQUERY:\n{prompt}"`
+7. Frontend sends `chat.completions.create` with the extended prompt to the LLM (via F5 Moderator or direct LlamaStack)
+8. LLM generates a response grounded in the retrieved context
+
+**Document Management (direct pgvector access):**
+
+1. Frontend queries pgvector directly via asyncpg to list documents in a vector store (`_get_documents_from_pgvector`)
+2. Table name is derived from the vector_db_id: `vs_{vector_db_id.replace('-', '_')}`
+3. Documents are identified by `chunk_metadata.source` (the original filename) stored in the JSONB `document` column
+4. Deletion removes all chunks matching the source filename directly from pgvector
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| Streamlit frontend | LlamaStack | HTTP (LlamaStackClient) | Vector DB registration, RAG tool insert/query, model listing |
+| Streamlit frontend | pgvector | TCP (asyncpg, port 5432) | Direct document listing and deletion |
+| LlamaStack | pgvector | Internal | Vector store persistence, embedding storage, similarity search |
+| Streamlit frontend | LLM (via LlamaStack or F5 Moderator) | HTTP (OpenAI SDK) | Chat completion with RAG context in prompt |
+
+### Key Integration Points
+
+#### RAG Tool Query via LlamaStack Client
+
+The frontend retrieves context using LlamaStack's `rag_tool` API, falling back to a REST endpoint if the Python client lacks the `rag_tool` resource.
+
+```python
+# frontend/llama_stack_ui/distribution/ui/modules/api.py (lines 388-403)
+def rag_tool_query(
+    client: LlamaStackClient,
+    *, content: str, vector_db_ids: List[str],
+    query_config: Optional[Any] = None,
+) -> Any:
+    rag = getattr(getattr(client, "tool_runtime", None), "rag_tool", None)
+    if rag is not None:
+        return rag.query(content=content, vector_db_ids=vector_db_ids)
+    body: dict[str, Any] = {"content": content, "vector_db_ids": vector_db_ids}
+    raw = client.post("/v1/tool-runtime/rag-tool/query", body=body, cast_to=dict)
+    return SimpleNamespace(content=raw.get("content"))
+```
+
+#### Manual Context Injection into Prompt
+
+Unlike Approach A (transparent file_search) or Approach B (rag_template `{context}` placeholder), this approach manually prepends retrieved context to the user prompt in the frontend code.
+
+```python
+# frontend/llama_stack_ui/distribution/ui/page/playground/chat.py (lines 358-387)
+# --- Shared RAG context ---
+prompt_context = None
+if selected_vector_dbs:
+    all_vdbs = list_vector_catalog(client) or []
+    vdb_ids = [get_vector_db_id(v) for v in all_vdbs if get_vector_db_name(v) in selected_vector_dbs]
+    rag_resp = rag_tool_query(client, content=prompt, vector_db_ids=list(vdb_ids))
+    prompt_context = rag_resp.content
+
+if prompt_context:
+    extended_prompt = (
+        f"Please answer the following query using the context below.\n\n"
+        f"CONTEXT:\n{prompt_context}\n\nQUERY:\n{prompt}"
+    )
+else:
+    extended_prompt = f"Please answer the following query.\n\nQUERY:\n{prompt}"
+
+messages_for_api = [
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": extended_prompt},
+]
+```
+
+#### Document Upload via RAG Tool Insert
+
+The frontend converts uploaded files to base64 data URLs and inserts them into the vector store using LlamaStack's `rag_tool.insert` API.
+
+```python
+# frontend/llama_stack_ui/distribution/ui/page/distribution/vector_dbs.py (lines 326-344)
+documents = [
+    {
+        "document_id": uploaded_file.name,
+        "content": data_url_from_file(uploaded_file),
+        "metadata": {"source": uploaded_file.name, "type": "uploaded_file"},
+    }
+    for uploaded_file in uploaded_files
+]
+
+rag_tool_insert(
+    active_llama_stack_client(),
+    vector_db_id=actual_db_id,
+    documents=documents,
+    chunk_size_in_tokens=512,
+)
+```
+
+#### Direct pgvector Document Management
+
+The frontend bypasses LlamaStack for document listing and deletion, querying pgvector directly via asyncpg. The table name convention is `vs_{vector_db_id}` with hyphens replaced by underscores.
+
+```python
+# frontend/llama_stack_ui/distribution/ui/page/distribution/vector_dbs.py (lines 377-431)
+async def fetch_documents():
+    conn = await asyncpg.connect(
+        host=pg_host, port=pg_port, user=pg_user,
+        password=pg_password, database=pg_database
+    )
+    table_name = f"vs_{vector_db_id.replace('-', '_')}"
+    query = f"""
+        SELECT DISTINCT
+            COALESCE(
+                NULLIF(document->'chunk_metadata'->>'source', 'null'),
+                document->'metadata'->>'document_id'
+            ) as document_id
+        FROM {table_name}
+        WHERE document->'metadata'->>'document_id' IS NOT NULL
+        ORDER BY document_id
+    """
+    rows = await conn.fetch(query)
+```
+
+#### Vector Database Registration with Provider Resolution
+
+The frontend discovers the `vector_io` provider from LlamaStack and uses it when registering new vector databases, with fallback to OpenAI-compatible `vector_stores.create` for LlamaStack 0.6+ distributions.
+
+```python
+# frontend/llama_stack_ui/distribution/ui/page/distribution/vector_dbs.py (lines 206-227)
+providers = active_llama_stack_client().providers.list()
+vector_io_provider = None
+for provider in providers:
+    if provider.api == "vector_io":
+        vector_io_provider = provider.provider_id
+        break
+
+vector_db = register_vector_db(
+    active_llama_stack_client(),
+    vector_db_id=vdb_name,
+    embedding_dimension=384,
+    embedding_model="all-MiniLM-L6-v2",
+    provider_id=vector_io_provider,
+)
+```
+
+### Prompt / Chain Patterns
+
+RAG context is injected as a single `CONTEXT:` block in the user message. The prompt structure is:
+
+- **System message**: User-configurable via the sidebar (default: "You are a helpful AI assistant.")
+- **User message**: `"Please answer the following query using the context below.\n\nCONTEXT:\n{retrieved_content}\n\nQUERY:\n{user_query}"`
+
+When no RAG context is available (no vector DBs selected or retrieval returns empty), the prompt simplifies to: `"Please answer the following query.\n\nQUERY:\n{user_query}"`
+
+The same RAG context and prompt are sent to both the F5 Guardrails panel and the LlamaStack Direct panel, enabling side-by-side comparison of guardrailed vs. unguardrailed responses with identical context.
+
+### Gotchas
+
+- The frontend uses direct pgvector access via asyncpg for document listing and deletion (`_get_documents_from_pgvector`, `_delete_document_from_pgvector` in vector_dbs.py). This bypasses LlamaStack's vector store API entirely, creating a tight coupling to the pgvector table naming convention (`vs_{id.replace('-', '_')}`). If LlamaStack changes its internal schema, the direct queries break.
+- The pgvector connection details are read from environment variables (`PGVECTOR_HOST`, `PGVECTOR_PORT`, `PGVECTOR_USER`, `PGVECTOR_PASSWORD`, `PGVECTOR_DB`) with defaults that match the Helm chart values (`pgvector`, `5432`, `postgres`, `rag_password`, `rag_blueprint`). The Helm chart sets these on the frontend deployment (rag/values.yaml lines 27-35).
+- The `register_vector_db` function in api.py uses a triple fallback strategy for LlamaStack API compatibility: first tries `client.vector_dbs.register()`, then falls back to `POST /v1/vector-dbs`, and finally falls back to `client.vector_stores.create()` for LlamaStack 0.6+ which uses OpenAI-compatible vector store APIs (api.py lines 304-340).
+- Embedding dimension is hardcoded to 384 with `all-MiniLM-L6-v2` in the vector DB creation UI (vector_dbs.py line 224). This must match the embedding model configured in the LlamaStack distribution.
+- The LlamaStack client URL normalization handles multiple legacy and current URL formats: stripping `/v1/openai/v1` suffixes, removing accidental `/v1/models` paste targets, and ensuring the base URL ends with `/v1` for OpenAI SDK compatibility (api.py lines 32-54). OpenShift route URLs require TLS verification disabled and redirect following (`httpx.Client(verify=False, follow_redirects=True)`).
+- The file uploader tracks processed file sets in session state (`processed_files_{vector_db_name}`) using a frozenset of `name+size` to prevent re-uploading the same files on page rerun (vector_dbs.py lines 288-293). This deduplication is per-session only.
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach C (FAISS Microservice) |
-|----------|------------------------|-----------------------------------|-------------------------------|
-| Custom backend logic needed | Yes -- build your own RAG pipeline with FastAPI | No -- use pre-built NVIDIA RAG server | Yes -- standalone RAG service + init pipeline |
-| RAG retrieval integration | Transparent via file_search tool (LlamaStack handles internally) | Explicit via prompt template context injection | HTTP API consumed by agent graph node |
-| Vector database | pgvector (integrated with LlamaStack) | GPU-accelerated Milvus (GPU_CAGRA index) | FAISS in-memory (loaded from MinIO) |
-| Document processing | External ingestion pipeline via HTTP API | NV-Ingest with cloud NIMs (OCR, table/graphic detection) | Custom PDF parser (PyPDF-based) |
-| Model serving | LlamaStack server | vLLM via KServe with MIG-sliced GPUs | TEI for embeddings, separate LLM for inference |
-| Multimodal support | Not built in | Built-in VLM inference for image captioning | Not built in |
-| GPU requirements | Lower (LlamaStack manages inference) | Higher (4-5 GPUs or MIG-partitioned) | Minimal (TEI for embeddings, no GPU for FAISS) |
-| External dependencies | Minimal (self-contained LlamaStack) | NVIDIA NGC cloud NIMs | MinIO for index storage, TEI for embeddings |
-| Retrieval consumer | User-facing agent response | User-facing frontend | Internal agent pipeline (context enrichment) |
-| Index lifecycle | Managed by LlamaStack API | Managed by Milvus | Init job + MinIO pointer file + polling |
-| Knowledge base type | Dynamic (user-uploaded documents) | Dynamic (user-uploaded documents) | Static (curated PDFs bundled with deployment) |
+| Criteria | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach C (FAISS Microservice) | Approach D (Frontend-Driven) |
+|----------|------------------------|-----------------------------------|-------------------------------|------------------------------|
+| Custom backend logic needed | Yes -- build your own RAG pipeline with FastAPI | No -- use pre-built NVIDIA RAG server | Yes -- standalone RAG service + init pipeline | No -- frontend handles all RAG orchestration |
+| RAG retrieval integration | Transparent via file_search tool (LlamaStack handles internally) | Explicit via prompt template context injection | HTTP API consumed by agent graph node | Manual context prepend in frontend code |
+| Vector database | pgvector (integrated with LlamaStack) | GPU-accelerated Milvus (GPU_CAGRA index) | FAISS in-memory (loaded from MinIO) | pgvector (integrated with LlamaStack) |
+| Document processing | External ingestion pipeline via HTTP API | NV-Ingest with cloud NIMs (OCR, table/graphic detection) | Custom PDF parser (PyPDF-based) | LlamaStack rag_tool.insert (base64 data URL) |
+| Model serving | LlamaStack server | vLLM via KServe with MIG-sliced GPUs | TEI for embeddings, separate LLM for inference | LlamaStack server + vLLM via KServe |
+| Multimodal support | Not built in | Built-in VLM inference for image captioning | Not built in | Not built in |
+| GPU requirements | Lower (LlamaStack manages inference) | Higher (4-5 GPUs or MIG-partitioned) | Minimal (TEI for embeddings, no GPU for FAISS) | Lower (LlamaStack manages inference) |
+| External dependencies | Minimal (self-contained LlamaStack) | NVIDIA NGC cloud NIMs | MinIO for index storage, TEI for embeddings | Minimal (LlamaStack + pgvector) |
+| Retrieval consumer | User-facing agent response | User-facing frontend | Internal agent pipeline (context enrichment) | User-facing frontend (dual-panel comparison) |
+| Index lifecycle | Managed by LlamaStack API | Managed by Milvus | Init job + MinIO pointer file + polling | Managed by LlamaStack API (via frontend) |
+| Knowledge base type | Dynamic (user-uploaded documents) | Dynamic (user-uploaded documents) | Static (curated PDFs bundled with deployment) | Dynamic (user-uploaded via Streamlit UI) |
+| Document management | FastAPI CRUD API + PostgreSQL metadata | Frontend + NV-Ingest APIs | Init job (static) | Streamlit UI + direct pgvector access |
