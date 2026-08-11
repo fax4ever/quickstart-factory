@@ -1,12 +1,12 @@
 ---
 name: model-serving
-description: "Helm charts deploying vLLM models as KServe InferenceServices in RawDeployment mode on RHOAI (multi-model MIG or single-model OAuth)"
-summary: "Deploys vLLM models as KServe InferenceServices in RawDeployment mode on RHOAI via Helm with two approaches: Approach A (aml-rag-nvidia) serves multiple models (LLM, embedding, reranking, VLM) from a single chart using a values map range loop with NVIDIA MIG GPU slicing, FP8 quantization (~200GB to ~70GB VRAM), Red Hat registry image (registry.redhat.io vllm-cuda-rhel9), Jinja2 chat templates via ConfigMap, flexible storage (URI/PVC/S3/hf://), multi-node topology, scale-to-zero, and HF_TOKEN for gated models; Approach B (data-governance-co-pilot) deploys a single model per chart on whole GPUs (nvidia.com/gpu) with community vLLM image (quay.io/redhat-ai-dev), OAuth proxy auth via post-install Helm hook Job, AWQ 4-bit quantization for 24GB GPUs, vLLM built-in --tool-call-parser (hermes for Qwen3, mistral for Nemotron), and no HF token required. Use Approach A for multi-model RAG pipelines on MIG GPUs needing per-model slice sizing (3g.47gb for LLMs with tensor parallelism, 1g.12gb for embedding/reranking) and optional multi-node/scale-to-zero; use Approach B for single-model deployments on standard whole GPUs requiring OAuth proxy authentication with route timeouts (600s HAProxy, 10m upstream) and independent deployment lifecycle. Downstream consumers discover models via `<model-name>-predictor:8080/v1` with `--served-model-name` matching the full HF model ID; Approach A defines models in values.yaml `models` map with `id`, `enabled`, `resources` (MIG slice types), and `args` (e.g., --tensor-parallel-size=2) using a shared ServingRuntime; Approach B configures `model.storage.type` (uri/s3/pvc), `model.runtime.args` for quantization and tool-calling, and `security.enableAuth` for OAuth proxy injection with `security.opendatahub.io/enable-auth` annotation. ConfigMap `lookup` in Approach A prevents chat template updates on `helm upgrade` (must delete manually); Approach B's OAuth proxy patch Job races with RHOAI sidecar injection and exits 0 with warning if oauth-proxy container not found; Nemotron requires `--mamba-ssm-cache-dtype float32` and `--enforce_eager` for its Mamba/SSM hybrid architecture; `--enforce_eager` and `--max-num-seqs=4` trade throughput for memory on 24GB GPUs; multiNode topology values (pipelineParallelSize, tensorParallelSize) have no defaults and require `--set`."
+description: "Helm charts deploying vLLM models via KServe InferenceService, OAuth proxy, or LLMInferenceService with MaaS governance on RHOAI"
+summary: "Deploys vLLM models as KServe InferenceServices (RawDeployment mode) or LLMInferenceServices on RHOAI via Helm, supporting multi-model RAG pipelines, single-model GPU deployments with OAuth proxy, and multi-tenant MaaS platforms with subscription-based governance. Use Approach A (aml-rag-nvidia) for multi-model serving on NVIDIA MIG GPU slices (3g.47gb for LLMs with tensor parallelism, 1g.12gb for embedding/reranking) with FP8 quantization, Jinja2 chat templates, flexible storage (URI/PVC/S3/hf://), and multi-node topology; Approach B (data-governance-co-pilot) for single-model-per-chart on whole GPUs with OAuth proxy auth (600s HAProxy, 10m upstream timeout), AWQ 4-bit quantization, and vLLM built-in --tool-call-parser (hermes for Qwen3, mistral for Nemotron); Approach C (maas-code-assistant) for LLMInferenceService v1alpha1 with llm-d Gateway API routing, OCI modelcar storage, Kuadrant per-subscription token rate limits (100k/min admin, 50k/min user), TelemetryPolicy for per-user/cost-center attribution, HardwareProfile CRDs, and MaaSAuthPolicy/MaaSSubscription governance. Approaches A/B consumers discover models via `<model-name>-predictor:8080/v1` with `--served-model-name` matching the full HF model ID; Approach A defines models in a values.yaml `models` map with `id`, `enabled`, `resources` (MIG slice types), and `args` using a shared ServingRuntime; Approach B configures `model.storage.type` (uri/s3/pvc), `model.runtime.args` for quantization/tool-calling, and `security.enableAuth` for OAuth proxy injection with `security.opendatahub.io/enable-auth` annotation; Approach C uses `models[]` array with OCI `uri`, `extraArgs`, `replicas`, and `hardwareProfile`, plus `subscriptions` map with `groups` and `tokenRateLimits` for MaaS governance. ConfigMap `lookup` in Approach A prevents chat template updates on `helm upgrade` (must delete manually); Approach B's OAuth proxy patch Job races with RHOAI sidecar injection and exits 0 with warning if oauth-proxy container not found; Nemotron requires `--mamba-ssm-cache-dtype float32` and `--enforce_eager` for its Mamba/SSM hybrid architecture; `--enforce_eager` and `--max-num-seqs=4` trade throughput for memory on 24GB GPUs; multiNode topology values (pipelineParallelSize, tensorParallelSize) have no defaults and require `--set`; Kuadrant sometimes misbehaves after deploy requiring a force-restart Job; LLMInferenceService uses HTTPS health probes (TLS enabled) unlike HTTP in Approaches A/B."
 metadata:
   type: component
 tags:
-  tech_stack: [vllm, kserve, helm, oauth-proxy]
-  ai_pattern: [model-serving, rag, embeddings, agents]
+  tech_stack: [vllm, kserve, helm, oauth-proxy, llm-d, kuadrant, gateway-api]
+  ai_pattern: [model-serving, rag, embeddings, agents, maas, code-assistant]
   platform: [kserve, vllm, rhoai, openshift]
   data_layer: []
 source_examples:
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
     notes: "Single-model-per-chart KServe vLLM deployment with OAuth authentication, post-install oauth-proxy timeout patching, and dedicated ServingRuntime pinned by image digest"
     approach: "B"
+  - quickstart: "maas-code-assistant"
+    repo: "https://github.com/rh-ai-quickstart/maas-code-assistant"
+    notes: "LLMInferenceService CRD with MaaS API, OCI modelcar storage, llm-d Gateway routing, multi-tenant subscriptions with Kuadrant rate limiting, and hardware profiles"
+    approach: "C"
 ---
 
 # Model Serving
@@ -447,3 +451,294 @@ containers:
 | HF token | Required (gated models) | Not required (public model) |
 | Multi-node | Supported (`workerSpec`) | Not supported |
 | Best for | Multi-model RAG pipelines with MIG GPUs | Single-model deployments on standard GPUs with auth |
+| MaaS governance | No | No |
+
+---
+
+## Approach C: LLMInferenceService with MaaS Multi-Tenant Governance (from maas-code-assistant)
+
+### When to Use
+
+Use this approach when deploying models through Red Hat AI's integrated Models-as-a-Service (MaaS) offering, where you need multi-tenant model access with subscription-based rate limiting, usage tracking, and chargeback. This pattern uses the `LLMInferenceService` CRD (serving.kserve.io/v1alpha1) with llm-d for Kubernetes-native distributed inference routing via Gateway API, OCI modelcar images for model storage, and Kuadrant for auth policy enforcement. The maas-code-assistant quickstart deploys NVIDIA Nemotron 3 Nano 30B-A3B FP8 as a code assistant accessed through OpenShift DevSpaces.
+
+### Differences from Approach A and B
+
+- **LLMInferenceService CRD** (v1alpha1) instead of InferenceService (v1beta1) -- a higher-level abstraction that manages model, router, and template specs together
+- **llm-d routing** via Gateway API (`maas-default-gateway` in `openshift-ingress`) instead of direct KServe predictor services
+- **OCI modelcar storage** (`oci://quay.io/...modelcar`) instead of Hugging Face download (`hf://`) or PVC/S3
+- **MaaS subscription model** with `MaaSSubscription`, `MaaSAuthPolicy`, and `MaaSModelRef` CRDs for multi-tenant governance
+- **Kuadrant rate limiting** with per-subscription token rate limits (e.g., 100k tokens/min for admins, 50k tokens/min for users)
+- **TelemetryPolicy** extracting model, user, subscription, organization, and cost center from response/auth context
+- **HardwareProfile CRD** (infrastructure.opendatahub.io/v1) for OpenShift AI dashboard integration of GPU resource constraints
+- **Red Hat registry vLLM image** (`registry.redhat.io/rhaii/vllm-cuda-rhel9:3.4.0`)
+- **No HuggingFace token** -- model is pre-packaged as an OCI artifact
+
+### LLMInferenceService with Built-in Router
+
+The LLMInferenceService CRD combines model definition, llm-d router configuration, and container spec in a single resource. The router section references the Gateway API gateway for traffic management:
+
+```yaml
+# From charts/maas-code-assistant/templates/models/llminferenceservice.yaml
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Values.modelsNamespace }}
+  annotations:
+    opendatahub.io/model-type: generative
+    opendatahub.io/genai-use-case: {{ .useCase | default "code-assistant" }}
+spec:
+  model:
+    name: {{ .name }}
+    uri: {{ .uri }}
+  replicas: {{ .replicas | default 1 }}
+  router:
+    gateway:
+      refs:
+        - name: maas-default-gateway
+          namespace: openshift-ingress
+    route: {}
+    scheduler: {}
+```
+
+### OCI Modelcar Storage
+
+Instead of downloading from HuggingFace at runtime, models are pre-packaged as OCI artifacts and referenced via an `oci://` URI. This eliminates startup download delays and HF token requirements:
+
+```yaml
+# From charts/maas-code-assistant/values.yaml
+models:
+  - name: nemotron-3-nano-30b-a3b
+    uri: oci://quay.io/jharmison/models:redhatai--nvidia-nemotron-3-nano-30b-a3b-fp8-modelcar
+```
+
+### vLLM with Nemotron Reasoning Parser Plugin
+
+The container runs vLLM's OpenAI-compatible API server with tool calling and a custom reasoning parser plugin loaded from the model directory. The `--reasoning-parser-plugin` flag points to a Python file packaged inside the modelcar:
+
+```yaml
+# From charts/maas-code-assistant/values.yaml
+extraArgs:
+  - --max-model-len=131072
+  - --enable-auto-tool-choice
+  - --tool-call-parser=qwen3_coder
+  - --trust-remote-code
+  - --enable-force-include-usage
+  - --reasoning-parser-plugin=/mnt/models/nano_v3_reasoning_parser.py
+  - --reasoning-parser=nano_v3
+```
+
+The template defaults to vLLM's entrypoint but allows per-model command override:
+
+```yaml
+# From charts/maas-code-assistant/templates/models/llminferenceservice.yaml
+command:
+  {{- if .command }}
+  {{- toYaml .command | nindent 10 }}
+  {{- else }}
+  - python
+  - -m
+  - vllm.entrypoints.openai.api_server
+  {{- end }}
+```
+
+### Multi-Model Iteration with Range Loop
+
+Like Approach A, models are defined as an array in values.yaml and iterated with `range`. Each model creates an LLMInferenceService, a DataScienceConnection Secret, and a MaaSModelRef:
+
+```yaml
+# From charts/maas-code-assistant/templates/models/datascienceconnection.yaml
+{{- range .Values.models }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: connection-{{ .name }}
+  annotations:
+    opendatahub.io/connection-hidden: "true"
+    opendatahub.io/connection-type-protocol: uri
+    opendatahub.io/connection-type-ref: uri-v1
+  labels:
+    opendatahub.io/dashboard: "true"
+type: Opaque
+data:
+  URI: {{ .uri | b64enc }}
+{{- end }}
+```
+
+### MaaS Subscription-Based Rate Limiting
+
+Subscriptions bind OpenShift groups to models with per-model token rate limits. The `MaaSSubscription` CRD references models in the `llm` namespace and enforces quotas via `MaaSAuthPolicy`:
+
+```yaml
+# From charts/maas-code-assistant/values.yaml
+subscriptions:
+  admin:
+    displayName: MaaS Admins
+    groups:
+      - name: admin
+    tokenRateLimits:
+      nemotron-3-nano-30b-a3b:
+        - limit: 100000
+          window: 1m
+  user:
+    displayName: MaaS Users
+    groups:
+      - name: user
+    tokenRateLimits:
+      nemotron-3-nano-30b-a3b:
+        - limit: 50000
+          window: 1m
+```
+
+The template creates `MaaSAuthPolicy` resources that tie subscription groups to model refs for Kuadrant enforcement:
+
+```yaml
+# From charts/maas-code-assistant/templates/maasauthpolicy.yaml
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSAuthPolicy
+metadata:
+  name: {{ $name }}-policy
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+  {{- range $model, $rateLimits := $sub.tokenRateLimits }}
+  - name: {{ $model }}
+    namespace: {{ $.Values.modelsNamespace }}
+  {{- end }}
+  subjects:
+    groups:
+      {{- toYaml . | nindent 6 }}
+```
+
+### HardwareProfile for Dashboard Integration
+
+The chart manages HardwareProfile CRDs that integrate GPU resource constraints with the OpenShift AI dashboard, supporting both Node-based and Kueue-based scheduling:
+
+```yaml
+# From charts/maas-code-assistant/templates/hardwareprofile.yaml
+apiVersion: infrastructure.opendatahub.io/v1
+kind: HardwareProfile
+metadata:
+  name: {{ $name }}
+  namespace: {{ $profile.namespace | default "redhat-ods-applications" }}
+spec:
+  identifiers:
+    - identifier: cpu
+      resourceType: CPU
+      minCount: {{ .min | default 1 }}
+      defaultCount: {{ .default | default 4 }}
+    - identifier: memory
+      resourceType: Memory
+    {{- range $k, $v := ($profile.gpu | default dict) }}
+    - identifier: {{ $k }}
+      resourceType: Accelerator
+      displayName: {{ $v.displayName }}
+    {{- end }}
+  scheduling:
+    type: {{ $profile.type | default "Node" }}
+```
+
+### TelemetryPolicy for Usage Attribution
+
+A Kuadrant `TelemetryPolicy` extracts usage metadata from the response body and auth context for per-subscription observability and chargeback:
+
+```yaml
+# From charts/maas-code-assistant/templates/telemetrypolicy.yaml
+apiVersion: extensions.kuadrant.io/v1alpha1
+kind: TelemetryPolicy
+metadata:
+  name: maas-telemetry
+  namespace: openshift-ingress
+spec:
+  metrics:
+    default:
+      labels:
+        model: responseBodyJSON("/model")
+        user: auth.identity.userid
+        subscription: auth.identity.selected_subscription
+        organization_id: auth.identity.subscription_info.organizationId
+        cost_center: auth.identity.subscription_info.costCenter
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: maas-default-gateway
+```
+
+### Configuration (Approach C)
+
+- **Environment variables:**
+  - Custom env vars can be injected per model via the `.env` array in values.yaml
+
+- **Helm values:**
+  - `modelsNamespace` - Namespace for model deployments (default: `llm`)
+  - `defaultServingImage` - vLLM container image (default: `registry.redhat.io/rhaii/vllm-cuda-rhel9:3.4.0`)
+  - `models[].name` - Model name used for LLMInferenceService resource naming
+  - `models[].uri` - OCI modelcar URI for model artifact
+  - `models[].extraArgs` - Per-model vLLM arguments (tool calling, reasoning parser, max model len)
+  - `models[].resources` - GPU and compute resource requests/limits
+  - `models[].hardwareProfile.enabled` / `.name` / `.namespace` - HardwareProfile association for dashboard
+  - `models[].tolerations` - GPU node tolerations
+  - `models[].replicas` - Number of model replicas (default: 1)
+  - `subscriptions.<name>.groups` - OpenShift groups bound to this subscription
+  - `subscriptions.<name>.tokenRateLimits.<model>` - Token rate limits with `limit` and `window`
+  - `hardwareProfiles.<name>` - HardwareProfile configuration (cpu, memory, gpu identifiers and bounds)
+  - `global.wildcardDomain` - Cluster apps domain for route creation
+  - `kuadrant.restart` - Force restart of Kuadrant after apply (workaround for misbehavior)
+
+- **Key CRDs:**
+  - `LLMInferenceService` (serving.kserve.io/v1alpha1) - Model + router + container spec
+  - `MaaSModelRef` (maas.opendatahub.io/v1alpha1) - Links model to LLMInferenceService
+  - `MaaSSubscription` (maas.opendatahub.io/v1alpha1) - Group-to-model binding with rate limits
+  - `MaaSAuthPolicy` (maas.opendatahub.io/v1alpha1) - Auth policy for subscription enforcement
+  - `HardwareProfile` (infrastructure.opendatahub.io/v1) - GPU/CPU/Memory resource constraints
+  - `TelemetryPolicy` (extensions.kuadrant.io/v1alpha1) - Usage attribution metrics
+
+### Known Gotchas (Approach C)
+
+- **Kuadrant sometimes misbehaves after deploy:** The values.yaml includes a `kuadrant.restart` toggle and the repo has a `job-restart-kuadrant.yaml` template to force-restart Kuadrant in `kuadrant-system` namespace after a delay. The comment in `charts/maas-code-assistant/values.yaml` line 113 reads: `# Kuadrant sometimes misbehaves. Force a job to restart it after a delay post-apply`.
+
+- **LLMInferenceService uses HTTPS health probes:** The liveness and readiness probes use `scheme: HTTPS` on port 8000, because TLS is enabled on the vLLM server via `--enable-ssl-refresh`, `--ssl-certfile`, and `--ssl-keyfile` flags pointing to `/var/run/kserve/tls/`. This is different from Approaches A and B which use HTTP. Found in `charts/maas-code-assistant/templates/models/llminferenceservice.yaml` lines 64-72.
+
+- **Shared memory emptyDir is required:** The template mounts a `Memory`-backed emptyDir at `/dev/shm` with a 2Gi size limit, which is required for vLLM's inter-process communication. Found in `charts/maas-code-assistant/templates/models/llminferenceservice.yaml` lines 87-91.
+
+- **Model uses `--max-model-len=131072` not full 256k context:** Despite the Nemotron model supporting 256k-token context, the default is capped at 131072 (128k) via `--max-model-len=131072` in `charts/maas-code-assistant/values.yaml` extraArgs. This is likely a VRAM constraint on a single GPU.
+
+- **`--tool-call-parser=qwen3_coder` is used for Nemotron:** Despite being an NVIDIA model, the Nemotron 3 Nano 30B uses the `qwen3_coder` tool-call parser in vLLM, not a Nemotron-specific or Mistral parser. Found in `charts/maas-code-assistant/values.yaml` extraArgs.
+
+- **Custom reasoning parser loaded from modelcar:** The `--reasoning-parser-plugin=/mnt/models/nano_v3_reasoning_parser.py` flag loads a custom parser from the model directory rather than using vLLM's built-in parsers. This file is packaged inside the OCI modelcar artifact, not in the Helm chart. Found in `charts/maas-code-assistant/values.yaml` extraArgs.
+
+- **DataScienceConnection Secret stores model URI, not API credentials:** The `datascienceconnection.yaml` template creates a Secret with `opendatahub.io/connection-type-ref: uri-v1` containing just the model OCI URI. The `opendatahub.io/connection-hidden: "true"` annotation hides it from the OpenShift AI dashboard connection list. Found in `charts/maas-code-assistant/templates/models/datascienceconnection.yaml`.
+
+- **Models namespace has dashboard label:** The dedicated `llm` namespace is created with `opendatahub.io/dashboard: "true"` label, which makes it visible in the OpenShift AI dashboard project selector. Found in `charts/maas-code-assistant/templates/models/namespace.yaml`.
+
+- **HardwareProfile can be disabled per model:** Setting `hardwareProfile.enabled: false` in a model's values skips the hardware profile annotation on the LLMInferenceService. The values.yaml comment at line 337 notes: "You can disable HardwareProfile association with your models safely if you don't want to do additional tuning."
+
+### Testing Notes (Approach C)
+
+- Deploy with `helm install maas-code-assistant ./charts/maas-code-assistant -f environment.yaml` (requires customized `environment.yaml` with cluster-specific `global.wildcardDomain`)
+- Verify LLMInferenceService readiness: `oc get llminferenceservice -n llm`
+- Check MaaS subscriptions: `oc get maassubscription -n models-as-a-service`
+- Verify auth policies: `oc get maasauthpolicy -n models-as-a-service`
+- Confirm model endpoint is accessible through the `maas-default-gateway` Gateway
+- Delete with `helm uninstall maas-code-assistant`
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (aml-rag-nvidia) | Approach B (data-governance-co-pilot) | Approach C (maas-code-assistant) |
+|----------|-----------|-----------|-----------|
+| Number of models | Multiple models in one chart (range loop) | Single model per chart | Multiple models in one chart (range loop) |
+| GPU type | NVIDIA MIG slices (e.g., 3g.47gb, 1g.12gb) | Whole GPU (nvidia.com/gpu) | Whole GPU with HardwareProfile CRD |
+| Quantization | FP8 (for 49B+ models) | AWQ 4-bit (qwen3) or none (nemotron 9B) | FP8 (modelcar-packaged) |
+| Authentication | No auth / service account list | OAuth proxy with Helm hook patch Job | MaaS subscriptions with Kuadrant auth policies |
+| Tool calling | Custom Jinja2 chat templates via ConfigMap | vLLM built-in `--tool-call-parser` / `--reasoning-parser` | vLLM built-in parsers + custom reasoning parser plugin from modelcar |
+| vLLM image | Red Hat registry (`registry.redhat.io`) | Community (`quay.io/redhat-ai-dev`) | Red Hat registry (`registry.redhat.io/rhaii/vllm-cuda-rhel9:3.4.0`) |
+| HF token | Required (gated models) | Not required (public model) | Not required (OCI modelcar) |
+| Multi-node | Supported (`workerSpec`) | Not supported | Via llm-d distributed inference |
+| Model storage | HF download / PVC / S3 / URI | HF download / PVC / S3 | OCI modelcar artifacts |
+| Rate limiting | None | None | Per-subscription token rate limits via Kuadrant |
+| Observability | Basic KServe metrics | Basic KServe metrics | TelemetryPolicy with per-user/subscription/cost-center attribution |
+| CRD API | InferenceService v1beta1 | InferenceService v1beta1 | LLMInferenceService v1alpha1 |
+| MaaS governance | No | No | Yes (subscriptions, auth policies, model refs) |
+| Best for | Multi-model RAG pipelines with MIG GPUs | Single-model deployments on standard GPUs with auth | Multi-tenant model-as-a-service platforms with usage governance and chargeback |
