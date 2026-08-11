@@ -1,14 +1,14 @@
 ---
 name: rag-pipeline
-description: RAG via LlamaStack vector stores with external ingestion pipelines and file_search tools
-summary: "Implements retrieval-augmented generation via two approaches: (A) custom FastAPI backend coordinating PostgreSQL metadata (async SQLAlchemy) and LlamaStack vector stores (AsyncLlamaStackClient) with an external ingestion pipeline, wiring retrieval into agent responses via file_search tools in the Responses API; (B) NVIDIA's pre-built RAG Blueprint server with NV-Ingest document processing (cloud NIMs for OCR/table/graphic detection), GPU-accelerated Milvus (GPU_CAGRA index), 4 vLLM models on KServe with MIG-sliced GPUs, and NIM-to-vLLM translation proxies -- no custom backend code. Choose Approach A (builtin::rag toolgroup + LlamaStackRunner) for custom RAG logic with agent orchestration integration and lower GPU requirements -- LangGraph/CrewAI runners lack built-in RAG; choose Approach B when multimodal VLM inference, built-in reranking/query rewriting/reflection, and no-code Helm-only deployment are needed, accepting cloud NIM dependencies and 4-5 GPU or MIG-partitioned resource costs. A defaults ingestion pipeline URL to http://llamastack:8321/ingestion_pipeline/ (override via INGESTION_PIPELINE_URL), with build_responses_tools mapping builtin::rag to file_search using vector_store_ids resolved from knowledge_base_ids; B injects retrieved chunks via {context} placeholder in rag_template with /no_think directive for Nemotron models, provisions S3 via ODF ObjectBucketClaim, and uses embedding/ranking proxies to strip NIM-specific fields (input_type, truncate, dimensions, query.text/passages format) for vLLM compatibility. A's dual-state metadata (PostgreSQL + LlamaStack) requires update_vector_store_ids sync on every list operation (stale IDs persist on failure) with cascade deletes across three systems after verifying no agents reference the KB; B requires ingest chart before rag-server (cross-chart ConfigMap dependency), hardcodes NV-Ingest Redis hostname to ingest-redis-master (breaks on release rename), needs anyuid SCC for three service accounts, and embedding proxy strips input_type so vLLM cannot distinguish query vs passage embeddings."
+description: RAG patterns from LlamaStack vector stores to NVIDIA Blueprints to standalone FAISS microservices
+summary: "Implements retrieval-augmented generation via three approaches: (A) custom FastAPI backend coordinating PostgreSQL metadata (async SQLAlchemy) and LlamaStack vector stores (AsyncLlamaStackClient) with an external ingestion pipeline, wiring retrieval into agent responses via file_search tools in the Responses API; (B) NVIDIA's pre-built RAG Blueprint server with NV-Ingest document processing (cloud NIMs for OCR/table/graphic detection), GPU-accelerated Milvus (GPU_CAGRA index), 4 vLLM models on KServe with MIG-sliced GPUs, and NIM-to-vLLM translation proxies -- no custom backend code; (C) standalone FAISS microservice with custom PDF parser (PyPDF-based), TEI embeddings (nomic-embed-text-v1.5 with search_document:/search_query: task prefixes), MinIO index storage via LATEST.json pointer file, serving as context enrichment within an agent pipeline rather than user-facing chat. Choose Approach A (builtin::rag toolgroup + LlamaStackRunner) for custom RAG logic with agent orchestration integration and lower GPU requirements -- LangGraph/CrewAI runners lack built-in RAG; choose Approach B when multimodal VLM inference, built-in reranking/query rewriting/reflection, and no-code Helm-only deployment are needed, accepting cloud NIM dependencies and 4-5 GPU or MIG-partitioned resource costs; choose Approach C for static curated PDF knowledge bases feeding internal agent graphs with minimal GPU needs (TEI only), using RAGHandler singleton with configurable RAG_TOP_K/RAG_TOP_N/RAG_SIMILARITY_THRESHOLD. A defaults ingestion pipeline URL to http://llamastack:8321/ingestion_pipeline/ (override via INGESTION_PIPELINE_URL), with build_responses_tools mapping builtin::rag to file_search using vector_store_ids resolved from knowledge_base_ids; B injects retrieved chunks via {context} placeholder in rag_template with /no_think directive for Nemotron models, provisions S3 via ODF ObjectBucketClaim, and uses embedding/ranking proxies to strip NIM-specific fields (input_type, truncate, dimensions, query.text/passages format) for vLLM compatibility; C's RAGHandler lazily initializes on first use, queries /rag/query, and polls MinIO every 20 seconds for hot index reload (RAG_FORCE_REBUILD=true). A's dual-state metadata (PostgreSQL + LlamaStack) requires update_vector_store_ids sync on every list operation (stale IDs persist on failure) with cascade deletes across three systems after verifying no agents reference the KB; B requires ingest chart before rag-server (cross-chart ConfigMap dependency), hardcodes NV-Ingest Redis hostname to ingest-redis-master (breaks on release rename), needs anyuid SCC for three service accounts, and embedding proxy strips input_type so vLLM cannot distinguish query vs passage embeddings; C's FAISS index must fit in RAM (faiss.read_index requires file paths, not buffers), and wait_for_rag_service blocks the init pipeline up to 10 minutes."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, llamastack, python, vllm, nvidia-rag-blueprint]
+  tech_stack: [fastapi, llamastack, python, vllm, nvidia-rag-blueprint, langchain, langgraph, gradio]
   ai_pattern: [rag, embeddings, vector-search, reranking, multimodal]
-  platform: [llamastack, rhoai, openshift, kubernetes, kserve, vllm]
-  data_layer: [pgvector, milvus]
+  platform: [llamastack, rhoai, openshift, kubernetes, kserve, vllm, tei]
+  data_layer: [pgvector, milvus, faiss, minio]
 source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/aml-rag-nvidia"
     notes: "NVIDIA RAG Blueprint server with NV-Ingest document processing, GPU-accelerated Milvus, vLLM via KServe, and NIM-to-vLLM translation proxies -- no custom backend code"
     approach: "B"
+  - quickstart: "ansible-log-analysis"
+    repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
+    notes: "Standalone FAISS microservice with PDF knowledge base ingestion, MinIO index storage, TEI embeddings, and RAG used as context enrichment within an agent pipeline"
+    approach: "C"
 ---
 
 # RAG Pipeline
@@ -374,17 +378,196 @@ All prompts include the `/no_think` system directive, which suppresses chain-of-
 
 ---
 
+## Approach C: Standalone FAISS Microservice with PDF Knowledge Base (from ansible-log-analysis)
+
+### When to Use
+
+Use this approach when building a RAG system that serves as a "cheat sheet" or knowledge base lookup within an agent pipeline, rather than as a user-facing chat RAG. This approach is suited for scenarios where: the knowledge base is a curated set of PDF documents (e.g., known error patterns and resolutions), retrieval results feed into an agent graph as context enrichment rather than being returned directly to users, and the RAG system runs as an independent microservice with its own ingestion pipeline and index lifecycle managed via MinIO.
+
+### Differences from Approach A and Approach B
+
+| Aspect | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach C (FAISS Microservice) |
+|--------|------------------------|-----------------------------------|-------------------------------|
+| RAG server | Custom FastAPI backend + LlamaStack client | Pre-built NVIDIA RAG server | Standalone FastAPI RAG microservice |
+| Vector database | pgvector via LlamaStack vector stores | GPU-accelerated Milvus | FAISS (in-memory, loaded from MinIO) |
+| Index storage | LlamaStack server (internal) | Milvus persistent volumes | MinIO object storage (index.faiss + metadata.pkl) |
+| Ingestion | External pipeline via LlamaStack API | NV-Ingest with cloud NIMs | Custom PDF parser + embedder init job |
+| Embedding | LlamaStack embedding API | NIM-to-vLLM translation proxies | HuggingFace TEI (Text Embeddings Inference) |
+| RAG integration | Transparent via file_search tool in Responses API | Context injected via `{context}` prompt placeholder | RAG results returned to agent graph node as formatted text |
+| Retrieval consumer | User-facing agent response | User-facing frontend | Internal agent pipeline (context enrichment for LLM) |
+| Application code | Custom backend (FastAPI + SQLAlchemy + httpx) | No custom code (Helm-only) | Custom RAG service + custom init pipeline |
+| Index lifecycle | Managed by LlamaStack (create/delete via API) | Managed by Milvus | Init job builds index → uploads to MinIO → RAG service polls and loads |
+| Knowledge base source | User-uploaded documents | User-uploaded documents | Curated PDF files bundled with deployment |
+
+### Data Flow
+
+**Index Building (Init Job):**
+
+1. RAG init pipeline (`rag_init_pipeline.py`) runs as a Kubernetes init job
+2. Scans knowledge base directory for PDF files
+3. `AnsibleErrorParser` extracts and chunks PDFs into structured error entries (title, description, symptoms, resolution, code)
+4. `AnsibleErrorEmbedder` embeds chunks using TEI (nomic-ai/nomic-embed-text-v1.5) with `search_document:` task prefix
+5. Builds a FAISS index (Inner Product / cosine similarity on L2-normalized vectors)
+6. Uploads `index.faiss`, `metadata.pkl`, and `LATEST.json` pointer file to MinIO bucket
+7. `LATEST.json` tracks index status (BUILDING/READY/FAILED), build ID, and model name
+
+**RAG Service Startup:**
+
+1. RAG service (`services/rag/main.py`) starts and attempts to load index from MinIO
+2. If index not available, starts a background polling task that checks every 20 seconds
+3. `RAGIndexLoader` downloads `index.faiss` and `metadata.pkl` from MinIO to temp files, loads FAISS index into memory
+4. Service becomes ready when index is loaded (readiness probe checks `/ready` endpoint)
+
+**Query Flow (within Agent Pipeline):**
+
+1. Context agent subgraph calls `get_cheat_sheet_context(log_summary)` via the `RAGHandler` singleton
+2. `RAGHandler` sends HTTP POST to RAG service at `/rag/query` with the log summary as query
+3. RAG service embeds the query using TEI (`/embeddings` endpoint) with `search_query:` task prefix
+4. FAISS similarity search returns top-K candidates
+5. Results filtered by similarity threshold (default 0.6), top-N returned (default 1)
+6. `RAGHandler._format_rag_results()` formats results as structured markdown (title, confidence score, description, symptoms, resolution, code)
+7. Formatted context is passed as `cheat_sheet_context` to downstream agent nodes
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| RAG init job | Knowledge base PDFs | Filesystem | Read and parse PDF documents |
+| RAG init job (AnsibleErrorEmbedder) | TEI | HTTP (POST /embeddings) | Embed document chunks |
+| RAG init job | MinIO | S3 API (minio Python SDK) | Upload FAISS index and metadata |
+| RAG service | MinIO | S3 API (minio Python SDK) | Download FAISS index on startup |
+| RAG service | TEI | HTTP (httpx POST /embeddings) | Embed query at search time |
+| RAGHandler (in backend) | RAG service | HTTP (httpx POST /rag/query) | Query for relevant error solutions |
+| Context agent node | RAGHandler | Python method call | Get cheat sheet context for log summary |
+
+### Key Integration Points
+
+#### RAG Service Query Endpoint
+
+The RAG service exposes a `/rag/query` endpoint that embeds the query, searches FAISS, and returns structured error results.
+
+```python
+# services/rag/main.py (lines 215-268)
+@app.post("/rag/query", response_model=QueryResponse)
+async def query_rag(request: QueryRequest):
+    # Step 1: Generate query embedding via TEI
+    query_text = f"search_query: {request.query}"
+    embedding_response = await embedding_client.post(
+        "/embeddings",
+        json={"input": [query_text], "model": "nomic-embed-text-v1.5"},
+    )
+    # ... extract and normalize embedding
+
+    # Step 2: Similarity search in FAISS
+    query_vector = query_embedding.reshape(1, -1)
+    similarities, indices = index_loader.index.search(query_vector, request.top_k)
+
+    # Step 3: Filter by threshold and format results
+    results = []
+    for idx, similarity in zip(indices, similarities):
+        if similarity < request.similarity_threshold:
+            continue
+        error_id = index_loader.index_to_error_id[idx]
+        error_data = index_loader.error_store[error_id]
+        # ... build ErrorResult with sections (description, symptoms, resolution, code)
+```
+
+#### RAGHandler Integration into Agent Pipeline
+
+The `RAGHandler` singleton communicates with the RAG service via HTTP and formats results as structured markdown for LLM consumption.
+
+```python
+# src/alm/utils/rag_handler.py (lines 137-200)
+async def get_cheat_sheet_context(self, log_summary: str) -> str:
+    if not self._initialize_rag_service():
+        return ""
+
+    response = await self._client.post(
+        "/rag/query",
+        json={
+            "query": log_summary,
+            "top_k": int(os.getenv("RAG_TOP_K", "3")),
+            "top_n": int(os.getenv("RAG_TOP_N", "1")),
+            "similarity_threshold": float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.6")),
+        },
+    )
+    response.raise_for_status()
+    return self._format_rag_results(response.json())
+```
+
+#### Index Lifecycle via MinIO Pointer File
+
+The `LATEST.json` pointer file in MinIO tracks index state, enabling coordination between the init job (producer) and the RAG service (consumer).
+
+```python
+# services/rag/index_loader.py (lines 88-139)
+def _load_index_sync(self):
+    # Check status from LATEST.json
+    response = self.minio_client.get_object(self.bucket_name, "LATEST.json")
+    pointer = json.loads(response.read().decode())
+    status = pointer.get("status")
+    self.last_loaded_build_id = pointer.get("build_id")
+
+    if status == "FAILED":
+        raise ValueError(f"RAG index build failed: {pointer.get('error_message')}")
+    if status != "READY":
+        raise ValueError(f"RAG index is not ready (status: {status})")
+```
+
+#### Background Polling for Hot Index Reload
+
+The RAG service polls MinIO every 20 seconds, supporting both initial index loading and hot reloads when a new build is detected.
+
+```python
+# services/rag/main.py (lines 103-152)
+async def poll_for_index():
+    while True:
+        if index_loader is not None and index_loader.index is not None:
+            force_rebuild = os.getenv("RAG_FORCE_REBUILD", "false").lower() == "true"
+            if force_rebuild:
+                response = index_loader.minio_client.get_object(
+                    index_loader.bucket_name, "LATEST.json")
+                pointer = json.loads(response.read().decode())
+                latest_build_id = pointer.get("build_id")
+                if latest_build_id and latest_build_id != index_loader.last_loaded_build_id:
+                    await index_loader.reload_index()
+        else:
+            success = await load_index()
+        await asyncio.sleep(poll_interval)
+```
+
+### Prompt / Chain Patterns
+
+RAG results are injected into the agent pipeline as formatted markdown context. The `cheat_sheet_context_node` retrieves the context, and downstream nodes include it in their prompts:
+
+- The `loki_router_node` receives both `log_summary` and `cheat_sheet_context` to decide if Loki log retrieval is needed
+- The `suggest_step_by_step_solution_node` receives the combined context (cheat sheet + Loki logs) via a dedicated prompt template variant (`suggest_step_by_step_solution_with_context_user_message`) that includes an `{context}` placeholder
+
+The nomic embedding model requires task-specific prefixes: `search_document:` for indexing and `search_query:` for queries.
+
+### Gotchas
+
+- The RAG service uses FAISS in-memory indexing, meaning the entire index must fit in RAM. The `RAGIndexLoader` downloads the index to temp files and loads it via `faiss.read_index()` (lines 160-165 of `index_loader.py`); FAISS requires file paths, not in-memory buffers.
+- The `RAGHandler` is a singleton (`__new__` returns same instance) with lazy initialization. The `_initialize_rag_service()` method (lines 45-85 of `rag_handler.py`) is called on first use and checks the `RAG_ENABLED` environment variable. If RAG is disabled or the service is unavailable, all methods return empty strings rather than raising errors.
+- The init pipeline (`backend_init_pipeline.py`) separates preparation steps (log loading, clustering) from processing steps (agent inference), waiting for the RAG service between them via `wait_for_rag_service()` which blocks up to 10 minutes (lines 14-85 of `rag_service.py`).
+- The embedding client in the RAG service uses connection pooling (`httpx.AsyncClient` with `max_keepalive_connections=20`, `max_connections=100`) for high-throughput query handling (lines 172-181 of `rag/main.py`).
+- The nomic embedding model requires different prefixes for documents (`search_document:`) vs. queries (`search_query:`) for optimal retrieval quality. The RAG service adds `search_query:` to queries (line 260 of `rag/main.py`), while the embedder adds `search_document:` during indexing.
+- The index check for existing builds (`check_rag_index_exists`) allows skipping rebuilds for faster upgrades. Setting `RAG_FORCE_REBUILD=true` overrides this check (lines 76-88 of `rag_init_pipeline.py`).
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) |
-|----------|------------------------|-----------------------------------|
-| Custom backend logic needed | Yes -- build your own RAG pipeline with FastAPI | No -- use pre-built NVIDIA RAG server |
-| RAG retrieval integration | Transparent via file_search tool (LlamaStack handles internally) | Explicit via prompt template context injection |
-| Vector database | pgvector (integrated with LlamaStack) | GPU-accelerated Milvus (GPU_CAGRA index) |
-| Document processing | External ingestion pipeline via HTTP API | NV-Ingest with cloud NIMs (OCR, table/graphic detection) |
-| Model serving | LlamaStack server | vLLM via KServe with MIG-sliced GPUs |
-| Multimodal support | Not built in | Built-in VLM inference for image captioning and query answering |
-| GPU requirements | Lower (LlamaStack manages inference) | Higher (4-5 GPUs or MIG-partitioned 2-3 GPUs) |
-| External dependencies | Minimal (self-contained LlamaStack) | NVIDIA NGC cloud NIMs for document processing |
-| Agent integration | Directly wired into agent orchestration via builtin::rag | Standalone RAG server, no agent framework |
-| Customization level | Full control over RAG pipeline behavior | Limited to NVIDIA RAG server feature flags and prompt templates |
+| Criteria | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach C (FAISS Microservice) |
+|----------|------------------------|-----------------------------------|-------------------------------|
+| Custom backend logic needed | Yes -- build your own RAG pipeline with FastAPI | No -- use pre-built NVIDIA RAG server | Yes -- standalone RAG service + init pipeline |
+| RAG retrieval integration | Transparent via file_search tool (LlamaStack handles internally) | Explicit via prompt template context injection | HTTP API consumed by agent graph node |
+| Vector database | pgvector (integrated with LlamaStack) | GPU-accelerated Milvus (GPU_CAGRA index) | FAISS in-memory (loaded from MinIO) |
+| Document processing | External ingestion pipeline via HTTP API | NV-Ingest with cloud NIMs (OCR, table/graphic detection) | Custom PDF parser (PyPDF-based) |
+| Model serving | LlamaStack server | vLLM via KServe with MIG-sliced GPUs | TEI for embeddings, separate LLM for inference |
+| Multimodal support | Not built in | Built-in VLM inference for image captioning | Not built in |
+| GPU requirements | Lower (LlamaStack manages inference) | Higher (4-5 GPUs or MIG-partitioned) | Minimal (TEI for embeddings, no GPU for FAISS) |
+| External dependencies | Minimal (self-contained LlamaStack) | NVIDIA NGC cloud NIMs | MinIO for index storage, TEI for embeddings |
+| Retrieval consumer | User-facing agent response | User-facing frontend | Internal agent pipeline (context enrichment) |
+| Index lifecycle | Managed by LlamaStack API | Managed by Milvus | Init job + MinIO pointer file + polling |
+| Knowledge base type | Dynamic (user-uploaded documents) | Dynamic (user-uploaded documents) | Static (curated PDFs bundled with deployment) |

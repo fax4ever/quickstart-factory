@@ -1,12 +1,12 @@
 ---
 name: minio
 description: "S3-compatible object storage for file attachments, optional via compose profiles and feature flags"
-summary: "MinIO (quay.io/minio/minio:latest) provides S3-compatible object storage for chat attachment uploads in quickstarts, deployed as an optional service gated by a compose `attachments` profile and a backend DISABLE_ATTACHMENTS feature flag with inverted logic. Use when quickstarts need file attachment handling alongside chat sessions; on OpenShift, MinIO is provisioned via the configure-pipeline Helm subchart (v0.5.6) with secret creation and optional sampleFileUpload document seeding rather than a standalone chart. Critical pattern is the _get_s3() lazy initialization of boto3 client/resource using module-level globals with auto-bucket creation via head_bucket/create_bucket, storing attachments under session-scoped keys ({session_id}/{attachment_id}{ext}) for bulk deletion. The compose backend must declare MinIO with `required: false` to avoid blocking startup when attachments are disabled, the start script bridges ENABLE_ATTACHMENTS to DISABLE_ATTACHMENTS for the backend, lazy S3 init is required to avoid import-time network calls that break unit tests, and session-scoped authorization checks remain unimplemented (TODO)."
+summary: "MinIO (quay.io/minio/minio:latest) provides S3-compatible object storage for quickstarts, handling chat attachment uploads (Approach A) or serving as shared infrastructure for RAG index persistence, ML model storage, Loki log backend, and document seeding (Approach B). Use Approach A (boto3, configure-pipeline subchart v0.5.6, ATTACHMENTS_BUCKET_* env vars) when MinIO is a single-purpose optional service gated by compose `attachments` profile and inverted DISABLE_ATTACHMENTS flag; use Approach B (minio Python SDK >=7.2.17, standalone minio subchart v0.1.0 as StatefulSet with 50Gi PVC, MINIO_* env vars with shared K8s Secret) when MinIO is always-on with multiple consumers (backend, clustering, rag, Loki). Approach A uses lazy _get_s3() with module-level globals and auto-bucket via head_bucket/create_bucket storing attachments under session-scoped keys ({session_id}/{attachment_id}{ext}); Approach B uses centralized get_minio_client() factory (secure=False hardcoded, config priority: params > env vars > defaults), LATEST.json pointer tracking RAG index status (BUILDING/READY/FAILED), joblib serialization for ML model storage, and OpenShift Routes with TLS edge termination. The start-dev.sh script bridges ENABLE_ATTACHMENTS to the inverted DISABLE_ATTACHMENTS flag, compose backend must declare MinIO with `required: false` to avoid blocking startup, Loki deploys its own separate MinIO with anyuid SCC for minio-sa, the minio subchart is packaged as .tgz requiring extraction to inspect templates, clustering model_loader.py duplicates client logic bypassing the shared factory, and session-scoped authorization remains unimplemented (TODO)."
 metadata:
   type: component
 tags:
-  tech_stack: [minio, python, boto3, fastapi]
-  ai_pattern: []
+  tech_stack: [minio, python, boto3, fastapi, joblib, faiss]
+  ai_pattern: [rag, embeddings, vector-search]
   platform: [openshift, rhoai]
   data_layer: [minio]
 source_examples:
@@ -14,6 +14,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
     notes: "Optional MinIO for chat attachment uploads, controlled by compose profiles and feature flag"
     approach: "A"
+  - quickstart: "ansible-log-analysis"
+    repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
+    notes: "Multi-purpose MinIO as StatefulSet for RAG index persistence, ML model storage, Loki backend, and sample doc upload"
+    approach: "B"
 ---
 
 # MinIO
@@ -178,3 +182,287 @@ configure-pipeline:
 ## Related Patterns
 - Deployment pattern: compose profiles for optional services
 - Architecture: attachment handling as part of chat session lifecycle
+
+---
+
+## Approach B: StatefulSet with Multi-Purpose Buckets (from ansible-log-analysis)
+
+### When to Use
+
+When MinIO serves as shared infrastructure for multiple consumers -- RAG index persistence, ML model storage, Loki log backend, and optional document seeding -- rather than a single-purpose attachment store. This approach uses the minio Python SDK directly and deploys MinIO as a StatefulSet via a standalone Helm subchart from ai-architecture-charts.
+
+### Differences from Approach A
+
+- **Python SDK:** Uses the `minio` Python package (>=7.2.17) instead of boto3
+- **Deployment:** StatefulSet with 50Gi PVC via standalone `minio` Helm subchart (v0.1.0), not the `configure-pipeline` subchart
+- **Multi-consumer:** Three services (backend, clustering, rag) plus Loki all read from the same MinIO instance using a shared Kubernetes Secret
+- **Env var naming:** `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_PORT` (not `ATTACHMENTS_BUCKET_*`)
+- **Always-on:** MinIO is a required dependency, not optional via feature flags
+
+### Tech Stack & Dependencies
+- **Runtime:** MinIO server (S3-compatible API)
+- **Container image:** `quay.io/minio/minio:latest`
+- **Key dependencies:** `minio>=7.2.17` Python SDK, joblib for model serialization, faiss for index storage
+- **Helm subchart:** `minio` (v0.1.0) from `https://rh-ai-quickstart.github.io/ai-architecture-charts`
+
+### Key Patterns
+
+#### StatefulSet with PVC
+
+MinIO is deployed as a StatefulSet with a VolumeClaimTemplate for persistent storage, exposed via a ClusterIP Service with separate ports for the API (9000) and console (9090).
+
+```yaml
+# minio subchart values.yaml
+command:
+  - /bin/bash
+  - -c
+  - minio server /data --console-address :9090
+
+volumeClaimTemplates:
+  - metadata:
+      name: minio-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 50Gi
+
+service:
+  type: ClusterIP
+  port: 9090
+  apiPort: 9000
+```
+
+#### Shared Secret for Multi-Consumer Access
+
+A single Kubernetes Secret named `minio` holds user, password, host, and port. All consuming services (backend, clustering, rag) reference the same secret keys via `secretKeyRef`.
+
+```yaml
+# Parent chart values.yaml (lines 11-16)
+minio:
+  secret:
+    user: minio_alm_user
+    password: minio_alm_password
+    host: minio
+    port: "9000"
+```
+
+Consumer services wire the secret identically:
+
+```yaml
+# backend/values.yaml (lines 156-175)
+- name: MINIO_ENDPOINT
+  valueFrom:
+    secretKeyRef:
+      name: minio
+      key: host
+- name: MINIO_ACCESS_KEY
+  valueFrom:
+    secretKeyRef:
+      name: minio
+      key: user
+- name: MINIO_SECRET_KEY
+  valueFrom:
+    secretKeyRef:
+      name: minio
+      key: password
+- name: MINIO_PORT
+  valueFrom:
+    secretKeyRef:
+      name: minio
+      key: port
+```
+
+#### Centralized Client Factory
+
+A shared utility creates the Minio client with config priority: function params > env vars > defaults. The `secure=False` setting is hardcoded for internal cluster traffic.
+
+```python
+# src/alm/utils/minio.py (lines 10-32)
+def get_minio_client(
+    minio_endpoint=None, minio_port=None,
+    minio_access_key=None, minio_secret_key=None,
+) -> Minio:
+    endpoint = minio_endpoint or os.getenv("MINIO_ENDPOINT", "localhost")
+    port = minio_port or os.getenv("MINIO_PORT", "9000")
+    access_key = minio_access_key or os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+    secret_key = minio_secret_key or os.getenv("MINIO_SECRET_KEY", "minioadmin")
+    return Minio(
+        endpoint=f"{endpoint}:{port}",
+        access_key=access_key, secret_key=secret_key,
+        secure=False,
+    )
+```
+
+#### LATEST.json Pointer File for RAG Index Status
+
+RAG index builds use a `LATEST.json` pointer file in the bucket to track build status (BUILDING, READY, FAILED). The init container polls this file before allowing the RAG service to start.
+
+```python
+# services/rag/src/rag/embed_and_index.py (lines 638-651)
+pointer = {
+    "status": "BUILDING",
+    "error_message": None,
+    "build_id": build_id,
+    "build_ts": build_ts,
+}
+pointer_json = json.dumps(pointer)
+minio_client.put_object(
+    bucket_name, "LATEST.json",
+    io.BytesIO(pointer_json.encode()),
+    length=len(pointer_json),
+)
+```
+
+The RAG deployment's init container polls MinIO until `LATEST.json` shows `status: "READY"`, blocking the main container from starting until the index is available (from `rag/templates/deployment.yaml` lines 76-150).
+
+#### ML Model Upload and Download via joblib
+
+The clustering service stores trained sklearn models in MinIO as serialized joblib files. Upload uses `put_object` with a BytesIO buffer; download uses `get_object` and deserializes in memory.
+
+```python
+# src/alm/utils/minio.py (lines 35-63)
+def upload_model_to_minio(model, bucket_name: str, file_name: str):
+    minio_client = get_minio_client()
+    if not minio_client.bucket_exists(bucket_name):
+        minio_client.make_bucket(bucket_name)
+    with io.BytesIO() as buffer:
+        joblib.dump(model, buffer)
+        buffer.seek(0)
+        minio_client.put_object(
+            bucket_name, file_name, buffer,
+            length=buffer.getbuffer().nbytes
+        )
+```
+
+```python
+# services/clustering/model_loader.py (lines 13-39)
+def load_from_minio(bucket_name: str, file_name: str):
+    minio_client = Minio(
+        endpoint=f"{endpoint}:{port}",
+        access_key=access_key, secret_key=secret_key,
+        secure=False,
+    )
+    response = minio_client.get_object(bucket_name, file_name)
+    with io.BytesIO() as buffer:
+        buffer.write(response.data)
+        buffer.seek(0)
+        return joblib.load(buffer)
+```
+
+#### Sample Document Upload Job
+
+An optional Kubernetes Job downloads files from URLs and uploads them to a MinIO bucket. It uses an init container to wait for MinIO health before proceeding.
+
+```yaml
+# minio subchart templates/upload-sample-docs.yaml (lines 103-116)
+initContainers:
+  - name: wait-for-minio
+    image: "image-registry.openshift-image-registry.svc:5000/openshift/tools:latest"
+    command:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        url="http://{{ .Values.secret.host }}:{{ .Values.secret.port }}/minio/health/live"
+        until curl -ksf "$url"; do
+          sleep 10
+        done
+```
+
+#### Loki Backend Storage
+
+MinIO also serves as the S3-compatible object store for the Loki logging stack. The Loki Helm chart dependency has its own embedded minio deployment (`loki.minio.enabled: true`) with a separate service account (`minio-sa`) bound to the `anyuid` SCC.
+
+```yaml
+# Parent values.yaml (lines 399-442)
+loki:
+  minio:
+    enabled: true
+  # ...
+  extraObjects:
+    - apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: loki-anyuid-scc
+      subjects:
+        - kind: ServiceAccount
+          name: minio-sa
+      roleRef:
+        kind: Role
+        name: loki-anyuid-scc
+```
+
+#### OpenShift Routes
+
+Two OpenShift Routes are created for external access: one for the API (port 9000) and one for the web console (port 9090), both with TLS edge termination.
+
+```yaml
+# minio subchart templates/route.yaml
+- kind: Route
+  metadata:
+    name: minio-api
+  spec:
+    port:
+      targetPort: api
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+- kind: Route
+  metadata:
+    name: minio-webui
+  spec:
+    port:
+      targetPort: webui
+    tls:
+      termination: edge
+```
+
+### Configuration
+- **Environment variables:**
+  - `MINIO_ENDPOINT` -- MinIO hostname (default: `minio`)
+  - `MINIO_PORT` -- API port (default: `9000`)
+  - `MINIO_ACCESS_KEY` -- S3 access key (default: `minioadmin`)
+  - `MINIO_SECRET_KEY` -- S3 secret key (default: `minioadmin`)
+  - `MINIO_BUCKET_NAME` -- bucket for clustering models (set to `clustering-model`)
+  - `RAG_BUCKET_NAME` -- bucket for RAG indexes (default: `rag-index`)
+  - `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` -- server root credentials (set via Secret)
+- **Helm values:**
+  - `minio.secret.*` -- credentials and host/port for the shared Secret
+  - `minio.sampleFileUpload.enabled` / `.bucket` / `.urls` -- optional document seeding Job
+  - `minio.volumeClaimTemplates[0].spec.resources.requests.storage` -- PVC size (default: 50Gi)
+  - `loki.minio.enabled` -- controls whether Loki deploys its own embedded MinIO
+
+### Known Gotchas
+- The `minio` subchart is packaged as a `.tgz` inside `charts/` rather than existing as an extracted directory, so inspecting or modifying templates requires extracting the archive first.
+- Loki deploys its own separate MinIO instance (`loki.minio.enabled: true`) with a different service account (`minio-sa`). This is distinct from the application-level MinIO StatefulSet -- the two do not share storage or credentials.
+- The `minio-sa` service account for Loki's MinIO requires the `anyuid` SCC on OpenShift (bound via RoleBinding in `loki.extraObjects`).
+- The `secure=False` flag is hardcoded in the Python client factory (`src/alm/utils/minio.py` line 31) since traffic stays internal to the cluster. For external access, the OpenShift Routes provide TLS edge termination.
+- The clustering service's `model_loader.py` creates its own Minio client directly rather than using the shared `get_minio_client()` utility, duplicating connection logic.
+- The upload-sample-docs Job uses `image-registry.openshift-image-registry.svc:5000/openshift/tools:latest` for its init container, which only exists on OpenShift clusters with the internal registry enabled.
+
+### Testing Notes
+- Verify MinIO health: `curl -f http://minio:9000/minio/health/live`
+- Check RAG index status by reading `LATEST.json` from the `rag-index` bucket -- status should be `READY`
+- Verify clustering model exists: check `clustering-model` bucket for `clustering_model.joblib`
+- The OpenShift Routes expose both the API and web console externally for manual inspection
+
+### Related Patterns
+- Architecture: RAG index lifecycle with LATEST.json status tracking
+- Deployment: StatefulSet with PVC for persistent object storage
+- Architecture: ML model serving from object storage via joblib
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) |
+|----------|-------------------------------|-----------------------------------|
+| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage |
+| Python SDK | boto3 / botocore | minio (>=7.2.17) |
+| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) |
+| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency |
+| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) |
+| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef |
+| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination |
+| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate |
