@@ -1,12 +1,12 @@
 ---
 name: fastapi-backend
-description: "FastAPI backend patterns for AI quickstarts: multi-runner dispatch, agentic pipelines, and multi-agent persona-based systems"
-summary: "Solves API backend implementation for AI quickstarts using FastAPI with three approaches: (A) multi-runner dispatch across LlamaStack/LangGraph/CrewAI with SSE streaming, declarative YAML graph engine auto-wiring parallel fan-out via template references, K8s MCPServer CRD discovery, InMemorySaver checkpoints, and __env_default__ sentinel-based model resolution; (B) single-purpose LangGraph Command-based pipeline for event-driven log analysis with sklearn clustering (DBSCAN/HDBSCAN/MeanShift/Agglomerative), dual LLM endpoints as tool-calling workaround for RHOAI models, SQLModel+create_all, Phoenix/OTEL tracing, stream_with_fallback partial result preservation, and dynamic router discovery via pkgutil; (C) 5 persona-scoped LangGraph agents for regulated industries with NeMo Guardrails fail-closed input/output shield nodes, 3-layer RBAC (route/tool_auth/DataScope), Keycloak OIDC, WebSocket disconnect cancellation, PII masking middleware, Prometheus custom metrics + MLflow RHOAI Kubernetes auth, langgraph-checkpoint-postgres persistence, langchain-mcp-adapters Streamable HTTP, and Kagenti A2A with SPIRE mTLS. Use Approach A for interactive multi-framework agent platforms needing pluggable runner_type dispatch and YAML agent template suites organized by domain; Approach B for single fixed event-driven pipelines with structured Pydantic output schemas, log clustering, and no migration framework; Approach C for regulated-industry applications requiring per-persona safety shields, RBAC-scoped data isolation, PII masking, compliance knowledge bases, and Helm chart deployment with init containers. Critical patterns: all approaches use async SQLAlchemy/asyncpg except B (SQLModel+create_all); Approach A requires pysqlite3 module swap before any imports on UBI9 for CrewAI/ChromaDB (SQLite >=3.35); Approach C uses YAML models.yaml with ${VAR:-default} env substitution and mtime-based hot-reload for llm/vision/embedding tiers, and /v1/guardrail/checks for output shields instead of full LLM re-send to avoid 30s httpx timeouts. Common gotchas: pysqlite3 swap must be first lines in production main.py (separate from test app factory main.py), CrewAI auto-prefixes models with openai/ for LiteLLM and silently drops tools for small models (1-3B params), Alembic env.py must convert postgresql+asyncpg:// to sync driver for migrations, OpenShift restricted SCC requires chmod g+w on .cache for HuggingFace model downloads, MCP sessions cached at module level need automatic refresh on 400/404, and small models may emit <think> tags requiring regex stripping in chat handlers."
+description: "FastAPI backend patterns for AI quickstarts: multi-runner dispatch, agentic pipelines, persona-based systems, and recommendation serving"
+summary: "Solves API backend implementation for AI quickstarts using FastAPI with four approaches: (A) multi-runner dispatch across LlamaStack/LangGraph/CrewAI with SSE streaming, declarative YAML graph engine auto-wiring parallel fan-out via template references, K8s MCPServer CRD discovery, InMemorySaver checkpoints, and __env_default__ sentinel-based model resolution; (B) single-purpose LangGraph Command-based pipeline for event-driven log analysis with sklearn clustering (DBSCAN/HDBSCAN/MeanShift/Agglomerative), dual LLM endpoints as tool-calling workaround for RHOAI models, SQLModel+create_all, Phoenix/OTEL tracing, stream_with_fallback partial result preservation, and dynamic router discovery via pkgutil; (C) 5 persona-scoped LangGraph agents for regulated industries with NeMo Guardrails fail-closed input/output shield nodes, 3-layer RBAC (route/tool_auth/DataScope), Keycloak OIDC, WebSocket disconnect cancellation, PII masking middleware, Prometheus custom metrics + MLflow RHOAI Kubernetes auth, langgraph-checkpoint-postgres persistence, langchain-mcp-adapters Streamable HTTP, and Kagenti A2A with SPIRE mTLS; (D) e-commerce recommendation serving via Feast feature store with remote gRPC registry + TLS, hybrid deterministic SQL + semantic vector search, in-process PyTorch user encoder + CLIP inference loaded from MinIO, JWT auth with bcrypt/passlib, K8s Job db-init using drop_all+create_all, SPA static files with dev proxy, and Helm pgvector subchart from ai-architecture-charts. Use Approach A for interactive multi-framework agent platforms needing pluggable runner_type dispatch and YAML agent template suites organized by domain; Approach B for single fixed event-driven pipelines with structured Pydantic output schemas, log clustering, and no migration framework; Approach C for regulated-industry applications requiring per-persona safety shields, RBAC-scoped data isolation, PII masking, compliance knowledge bases, and Helm chart deployment with init containers; Approach D for recommendation-serving applications with Feast feature stores, in-process model inference, product catalogs, and LLM-powered review summarization without agent frameworks. Critical patterns: all approaches use async SQLAlchemy/asyncpg except B (SQLModel+create_all) and D (SQLAlchemy+create_all via K8s Job); Approach A requires pysqlite3 module swap before any imports on UBI9 for CrewAI/ChromaDB (SQLite >=3.35); Approach C uses YAML models.yaml with ${VAR:-default} env substitution and mtime-based hot-reload for llm/vision/embedding tiers, and /v1/guardrail/checks for output shields instead of full LLM re-send to avoid 30s httpx timeouts; Approach D pre-downloads CLIP model in Containerfile with chmod -R 777 /hf_cache for OpenShift and uses Feast PostgreSQL online store with vector_enabled for semantic search fallback. Common gotchas: pysqlite3 swap must be first lines in production main.py (separate from test app factory main.py), CrewAI auto-prefixes models with openai/ for LiteLLM and silently drops tools for small models (1-3B params), Alembic env.py must convert postgresql+asyncpg:// to sync driver for migrations, OpenShift restricted SCC requires chmod g+w on .cache for HuggingFace model downloads, MCP sessions cached at module level need automatic refresh on 400/404, small models may emit <think> tags requiring regex stripping in chat handlers, Approach D's DATABASE_URL replace logic produces double-driver prefix if postgresql+asyncpg:// is provided directly, and MODEL_ENDPOINT assert at module import time crashes the entire app if the env var is unset."
 metadata:
   type: component
 tags:
-  tech_stack: [fastapi, python, postgresql, sqlalchemy, alembic, asyncpg, langchain, langgraph, crewai, litellm, httpx, pydantic, sqlmodel, uvicorn, scikit-learn, sentence-transformers, faiss, minio, phoenix, opentelemetry, keycloak, mlflow, prometheus, boto3, a2a-sdk]
-  ai_pattern: [agents, model-serving, rag, guardrails, mcp, tool-use, embeddings, clustering, log-analysis, structured-output, multi-agent, safety-shields]
+  tech_stack: [fastapi, python, postgresql, sqlalchemy, alembic, asyncpg, langchain, langgraph, crewai, litellm, httpx, pydantic, sqlmodel, uvicorn, scikit-learn, sentence-transformers, faiss, minio, phoenix, opentelemetry, keycloak, mlflow, prometheus, boto3, a2a-sdk, feast, torch, transformers, numpy, bcrypt, pillow]
+  ai_pattern: [agents, model-serving, rag, guardrails, mcp, tool-use, embeddings, clustering, log-analysis, structured-output, multi-agent, safety-shields, recommendations, hybrid-search, vector-search]
   platform: [llamastack, openshift, kubernetes, grafana, loki, rhoai, kserve, vllm]
   data_layer: [pgvector, postgresql, minio, faiss]
 source_examples:
@@ -22,6 +22,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
     notes: "Multi-agent FastAPI backend with 5 persona-scoped LangGraph agents, NeMo Guardrails safety shields, Keycloak OIDC, RBAC, PII masking, MLflow tracing, Prometheus metrics, MCP tool integration, and Kagenti A2A protocol support"
     approach: "C"
+  - quickstart: "product-recommender-system"
+    repo: "https://github.com/rh-ai-quickstart/product-recommender-system"
+    notes: "E-commerce recommendation backend with Feast feature store, CLIP/user encoder model serving, hybrid search (SQL + semantic), JWT auth, Helm with pgvector subchart from ai-architecture-charts, and LLM-powered review summarization"
+    approach: "D"
 ---
 
 # FastAPI Backend
@@ -836,3 +840,310 @@ class LoanAgentExecutor(AgentExecutor):
 | **Conversation persistence** | InMemorySaver | None | langgraph-checkpoint-postgres (per-user threads) |
 | **Multi-agent protocol** | None | None | Kagenti A2A with SPIRE mTLS |
 | **Deployment** | compose.yaml | compose.yaml | Helm chart + compose.yml (init containers, Kagenti sidecar) |
+
+---
+
+## Approach D: E-Commerce Recommendation Serving Backend (from product-recommender-system)
+
+### When to Use
+
+When building an e-commerce or product recommendation backend that serves pre-trained model predictions via a Feast feature store, combines deterministic SQL search with semantic vector search, bundles a React frontend as static files in the same container, and deploys via Helm with the `pgvector` subchart from `ai-architecture-charts`. Suited for recommendation-serving applications with user onboarding flows, product catalogs, review generation, and LLM-powered review summarization -- rather than interactive agent chat or log analysis pipelines.
+
+### Differences from Approach A
+
+- **AI pattern:** Recommendation serving (Feast feature store + PyTorch user encoder + CLIP search) instead of agentic multi-runner dispatch
+- **No agent frameworks:** No LangGraph, CrewAI, or LlamaStack -- the LLM is used only for review generation and summarization via OpenAI-compatible chat completions API
+- **Auth:** Simple JWT auth with bcrypt/passlib and `python-jose`, not OAuth header forwarding or Keycloak OIDC
+- **Database init:** Kubernetes Job runs `init_backend.py` which uses `drop_all` + `create_all`, not Alembic migrations
+- **Deployment:** Helm chart with `pgvector` subchart from `ai-architecture-charts`, Feast TLS secret volume mounts, and init containers waiting for db-init Job completion
+- **Base image:** Multi-stage: UBI9 NodeJS 22 for frontend build, then `recommendation-core:latest` (custom base with ML dependencies) for backend
+- **Feature store:** Feast with remote registry and PostgreSQL online store (vector-enabled) for both recommendation serving and vector search
+- **Model serving:** In-process PyTorch inference (user encoder tower loaded from MinIO, CLIP model pre-downloaded in Containerfile) rather than external KServe/vLLM endpoints
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Python 3.12 on `quay.io/rh-ai-quickstart/recommendation-core:latest` (custom base)
+- **Container image:** Multi-stage Containerfile: UBI9 NodeJS 22 builds React frontend, recommendation-core base runs backend with bundled frontend in `/public`
+- **Key dependencies:**
+  - `fastapi==0.110.0`, `uvicorn[standard]` -- ASGI web framework and server
+  - `sqlalchemy==2.0.30`, `asyncpg==0.29.0` -- async ORM and PostgreSQL driver
+  - `feast[postgres]==0.49.0` -- feature store with PostgreSQL online store and vector search
+  - `torch`, `transformers` -- PyTorch user encoder inference and CLIP model
+  - `minio` -- object storage for trained model artifacts (user encoder weights)
+  - `httpx` -- async HTTP for dev proxy and LLM API calls
+  - `python-jose`, `passlib[bcrypt]`, `bcrypt` -- JWT auth and password hashing
+  - `recommendation_core` -- local package (uv path source from `../recommendation-core`)
+  - `Pillow` -- image processing for image-based product search
+  - `kafka-python` -- listed as dependency (interaction logging originally used Kafka, now replaced with direct DB writes)
+  - `alembic` -- listed as dependency but not used in practice; init uses `create_all`
+- **Helm subchart:** `pgvector` v0.1.0 from `https://rh-ai-quickstart.github.io/ai-architecture-charts`
+
+### Key Patterns
+
+#### Feast Feature Store Singleton with MinIO Model Loading
+
+The `FeastService` singleton initializes the Feast `FeatureStore`, downloads the user encoder model from MinIO (versioned via a `model_version` database table), and sets up CLIP encoder and search services. All recommendation serving flows through this singleton.
+
+```python
+# backend/src/services/feast/feast_service.py
+class FeastService:
+    _instance = None
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(FeastService, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if not self._initialized:
+            path = Path("/app/recommendation-core/src/recommendation_core/feature_repo")
+            self.store = FeatureStore(str(path))
+            self._initialized = True
+            self.user_encoder = self._load_user_encoder()
+            self.clip_encoder = ClipEncoder()
+            self.search_by_image_service = SearchByImageService(self.store, self.clip_encoder)
+```
+
+#### Hybrid Search: Deterministic SQL + Semantic Vector Search
+
+Product search combines deterministic PostgreSQL name matching (exact > prefix > substring with normalized text) with Feast semantic vector search as a fallback. If deterministic results fill the requested `k`, semantic search is skipped entirely.
+
+```python
+# backend/src/services/feast/feast_service.py
+def search_item_by_text(self, text: str, k=5):
+    # 1. Deterministic: exact, prefix, contains via SQL
+    norm_expr = "regexp_replace(lower(name), '[^a-z0-9]', '', 'g')"
+    exact_ids = _query_item_ids(f"{norm_expr} = :qn", {"qn": qn}, exact_limit)
+    prefix_ids = _query_item_ids(f"{norm_expr} LIKE :prefix", {"prefix": f"{qn}%"}, ...)
+    contains_ids = _query_item_ids(f"{norm_expr} LIKE :contains", {"contains": f"%{qn}%"}, ...)
+    # Merge with priority and dedupe
+    if len(merged) >= k:
+        return self._item_ids_to_product_list(merged[:k])
+    # 2. Semantic fallback via Feast
+    semantic_df = search_service.search_by_text(text, semantic_k)
+```
+
+#### Kubernetes Job for Database Initialization
+
+Database setup runs as a Helm post-install/post-upgrade Job (`db-init`). The Job uses an init container that waits for the `model_version` table (populated by the training pipeline) before running `init_backend.py`. The backend Deployment itself has its own init container waiting for the db-init Job to complete.
+
+```yaml
+# helm/product-recommender-system/templates/backend.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "product-recommender-system.fullname" . }}-db-init
+  annotations:
+    "helm.sh/hook": "post-install,post-upgrade"
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": "before-hook-creation"
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: wait-until-model-training-workflow
+          image: postgres:15-alpine
+          command: ["/bin/sh", "-c", |
+            until PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME \
+              -c "SELECT 1 FROM model_version LIMIT 1" > /dev/null 2>&1; do
+              echo "Waiting for model_version table..."
+              sleep 10
+            done]
+```
+
+#### Liveness and Readiness Health Checks
+
+Separate liveness and readiness endpoints. Readiness verifies database connectivity with a `SELECT 1` query, returning 503 if the database is unreachable.
+
+```python
+# backend/src/routes/health.py
+@router.get("/health/live")
+async def liveness_check():
+    return {"status": "alive"}
+
+@router.get("/health/ready")
+async def readiness_check(db: AsyncSession = Depends(get_db)):
+    try:
+        await db.execute(text("SELECT 1"))
+        return {"status": "ready"}
+    except Exception:
+        return Response(status_code=503)
+```
+
+#### LLM-Powered Review Summarization with Stratified Sampling
+
+The review summarization endpoint sends product reviews to an OpenAI-compatible LLM for analysis. Reviews are stratified-sampled by rating bucket (1-5 stars) to ensure balanced representation, with proportional quota allocation and redistribution.
+
+```python
+# backend/src/routes/reviews.py
+MODEL_ENDPOINT = os.getenv("MODEL_ENDPOINT")
+MODEL_NAME = os.getenv("MODEL_NAME")
+assert MODEL_ENDPOINT is not None, "Must assign value to model endpoint"
+
+response = requests.post(
+    MODEL_ENDPOINT,
+    json={
+        "model": MODEL_NAME,
+        "messages": [
+            {"role": "system", "content": "You are a helpful, smart shopper..."},
+            {"role": "user", "content": prompt},
+        ],
+        "stream": False,
+    },
+    headers=headers,
+)
+```
+
+#### SPA Static Files with Dev Proxy
+
+Identical pattern to Approach A but with a different dev server port (9000 instead of 8000). The production Containerfile copies React build output into `../public` and serves it via a custom `SPAStaticFiles` handler mounted at root.
+
+```python
+# backend/src/main.py
+class SPAStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        if len(sys.argv) > 1 and sys.argv[1] == "dev":
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"http://localhost:9000/{path}")
+            return Response(response.text, status_code=response.status_code)
+        else:
+            try:
+                return await super().get_response(path, scope)
+            except (HTTPException, StarletteHTTPException) as ex:
+                if ex.status_code == 404:
+                    return await super().get_response("index.html", scope)
+```
+
+#### Feast Feature Store Config with Env Var Placeholders
+
+The feature store configuration uses environment variable placeholders for deployment flexibility. The online store is PostgreSQL with `vector_enabled: true` for vector similarity search. The registry uses a remote gRPC service with TLS cert mounted from a Kubernetes secret.
+
+```yaml
+# backend/src/services/feast/feature_store.yaml
+project: ${FEAST_PROJECT_NAME}
+provider: local
+registry:
+  registry_type: remote
+  path: ${FEAST_REGISTRY_URL}
+  cert: /app/feature_repo/secrets/tls.crt
+online_store:
+  type: postgres
+  host: ${DB_HOST}
+  port: ${DB_PORT}
+  database: ${DB_NAME}
+  user: ${DB_USER}
+  password: ${DB_PASSWORD}
+  vector_enabled: true
+```
+
+#### Containerfile with Pre-Downloaded HuggingFace Models
+
+The multi-stage Containerfile pre-downloads the CLIP model during build to avoid runtime downloads. It uses `chmod -R 777 /hf_cache` for OpenShift compatibility (arbitrary UID in group 0). Product images from the recommendation-core data directory are copied into the static files.
+
+```dockerfile
+# Containerfile
+FROM registry.access.redhat.com/ubi9/nodejs-22 AS frontend-builder
+# ... builds React frontend ...
+
+FROM quay.io/rh-ai-quickstart/recommendation-core:latest
+ENV HF_HOME=/hf_cache
+RUN pip install --upgrade pip && pip3 install uv && uv pip install -r pyproject.toml && \
+    mkdir -p /hf_cache && \
+    python3 -c "from transformers import CLIPProcessor, CLIPModel; \
+                CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32'); \
+                CLIPModel.from_pretrained('openai/clip-vit-base-patch32')" && \
+    chmod -R 777 /hf_cache && chmod -R +r .
+```
+
+#### Singleton DatabaseService Replacing Kafka
+
+User interactions (views, cart adds, purchases) are logged via a `DatabaseService` singleton that writes directly to the `stream_interaction` table. Code comments indicate this replaced a previous Kafka-based implementation.
+
+```python
+# backend/src/services/database_service.py
+class DatabaseService:
+    _instance = None
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(DatabaseService, cls).__new__(cls)
+        return cls._instance
+
+    async def log_interaction(self, db: AsyncSession, user_id, item_id,
+                               interaction_type, rating=None, quantity=None, ...):
+        interaction_id = f"{user_id}-{item_id}-{datetime.now(timezone.utc).timestamp()}"
+        interaction = StreamInteraction(...)
+        db.add(interaction)
+        await db.commit()
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `DATABASE_URL` -- PostgreSQL connection string (auto-converted from `postgresql://` to `postgresql+asyncpg://` in `db.py`)
+  - `MODEL_ENDPOINT` -- LLM endpoint URL for review summarization (OpenAI-compatible `/v1/chat/completions`; asserted at module import time)
+  - `MODEL_NAME` -- LLM model name for review summarization (asserted at module import time)
+  - `SECRET_KEY` -- JWT signing key (default: `supersecret`)
+  - `MINIO_HOST` / `MINIO_PORT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` -- MinIO for user encoder model artifacts
+  - `FEAST_PROJECT_NAME` / `FEAST_REGISTRY_URL` / `FEAST_SECRET_NAME` -- Feast feature store config (injected via Helm helper template)
+  - `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` -- database credentials for Feast online store and init job (from `pgvector` Kubernetes secret)
+  - `USE_LLM_FOR_REVIEWS` -- enable LLM-generated synthetic reviews during DB init (default: `false`)
+  - `LLM_API_BASE` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_TIMEOUT` -- LLM config for review generation during init
+  - `SUMMARY_LLM_API_KEY` -- API key for the review summarization LLM endpoint
+  - `SUMMARIZE_MAX_REVIEWS` -- max reviews to include in summarization prompt (default: `200`)
+  - `HF_HOME` -- HuggingFace cache directory (set to `/hf_cache` in Containerfile)
+  - `PYTHONPATH` -- must include `/app/backend:/app/backend/src:/app/recommendation-core/src`
+- **Config files:**
+  - `backend/src/services/feast/feature_store.yaml` -- Feast feature store config with env var placeholders
+  - `backend/src/config/test_users.yaml` -- test user definitions for DB seeding
+  - `backend/feature_store.yaml` -- hardcoded Feast config with cluster-internal FQDNs (fallback)
+- **Helm values:** `helm/product-recommender-system/values.yaml` with `backend.service`, `backend.resources`, `backend.additionalEnv`, `frontendBackendImage`, `llmModel.ollamaModel`, `llmModel.modelEndpoint`, `feast.*`, `minio.env`, `route.*`, `autoscaling.*`
+
+### Known Gotchas
+
+- **DATABASE_URL driver conversion is fragile:** `db.py` uses `.replace("postgresql://", "postgresql+asyncpg://")` which means the env var must use the `postgresql://` scheme. If `postgresql+asyncpg://` is provided directly, the replace produces `postgresql+asyncpg+asyncpg://`.
+- **MODEL_ENDPOINT and MODEL_NAME asserted at module import time:** `reviews.py` has `assert MODEL_ENDPOINT is not None` at module level. If these env vars are missing, the entire application fails to start -- not just the review routes.
+- **init_backend.py uses drop_all + create_all:** The DB initialization script drops all tables before recreating them (`Base.metadata.drop_all` followed by `Base.metadata.create_all`). This is destructive and intended for fresh deployments only. The Helm hook `before-hook-creation` deletes the previous Job before re-running.
+- **HuggingFace cache permissions for OpenShift:** The Containerfile runs `chmod -R 777 /hf_cache` because OpenShift's restricted SCC assigns arbitrary UIDs. Without this, the CLIP model (pre-downloaded during build) cannot be read at runtime.
+- **Feast feature store has hardcoded cluster FQDNs as fallback:** `backend/feature_store.yaml` contains hardcoded `feast-feast-edb-recommendation-registry.recommendation.svc.cluster.local` and `cluster-sample-rw.recommendation.svc.cluster.local`. The env-var-templated version in `services/feast/feature_store.yaml` is used in production, but the wrong file could be picked up if `FEAST_PROJECT_NAME` is not set.
+- **GET recommendations endpoint is synchronous:** The `GET /recommendations/{user_id}` handler is a regular `def` (not `async def`), while all other route handlers are async. This blocks the event loop during Feast feature retrieval for existing users.
+- **MinIO secure=False:** The MinIO client in `feast_service.py` is hardcoded to `secure=False` for in-cluster HTTP communication. This must be changed for external MinIO endpoints with TLS.
+- **kafka-python is a dependency but unused:** The `pyproject.toml` lists `kafka-python>=2.2.11` but the `DatabaseService` singleton replaced Kafka for interaction logging. The dependency remains for potential future use or backward compatibility.
+- **Backend Deployment init container uses ose-cli:** The backend Deployment's init container (`wait-for-db-init`) uses `registry.redhat.io/openshift4/ose-cli:latest` to poll the db-init Job status via `oc get job`. This requires the `job-viewer` ServiceAccount with RBAC to read Jobs in the namespace.
+
+### Testing Notes
+
+- Liveness check at `GET /health/live` returning `{"status": "alive"}`
+- Readiness check at `GET /health/ready` returning `{"status": "ready"}` or 503 if DB unreachable
+- The backend starts with `uvicorn main:app --host 0.0.0.0 --port 8000 --reload`
+- DB initialization runs as a separate Kubernetes Job, not inline at app startup
+- Dev mode: pass `dev` as CLI argument to proxy frontend requests to `localhost:9000`
+
+### Related Patterns
+
+- Deployment: Helm chart at `helm/product-recommender-system/` with pgvector subchart from ai-architecture-charts, OpenShift Route, and HPA support
+- Training: separate `recommendation-training` component runs Kubeflow pipelines for model training
+- Core library: `recommendation-core` package shared between backend and training (user encoder, CLIP encoder, dataset provider)
+- Feature store: Feast with remote registry (gRPC + TLS), PostgreSQL online store with vector search enabled
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (multi-agent-loan-origination) | Approach D (product-recommender-system) |
+|----------|-------------------------------|-----------------------------------|-------------------------------------------|------------------------------------------|
+| **Use case** | Interactive multi-framework agent chat platform | Event-driven log analysis pipeline | Multi-agent regulated-industry application | E-commerce product recommendation serving |
+| **Agent frameworks** | LlamaStack, LangGraph, CrewAI (pluggable) | LangGraph only (fixed pipeline) | LangGraph only (5 persona-specific agents) | None (Feast + PyTorch in-process inference) |
+| **Agent count** | 1 (dynamically configured) | 1 (fixed pipeline) | 5 (public, borrower, LO, underwriter, CEO) | N/A (no agents) |
+| **LLM routing** | Per-runner env vars with sentinel-based resolution | Single endpoint + optional tool-calling endpoint | YAML model tiers (llm, vision, embedding) with hot-reload | Single endpoint for review summarization only |
+| **Safety** | None built-in | None built-in | NeMo Guardrails input/output shield nodes (fail-closed) | None built-in |
+| **Auth / RBAC** | OAuth header forwarding | None | Keycloak OIDC + 3-layer RBAC (route, tool_auth node, DataScope) | JWT with bcrypt/passlib (simple token auth) |
+| **Communication** | SSE streaming | REST endpoints | WebSocket streaming with disconnect cancellation | REST endpoints |
+| **ORM / Migrations** | SQLAlchemy + Alembic | SQLModel + create_all (no migrations) | SQLAlchemy + Alembic (shared db package in monorepo) | SQLAlchemy + create_all via K8s Job (no migrations) |
+| **Base image** | UBI9 | UBI8 | python:3.11-slim | recommendation-core (custom base with ML deps) |
+| **Package manager** | pip | uv (with PyTorch CPU-only index) | uv + hatchling (Turborepo monorepo) | uv pip install (in Containerfile) |
+| **Observability** | None built-in | Phoenix/OTEL with LangChain instrumentation | MLflow autolog + Prometheus custom metrics | None built-in |
+| **PII handling** | None | None | Middleware-based recursive PII masking per role | None |
+| **Feature store** | None | None | None | Feast with PostgreSQL online store + vector search |
+| **Model serving** | External (LlamaStack, vLLM endpoints) | External (OpenAI-compatible endpoint) | External (OpenAI-compatible endpoint) | In-process PyTorch (user encoder + CLIP) |
+| **Conversation persistence** | InMemorySaver | None | langgraph-checkpoint-postgres (per-user threads) | N/A |
+| **Deployment** | compose.yaml | compose.yaml | Helm chart + compose.yml (init containers, Kagenti sidecar) | Helm chart with pgvector subchart (ai-architecture-charts) + K8s Job for DB init |

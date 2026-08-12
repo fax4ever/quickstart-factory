@@ -1,18 +1,22 @@
 ---
 name: kafka
 description: "Strimzi Kafka cluster with KRaft mode for event-driven agent architectures on RHOAI"
-summary: "Provides durable event-driven messaging for AI agent architectures on RHOAI by deploying Kafka via Strimzi/AMQ Streams in KRaft mode (no ZooKeeper) with KafkaNodePool dual-role nodes (controller+broker) backing a Knative Kafka Broker that routes CloudEvents between integration dispatcher, request manager, and agent service. Use when production workloads need guaranteed delivery and per-session ordering -- toggle `requestManagement.knative.eventing.enabled` to switch between real Kafka (production) and mock eventing service (dev/CI, constrained to 1 replica for partition-key ordering); `auto.create.topics.enable: false` delegates topic lifecycle to Knative. Bootstrap servers are wired via ConfigMap to Knative Broker with `broker.class: Kafka`, default 6 partitions, P7D retention, retry:10 with exponential backoff (PT0.2S); `BROKER_URL` env var points all services to the broker ingress; network policies restrict access to `kafka-broker-dispatcher` pods only. Must set both `partitionkey` (lowercase) and `partitionKey` (camelCase) plus the `ce-partitionkey` HTTP header on every CloudEvent or session ordering breaks; email Message-IDs require hashing via `_broker_safe_event_id()` to avoid broker failures from special characters; default storage type is `ephemeral` (data lost on restart) -- switch to `persistent-claim` for production."
+summary: "Provides durable event-driven messaging for AI agent architectures on RHOAI via two approaches: Approach A (active) deploys Kafka via Strimzi/AMQ Streams in KRaft mode with KafkaNodePool dual-role nodes (controller+broker) backing a Knative Kafka Broker that routes CloudEvents between integration dispatcher, request manager, and agent service; Approach B (deprecated) used Strimzi as a Helm subchart (`createGlobalResources=false`) with separate broker/controller pools and Kafka Connect JDBC sink to stream interactions to PostgreSQL via kafka-python KafkaProducer with schema-enabled JSON, later removed for direct DB writes. Use Approach A when production workloads need guaranteed delivery and per-session ordering -- toggle `requestManagement.knative.eventing.enabled` to switch between real Kafka (production) and mock eventing service (dev/CI, constrained to 1 replica for partition-key ordering); Approach B is a cautionary reference demonstrating when Kafka adds unnecessary complexity over direct database writes for simple ETL pipelines. Bootstrap servers wire via ConfigMap to Knative Broker with `broker.class: Kafka`, default 6 partitions, P7D retention, retry:10 with exponential backoff (PT0.2S); `auto.create.topics.enable: false` delegates topic lifecycle to Knative; `BROKER_URL` env var points all services to the broker ingress; network policies restrict access to `kafka-broker-dispatcher` pods only. Must set both `partitionkey` (lowercase) and `partitionKey` (camelCase) plus the `ce-partitionkey` HTTP header on every CloudEvent or session ordering breaks; email Message-IDs require hashing via `_broker_safe_event_id()` to avoid broker failures from special characters; default storage type is `ephemeral` (data lost on restart) -- switch to `persistent-claim` for production; Approach B requires `STRIMZI_USE_FINALIZERS=false` to prevent uninstall hangs."
 metadata:
   type: component
 tags:
-  tech_stack: [kafka, strimzi, knative, cloudevents, python]
-  ai_pattern: [agents, event-driven]
+  tech_stack: [kafka, strimzi, knative, cloudevents, python, kafka-connect, kafka-python]
+  ai_pattern: [agents, event-driven, data-pipeline]
   platform: [openshift, rhoai, kubernetes]
 source_examples:
   - quickstart: "it-self-service-agent"
     repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
     notes: "Strimzi Kafka with KRaft and KafkaNodePool backing Knative Kafka Broker for event-driven agent orchestration"
     approach: "A"
+  - quickstart: "product-recommender-system"
+    repo: "https://github.com/rh-ai-quickstart/product-recommender-system"
+    notes: "Strimzi Kafka with KRaft, Kafka Connect JDBC sink for streaming user interactions to PostgreSQL -- later removed in favor of direct database writes"
+    approach: "B"
 ---
 
 # Kafka
@@ -208,3 +212,190 @@ def _broker_safe_event_id(request_id: str) -> str:
 - `integration-dispatcher.md` -- Consumes agent response events from the broker
 - `request-manager.md` -- Publishes request events and consumes responses
 - `agent-service.md` -- Processes request events and publishes agent responses
+
+---
+
+## Approach B: Kafka Connect JDBC Sink for Interaction Streaming -- Deprecated (from product-recommender-system)
+
+### When to Use
+
+Use this pattern when you need to stream user interaction events (views, cart additions, purchases, registrations) from a FastAPI backend into PostgreSQL via Kafka Connect, decoupling the application from direct database writes. This approach was ultimately removed from the product-recommender-system in favor of direct database writes (commit b17587c, PR #92), making it a reference for when Kafka adds unnecessary complexity.
+
+### Differences from Approach A
+
+- **Purpose:** ETL/event ingestion pipeline (user interactions to database) vs. agent orchestration (CloudEvents routing between microservices)
+- **Integration method:** Strimzi Kafka as a Helm subchart dependency (`strimzi-kafka-operator` v0.46.0 from `strimzi.io/charts/`) vs. raw Kafka CR in the parent chart
+- **Consumer:** Kafka Connect with JDBC sink connector (auto-writes to PostgreSQL) vs. Knative Kafka Broker with Triggers
+- **Producer:** `kafka-python` library with `KafkaProducer` vs. HTTP CloudEvent sends to broker ingress
+- **Node pools:** Separate broker and controller pools vs. dual-role (controller+broker) single pool
+- **Outcome:** Removed in favor of direct DB writes -- demonstrates when Kafka is overengineered for the use case
+
+### Key Patterns
+
+#### Strimzi Kafka Subchart Dependency
+
+Kafka was deployed as a Helm subchart dependency from the Strimzi charts repository, with `createGlobalResources=false` to avoid cluster-wide CRDs clashing.
+
+```yaml
+# helm/product-recommender-system/Chart.yaml (before removal)
+dependencies:
+  - name: strimzi-kafka-operator
+    repository: https://strimzi.io/charts/
+    version: 0.46.0
+```
+
+```bash
+# helm/Makefile -- install with global resources disabled
+helm upgrade --install product-recommender-system product-recommender-system \
+  --set strimzi-kafka-operator.createGlobalResources=false --timeout 300m
+```
+
+#### KRaft Mode with Separate Node Pools
+
+Kafka v4.0.0 deployed in KRaft mode with separate broker and controller node pools (unlike Approach A's dual-role pool). Each pool had 3 replicas with ephemeral JBOD storage.
+
+```yaml
+# helm/product-recommender-system/templates/kafka-config.yaml (before removal)
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: {{ .Values.kafka.cluster.name }}
+  annotations:
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    version: 4.0.0
+    metadataVersion: 4.0-IV3
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+```
+
+```yaml
+# KafkaNodePool -- separate pools for broker and controller roles
+# helm/product-recommender-system/values.yaml (before removal)
+kafka:
+  cluster:
+    name: recommendation-cluster
+  nodepools:
+    - name: broker
+      roles: ["broker"]
+    - name: controller
+      roles: ["controller"]
+```
+
+#### Kafka Connect JDBC Sink Pipeline
+
+Kafka Connect with JDBC sink connector auto-created PostgreSQL tables from topic messages. Topics (`interactions`, `new-users`) mapped to database tables (`stream_interaction`, `new_users`) with schema-enabled JSON conversion.
+
+```yaml
+# helm/product-recommender-system/templates/kafka-config.yaml (before removal)
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  labels:
+    strimzi.io/cluster: connect-cluster
+  name: {{ .name }}
+spec:
+  class: io.aiven.connect.jdbc.JdbcSinkConnector
+  config:
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter.schemas.enable: true
+    insert.mode: insert
+    auto.create: true
+    auto.evolve: true
+    table.name.format: {{ .tableNameFormat }}
+```
+
+#### KafkaProducer with Schema-Based Messages
+
+The backend used `kafka-python` library with a singleton `KafkaService`. Messages included explicit JSON schemas alongside payloads to support the JDBC sink connector's schema-aware deserialization.
+
+```python
+# backend/src/services/kafka_service.py (before removal)
+from kafka import KafkaProducer
+
+class KafkaService:
+    def _initialize(self):
+        kafka_service = os.getenv(
+            "KAFKA_SERVICE_ADDR",
+            "recommendation-cluster-kafka-bootstrap.recommendation.svc.cluster.local:9092",
+        )
+        self.producer = KafkaProducer(
+            bootstrap_servers=kafka_service,
+            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+        )
+
+    def send_interaction(self, user_id, item_id, interaction_type, ...):
+        message = {"schema": schema, "payload": interaction}
+        self.producer.send("interactions", message)
+        self.producer.flush()
+```
+
+#### Replacement: Direct Database Writes
+
+After removal, a `DatabaseService` singleton replaced `KafkaService`, writing interactions directly to the same `stream_interaction` table that Kafka Connect previously populated.
+
+```python
+# backend/src/services/database_service.py
+class DatabaseService:
+    """Service to handle direct database writes (replaces Kafka)"""
+
+    async def log_interaction(self, db: AsyncSession, user_id, item_id, interaction_type, ...):
+        interaction = StreamInteraction(
+            user_id=str(user_id), item_id=item_id,
+            timestamp=datetime.now(),
+            interaction_type=interaction_type,
+            interaction_id=f"{user_id}-{item_id}-{datetime.now(timezone.utc).timestamp()}",
+        )
+        db.add(interaction)
+        await db.commit()
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `KAFKA_SERVICE_ADDR` -- Bootstrap server address (default: `recommendation-cluster-kafka-bootstrap.recommendation.svc.cluster.local:9092`) -- removed in commit b17587c
+- **Helm values (before removal):**
+  - `kafka.cluster.name` -- Cluster name (default: `recommendation-cluster`)
+  - `kafka.replicas` -- 3 replicas
+  - `kafka.storage.type` -- `ephemeral`
+  - `kafka.dbSecretName` -- Secret for JDBC connection (default: `pgvector`)
+  - `kafka.topics` -- List of topics: `new-users`, `interactions`
+  - `kafka.connectors` -- JDBC sink connector configs mapping topics to table names
+  - `strimzi-kafka-operator.createGlobalResources` -- Set to `false` during install to avoid cluster-wide CRD conflicts
+- **Residual config still in codebase:**
+  - `strimzi-kafka-operator.extraEnvs[].STRIMZI_USE_FINALIZERS: "false"` -- in `helm/product-recommender-system/values.yaml`
+  - `rbac-strimzi.yaml` -- wide RBAC Role/RoleBinding for strimzi-cluster-operator still present in templates
+
+### Known Gotchas
+
+- **Strimzi finalizers must be disabled:** Without setting `STRIMZI_USE_FINALIZERS=false`, uninstalling the Helm chart hangs because Strimzi finalizers block Kafka CR deletion. This was fixed in commit 8bdc427 ("Disable strimzi finalizers"). (Source: `helm/product-recommender-system/values.yaml`, lines 265-268)
+- **Residual Strimzi artifacts after removal:** The `rbac-strimzi.yaml` template and `strimzi-kafka-operator` values block remain in the codebase even after Kafka was removed. The RBAC grants wildcard permissions (`apiGroups: ["*"], resources: ["*"], verbs: ["*"]`) to the `strimzi-cluster-operator` service account, which is overly permissive. (Source: `helm/product-recommender-system/templates/rbac-strimzi.yaml`)
+- **JDBC sink connector requires schema-enabled JSON:** The `kafka-python` producer must include a `schema` field alongside `payload` in every message for the JDBC sink connector's `JsonConverter` with `schemas.enable: true` to deserialize correctly. Without the schema, connector writes fail silently. (Source: `backend/src/services/kafka_service.py`, `send_interaction` method)
+- **Kafka Connect image build uses internal registry:** The `KafkaConnect` CR builds a custom image with the JDBC connector plugin and pushes to OpenShift's internal image registry (`image-registry.openshift-image-registry.svc:5000`), which requires the internal registry to be enabled and accessible. (Source: `helm/product-recommender-system/templates/kafka-config.yaml`, KafkaConnect spec)
+- **Kafka dependency removed from pyproject.toml last:** The `kafka-python>=2.2.11` dependency remains in `backend/pyproject.toml` even after `kafka_service.py` was deleted. (Source: `backend/pyproject.toml`, line 14)
+
+### Testing Notes
+
+- The Makefile originally had a `delete-topics` target to clean up Kafka topics (`interactions`, `new-users`) during uninstall, removed in the same commit as Kafka
+- After migration, interaction logging correctness can be verified by querying the `stream_interaction` table directly
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (Knative Kafka Broker) | Approach B (Kafka Connect JDBC Sink) |
+|----------|----------------------------------|--------------------------------------|
+| Use case | Agent orchestration with CloudEvents routing | Event ingestion / ETL from app to database |
+| Consumer | Knative Triggers with per-service subscriptions | JDBC sink connector auto-writing to PostgreSQL |
+| Producer | HTTP CloudEvent POST to broker ingress | `kafka-python` KafkaProducer with schema+payload messages |
+| Ordering | Partition key (session ID) for per-session FIFO | No explicit ordering guarantees |
+| Dev/CI mode | Mock eventing service substitutes Kafka | No dev-mode substitute (full Kafka required) |
+| Deployment | Raw Kafka CR in parent chart | Strimzi operator as Helm subchart dependency |
+| Node pools | Dual-role (controller+broker) single pool | Separate broker and controller pools |
+| Status | Active | Deprecated -- removed in favor of direct DB writes |
+| When to prefer | Multi-service event routing with guaranteed delivery | Consider direct DB writes instead (lesson from this quickstart) |

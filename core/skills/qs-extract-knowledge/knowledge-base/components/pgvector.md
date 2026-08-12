@@ -1,12 +1,12 @@
 ---
 name: pgvector
 description: "PostgreSQL with pgvector extension for relational data and vector search in AI Quickstarts on RHOAI"
-summary: "pgvector serves as combined relational store (SQLAlchemy/Alembic with asyncpg, SQLModel, raw psycopg2, or pgvector.sqlalchemy Vector type) and LlamaStack vector_io provider (provider_id: \"pgvector\", embedding_model: all-MiniLM-L6-v2 for 384-dim or nomic-embed-text-v1.5 for 768-dim) for RHOAI quickstarts needing structured application state, RAG vector search, distributed session serialization via advisory locks, regulatory data isolation via dual PostgreSQL roles, or curated data views with MCP read-only access. Use Approach A (ai-virtual-agent, f5-ai-guardrails, f5-api-security, RAG, openshift-ai-observability-summarizer) with subchart v0.5.5/v0.5.6 when a single service needs LlamaStack-managed vector search plus relational data (extraDatabases vectordb: false, DATABASE_URL assembled from pgSecret keys); Approach B (ansible-log-analysis) with bundled v0.1.0 subchart when multiple services share one PostgreSQL as relational store with pre-built namespace-qualified URI secret, SQLModel.metadata.create_all, psycopg2 sync driver swap, ConfigMap init CREATE EXTENSION VECTOR, and embeddings in MinIO; Approach C (data-governance-co-pilot, peoplemesh) with standalone chart when deploying quay.io/rh-aiservices-bu Red Hat PG15 image with Helm post-install Job seeding ~45MB CSV via OpenShift BuildConfig (bypassing ConfigMap 3MB limit), mcp_readonly SELECT-only user for MCP defense-in-depth, CERTIFIED/DEPRECATED governance views, and raw psycopg2; Approach D (it-self-service-agent) with v0.1.0 subchart when 6+ services need dual connection pools (async SQLAlchemy + psycopg_pool for LangGraph PostgresSaver), pg_try_advisory_lock polling avoiding PG BUG #17686, Alembic migration Job with wait_for_migration() gating, LlamaStack multi-store backends (metadataStore, kv_postgres, sql_postgres across rag_blueprint/llama_agents/llama_responses), max_connections=200, _env-helpers.tpl template helpers, database-level clock SELECT now(), and get_db_utc_now() for cross-pod consistency; Approach E (multi-agent-loan-origination) with inline Helm StatefulSet PG16 when needing dual PostgreSQL roles (lending_app/compliance_app) for HMDA data isolation, direct pgvector <=> cosine search with tier-based boosting (federal 1.5x, agency 1.2x, internal 1.0x), HNSW index vector_cosine_ops, Vector(768) via pgvector.sqlalchemy, per-table GRANT in Alembic migrations, database.enabled toggle for external DB support, and separate mlflow database for observability. Deployed as ai-architecture-charts subchart (v0.5.5/v0.5.6 for A, v0.1.0 bundled for B, v0.1.0 for D), standalone chart (C), or inline templates (E); A's Alembic rewrites postgresql+asyncpg:// to synchronous postgresql:// with expire_on_commit=False; B's secret embeds Release.Namespace in URI and pg_isready init containers gate startup; C's data loader connects via pod DNS (pgvector-0) assuming single replica; D's DatabaseManager creates dual pools with configurable DB_POOL_SIZE/DB_MAX_OVERFLOW and provider_id: \"pgvector\" required in extra_body for llama-stack 0.3.3+; E maintains separate SQLAlchemy session factories per role with dual DATABASE_URL/COMPLIANCE_DATABASE_URL connection strings. Common gotchas: Settings.DATABASE_URL defaults to sqlite+aiosqlite:///:memory: causing silent SQLite fallback; local dev postgres:15 lacks pgvector extension (need pgvector/pgvector:pg15 or pg17); B's chained .replace() URL normalization fragile if URI already contains \"postgresql+asyncpg://\"; A's deployment template fails if extraDatabases empty or reordered; C's readonlyPassword appears plaintext in rendered Job manifest, mcp_readonly grants don't auto-apply to future tables, and values.yaml placeholder strings cause broken deployments if --set flags omitted; D's dual statement timeout required so advisory lock polling queries aren't cancelled and connection pool budget across 6+ services approaches max_connections=200; E's lending_app/compliance_app role passwords hardcoded in init scripts need parameterization for production, per-table GRANT in migrations must be repeated for every new table, and local compose port 5433 differs from cluster port 5432."
+summary: "pgvector serves as combined relational store (SQLAlchemy/Alembic with asyncpg, SQLModel, raw psycopg2, or pgvector.sqlalchemy Vector type) and vector database (via LlamaStack vector_io provider with all-MiniLM-L6-v2 384-dim or nomic-embed-text-v1.5 768-dim embeddings, direct SQL <=> cosine operator with HNSW index, or Feast retrieve_online_documents with vector_enabled: true) for RHOAI quickstarts needing structured application state, RAG vector search, distributed session serialization via advisory locks, regulatory data isolation via dual PostgreSQL roles, curated data views with MCP read-only access, or feature-store-backed recommendation search. Use Approach A (ai-virtual-agent, f5-ai-guardrails, f5-api-security, RAG, openshift-ai-observability-summarizer) with subchart v0.5.5/v0.5.6 when a single service needs LlamaStack-managed vector search plus relational data (extraDatabases vectordb: false, DATABASE_URL assembled from pgSecret keys); Approach B (ansible-log-analysis) with bundled v0.1.0 subchart when multiple services share one PostgreSQL as relational store with pre-built namespace-qualified URI secret, SQLModel.metadata.create_all, psycopg2 sync driver swap, ConfigMap init CREATE EXTENSION VECTOR, and embeddings in MinIO; Approach C (data-governance-co-pilot, peoplemesh) with standalone chart when deploying quay.io/rh-aiservices-bu Red Hat PG15 image with Helm post-install Job seeding ~45MB CSV via OpenShift BuildConfig (bypassing ConfigMap 3MB limit), mcp_readonly SELECT-only user for MCP defense-in-depth, CERTIFIED/DEPRECATED governance views, and raw psycopg2; Approach D (it-self-service-agent) with v0.1.0 subchart when 6+ services need dual connection pools (async SQLAlchemy + psycopg_pool for LangGraph PostgresSaver), pg_try_advisory_lock polling avoiding PG BUG #17686, Alembic migration Job with wait_for_migration() gating, LlamaStack multi-store backends (metadataStore, kv_postgres, sql_postgres across rag_blueprint/llama_agents/llama_responses), max_connections=200, _env-helpers.tpl template helpers, database-level clock SELECT now(), and get_db_utc_now() for cross-pod consistency; Approach E (multi-agent-loan-origination) with inline Helm StatefulSet PG16 when needing dual PostgreSQL roles (lending_app/compliance_app) for HMDA data isolation, direct pgvector <=> cosine search with tier-based boosting (federal 1.5x, agency 1.2x, internal 1.0x), HNSW index vector_cosine_ops, Vector(768) via pgvector.sqlalchemy, per-table GRANT in Alembic migrations, database.enabled toggle for external DB support, and separate mlflow database for observability; Approach F (product-recommender-system) with v0.1.0 subchart as Feast online store with vector_enabled: true, FeatureStore CRD (feast.dev/v1alpha1) managing online/offline/registry services, 6 embedding feature views (item, user, text, CLIP, category) with vector_index=True and cosine search, and hybrid SQL deterministic + Feast retrieve_online_documents semantic search. Deployed as ai-architecture-charts subchart (v0.5.5/v0.5.6 for A, v0.1.0 bundled for B, v0.1.0 for D/F), standalone chart (C), or inline templates (E); A's DATABASE_URL assembled from pgSecret individual keys with Alembic rewriting postgresql+asyncpg:// to synchronous postgresql:// and expire_on_commit=False; B's secret embeds Release.Namespace in URI and pg_isready init containers gate startup; C's data loader connects via pod DNS (pgvector-0) assuming single replica; D's DatabaseManager creates dual pools with configurable DB_POOL_SIZE/DB_MAX_OVERFLOW and provider_id: \"pgvector\" required in extra_body for llama-stack 0.3.3+; E maintains separate SQLAlchemy session factories per role with dual DATABASE_URL/COMPLIANCE_DATABASE_URL connection strings; F's Feast config uses vector_enabled: true with env var substitution and backend rewrites postgresql:// to postgresql+asyncpg://. Common gotchas: Settings.DATABASE_URL defaults to sqlite+aiosqlite:///:memory: causing silent SQLite fallback; local dev postgres:15 lacks pgvector extension (need pgvector/pgvector:pg15 or pg17); B's chained .replace() URL normalization fragile if URI already contains \"postgresql+asyncpg://\"; A's deployment template fails if extraDatabases empty or reordered; C's readonlyPassword appears plaintext in rendered Job manifest, mcp_readonly grants don't auto-apply to future tables, and values.yaml placeholder strings cause broken deployments if --set flags omitted; D's dual statement timeout required so advisory lock polling queries aren't cancelled and connection pool budget across 6+ services approaches max_connections=200; E's lending_app/compliance_app role passwords hardcoded in init scripts need parameterization for production, per-table GRANT in migrations must be repeated for every new table, and local compose port 5433 differs from cluster port 5432; F's Base.metadata.drop_all in db-init Job destroys data on every post-upgrade run, db-init waits indefinitely if training pipeline hasn't populated model_version table, and backend initContainer requires oc CLI image with job-viewer RBAC."
 metadata:
   type: component
 tags:
-  tech_stack: [postgresql, fastapi, sqlalchemy, sqlmodel, alembic, asyncpg, psycopg2, psycopg, gradio, pandas, streamlit, langgraph]
-  ai_pattern: [vector-search, rag, embeddings, data-pipeline, guardrails, agents]
+  tech_stack: [postgresql, fastapi, sqlalchemy, sqlmodel, alembic, asyncpg, psycopg2, psycopg, gradio, pandas, streamlit, langgraph, feast]
+  ai_pattern: [vector-search, rag, embeddings, data-pipeline, guardrails, agents, model-serving]
   platform: [openshift, rhoai, kserve]
   data_layer: [pgvector]
 source_examples:
@@ -46,6 +46,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/openshift-ai-observability-summarizer"
     notes: "pgvector v0.5.5 subchart as LlamaStack vector_io backend within nested umbrella chart (aiobs-stack -> rag -> pgvector); POSTGRES_* env vars auto-injected by llama-stack chart when pgvector.enabled=true; ingestion pipeline with all-MiniLM-L6-v2 embeddings; credentials via Makefile --set flags"
     approach: "A"
+  - quickstart: "product-recommender-system"
+    repo: "https://github.com/rh-ai-quickstart/product-recommender-system"
+    notes: "pgvector v0.1.0 subchart as Feast online store with vector_enabled: true; FeatureStore CRD (feast.dev/v1alpha1) manages online/offline/registry services; multiple embedding feature views (item, user, text, CLIP, category) with vector_index=True and cosine search; SQLAlchemy async for relational data; hybrid SQL deterministic + Feast retrieve_online_documents semantic search"
+    approach: "F"
   - quickstart: "peoplemesh"
     repo: "https://github.com/francescopace/peoplemesh"
     notes: "Standalone pgvector chart with same Red Hat PG15 image as Approach C; Helm hook (pre-install/pre-upgrade) secret with _helpers.tpl password lookup from existing secrets; pre-delete cleanup Job with dedicated ServiceAccount/Role/RoleBinding; GPU tolerations on StatefulSet for shared node pools; umbrella chart dependency with pgvector.enabled condition toggle; JDBC/Quarkus consumer via existingSecret reference"
@@ -1031,23 +1035,280 @@ class KBChunk(Base):
 
 ---
 
+## Approach F: Feast Online Store with Vector-Enabled pgvector (from product-recommender-system)
+
+### When to Use
+
+When PostgreSQL with pgvector serves as both the relational application database (users, products, reviews, categories) via SQLAlchemy async and the Feast online store with `vector_enabled: true` for multiple embedding types (item, user, text, CLIP, category). Use this approach when the quickstart needs a feature store pattern with Feast-managed vector search rather than LlamaStack or direct pgvector SQL queries, and when a `feast.dev/v1alpha1` FeatureStore CRD manages the online/offline/registry services.
+
+### Differences from Approach A
+
+- **Feast as vector search layer, not LlamaStack:** Vector search is performed via Feast's `retrieve_online_documents` API backed by pgvector's `vector_enabled: true` online store configuration, not through LlamaStack's `vector_io` provider.
+- **FeatureStore CRD for service orchestration:** The Feast operator creates online store, offline store (DuckDB), and registry services as separate pods via the `feast.dev/v1alpha1` FeatureStore custom resource, each mounting the `pgvector` secret.
+- **Multiple embedding feature views:** Six distinct Feast feature views with `vector_index=True` and `vector_search_metric="cosine"` (item_embedding, user_embedding, item_textual_features_embed, item_name_features_embed, item_category_features_embed, item_clip_features_embed), each backed by a PushSource.
+- **Hybrid SQL + semantic search:** Text search combines deterministic SQL (exact, prefix, substring matching via `regexp_replace` in PostgreSQL) with Feast's `retrieve_online_documents` for semantic vector search as a fallback.
+- **No Alembic migrations:** Schema created via `Base.metadata.drop_all` + `Base.metadata.create_all` in the db-init Job, not via Alembic migration framework.
+- **Helm post-install Job for db-init:** A Kubernetes Job with Helm hook annotations runs `init_backend.py` to seed categories, products, users, and reviews; the backend Deployment has an initContainer that polls for the Job's completion via `oc get job`.
+- **Mixed sync/async access:** The backend uses async SQLAlchemy with `asyncpg` for API routes, while the Feast service uses sync SQLAlchemy with `psycopg2-binary` for direct database queries (name boosting, model version lookup).
+
+### Helm Subchart Dependency
+
+The pgvector database is declared as a subchart dependency at v0.1.0 from the shared ai-architecture-charts repository.
+
+```yaml
+# helm/product-recommender-system/Chart.yaml
+dependencies:
+  - name: pgvector
+    version: 0.1.0
+    repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+```
+
+### Feast Online Store with vector_enabled
+
+The Feast feature store configuration enables pgvector's vector capabilities in the online store, allowing Feast to use PostgreSQL-native vector operations for similarity search.
+
+```yaml
+# recommendation-core/src/recommendation_core/feature_repo/feature_store.yaml
+online_store:
+  type: postgres
+  host: ${DB_HOST}
+  port: ${DB_PORT}
+  database: ${DB_NAME}
+  user: ${DB_USER}
+  password: ${DB_PASSWORD}
+  vector_enabled: true
+```
+
+### FeatureStore CRD with pgvector Secret
+
+The Feast operator manages online/offline/registry services via a custom resource. Each service receives the pgvector secret via `envFrom`, and the online store persists to PostgreSQL with a secret reference for connection details.
+
+```yaml
+# helm/product-recommender-system/templates/featurestore.yaml
+apiVersion: feast.dev/v1alpha1
+kind: FeatureStore
+metadata:
+  name: feast-recommendation
+spec:
+  feastProject: {{ .Values.feast.project }}
+  services:
+    onlineStore:
+      persistence:
+        store:
+          type: postgres
+          secretRef:
+            name: feast-data-stores
+      server:
+        envFrom:
+        - secretRef:
+            name: pgvector
+    registry:
+      local:
+        persistence:
+          store:
+            type: sql
+            secretRef:
+              name: feast-data-stores
+```
+
+### Multiple Embedding Feature Views with Vector Index
+
+Feast feature views define multiple embedding types with `vector_index=True` and cosine similarity metric. Each view is backed by a PushSource, meaning embeddings are pushed into the online store during the training pipeline.
+
+```python
+# recommendation-core/src/recommendation_core/feature_repo/feature_views.py
+item_embedding_view = FeatureView(
+    name="item_embedding",
+    entities=[item_entity],
+    ttl=timedelta(days=365 * 5),
+    schema=[
+        Field(name="item_id", dtype=String),
+        Field(
+            name="embedding",
+            dtype=Array(Float32),
+            vector_index=True,
+            vector_search_metric="cosine",
+        ),
+    ],
+    source=item_embed_push_source,
+    online=True,
+)
+```
+
+### Feast Vector Search via retrieve_online_documents
+
+New user recommendations use the Feast `retrieve_online_documents` API to find similar items by encoding the user's features into an embedding and querying the vector index.
+
+```python
+# backend/src/services/feast/feast_service.py
+def load_items_new_user(self, user: User, k: int = 10):
+    user_as_df = pd.DataFrame([user.model_dump()])
+    self.user_encoder.eval()
+    user_embed = self.user_encoder(**data_preproccess(user_as_df))[0]
+    top_k = self.store.retrieve_online_documents(
+        query=user_embed.tolist(), top_k=k, features=["item_embedding:item_id"]
+    )
+    top_item_ids = top_k.to_df()["item_id"].tolist()
+    return self._item_ids_to_product_list(top_item_ids)
+```
+
+### Hybrid Deterministic + Semantic Text Search
+
+Text search combines SQL deterministic matching (exact, prefix, contains) using PostgreSQL `regexp_replace` with Feast semantic vector search as a fallback when deterministic results are insufficient.
+
+```python
+# backend/src/services/feast/feast_service.py
+def search_item_by_text(self, text: str, k=5):
+    # Deterministic name boosting via SQL
+    norm_expr = "regexp_replace(lower(name), '[^a-z0-9]', '', 'g')"
+    exact_ids = _query_item_ids(f"{norm_expr} = :qn", {"qn": qn}, exact_limit)
+    prefix_ids = _query_item_ids(f"{norm_expr} LIKE :prefix", {"prefix": f"{qn}%"}, ...)
+    contains_ids = _query_item_ids(f"{norm_expr} LIKE :contains", {"contains": f"%{qn}%"}, ...)
+    # If deterministic results >= k, return immediately
+    if len(merged) >= k:
+        return self._item_ids_to_product_list(merged[:k])
+    # Otherwise fill with semantic vector search via Feast
+    semantic_df = search_service.search_by_text(text, semantic_k)
+```
+
+### Async SQLAlchemy with URL Rewrite
+
+The backend connects using async SQLAlchemy with asyncpg. The `DATABASE_URL` from the pgvector secret `uri` key is rewritten from `postgresql://` to `postgresql+asyncpg://` at engine creation time.
+
+```python
+# backend/src/database/db.py
+def get_engine():
+    engine = create_async_engine(
+        os.getenv("DATABASE_URL", None).replace("postgresql://", "postgresql+asyncpg://"),
+        echo=True,
+    )
+    return engine
+```
+
+### Secret-Based Connection Wiring with Individual Keys
+
+The parent chart values wire database credentials from the pgvector secret via individual `secretKeyRef` keys (host, port, user, password, dbname) and also reference the `uri` key for the assembled `DATABASE_URL`.
+
+```yaml
+# helm/product-recommender-system/values.yaml
+env:
+  - name: DB_HOST
+    valueFrom:
+      secretKeyRef:
+        name: pgvector
+        key: host
+backend:
+  additionalEnv:
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: pgvector
+          key: uri
+```
+
+### Helm Post-Install Job for Database Initialization
+
+A Kubernetes Job seeds the database after chart installation. The Job's initContainer waits for the `model_version` table (populated by the training pipeline) before running the backend init script that creates tables and seeds data.
+
+```yaml
+# helm/product-recommender-system/templates/backend.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "product-recommender-system.fullname" . }}-db-init
+  annotations:
+    "helm.sh/hook": "post-install,post-upgrade"
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": "before-hook-creation"
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: wait-until-model-training-workflow
+          image: postgres:15-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -c "SELECT 1 FROM model_version LIMIT 1" > /dev/null 2>&1; do
+                echo "Waiting for model_version table..."
+                sleep 10
+              done
+```
+
+### Readiness Probe via Database Connectivity
+
+The backend health check verifies database connectivity by executing a simple query.
+
+```python
+# backend/src/routes/health.py
+@router.get("/health/ready")
+async def readiness_check(db: AsyncSession = Depends(get_db)):
+    try:
+        await db.execute(text("SELECT 1"))
+        return {"status": "ready"}
+    except Exception:
+        return Response(status_code=503)
+```
+
+### Configuration (Approach F)
+
+- **Environment variables:**
+  - `DATABASE_URL` -- Pre-built PostgreSQL URI from the `pgvector` secret `uri` key. The backend rewrites `postgresql://` to `postgresql+asyncpg://` at engine creation.
+  - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` -- Individual secret keys from `pgvector` secret, consumed by env vars for Feast online store config, db-init Job, and pipeline Job.
+  - `USE_LLM_FOR_REVIEWS` -- Controls whether init_backend.py uses an LLM to generate synthetic reviews (default: `"true"` in values.yaml).
+  - `LLM_API_BASE`, `LLM_API_KEY`, `LLM_MODEL` -- LLM connection for review generation during db-init.
+- **Config files:**
+  - `recommendation-core/src/recommendation_core/feature_repo/feature_store.yaml` -- Feast feature store config with `vector_enabled: true` and env var substitution for DB credentials.
+  - `backend/src/database/db.py` -- Async SQLAlchemy engine creation with `postgresql://` to `postgresql+asyncpg://` rewrite.
+- **Helm values:**
+  - `feast.project` -- Feast project name (default: `feast_rec_sys`).
+  - `feast.secret` -- TLS secret name for Feast registry communication.
+  - `feast.registry` -- Feast registry service name.
+  - `dbName` -- Application database name (default: `product_recommender_system`).
+  - `backend.additionalEnv` -- Includes `DATABASE_URL` from pgvector secret `uri` key.
+- **Python dependencies:**
+  - `feast[postgres]==0.49.0` -- Feast with PostgreSQL online store support.
+  - `asyncpg==0.29.0` -- Async PostgreSQL driver for SQLAlchemy.
+  - `psycopg2-binary>=2.9.10` -- Sync PostgreSQL driver for Feast service direct queries.
+  - `sqlalchemy==2.0.30` -- ORM for relational data models.
+
+### Known Gotchas (Approach F)
+
+- **DATABASE_URL rewrite assumes plain postgresql:// prefix:** The `db.py` engine creation uses `.replace("postgresql://", "postgresql+asyncpg://")` which is a non-anchored string replace. If the URI already contains `postgresql+asyncpg://` or has `postgresql` in the password or path, the replace may produce an invalid URL (see `backend/src/database/db.py` line 9).
+- **Base.metadata.drop_all in init script:** The `create_tables()` function in `init_backend.py` runs `Base.metadata.drop_all` before `Base.metadata.create_all` (see `backend/src/init_backend.py` lines 512-514), which destroys all existing data on every db-init Job run. The comment notes "dev only" but the Helm hook runs on both post-install and post-upgrade.
+- **db-init Job waits for model_version table:** The initContainer polls for the `model_version` table via psql, which is populated by the KFP training pipeline. If the pipeline has not run, the db-init Job will wait indefinitely (see `backend.yaml` lines 236-240).
+- **Backend initContainer uses oc CLI:** The backend Deployment's initContainer uses `oc get job product-recommender-system-db-init` to poll for Job completion (see `backend.yaml` lines 76-79). This requires the `registry.redhat.io/openshift4/ose-cli:latest` image and RBAC permissions (job-viewer Role/RoleBinding) to query Job status.
+- **Mixed sync/async database access:** The FeastService uses synchronous SQLAlchemy (`create_engine` with `psycopg2`) for direct SQL queries (model version lookup, name boosting) while the FastAPI routes use async SQLAlchemy (`asyncpg`). These are separate connection pools that may compete for database connections (see `feast_service.py` lines 64-67, 202-205).
+- **feast-data-stores Secret assembles connection strings from variable substitution:** The `feast-data-stores` Secret uses `${user}`, `${password}`, `${host}`, etc. placeholders that must be resolved from the pgvector secret environment variables at Feast pod startup (see `featurestore.yaml` lines 7-23).
+
+### Testing Notes (Approach F)
+
+- Verify the pgvector secret exists with all required keys: `oc get secret pgvector -o jsonpath='{.data}' | jq -r 'keys[]'` should show `host`, `port`, `user`, `password`, `dbname`, `uri`.
+- Verify the Feast FeatureStore CR is ready: `oc get featurestore feast-recommendation -o jsonpath='{.status}'`.
+- Verify the db-init Job completed: `oc get job product-recommender-system-db-init` and check logs.
+- Verify readiness probe: `curl -k https://<route>/health/ready` should return `{"status": "ready"}`.
+- Verify Feast online store has vector data: connect to the backend pod and run a test query via the Feast API.
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (multi-agent-loan-origination) |
-|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|------------------------------------------|
-| **pgvector chart version** | v0.5.5 (subchart) | v0.1.0 (bundled .tgz) | v0.1.0 (standalone chart) | v0.1.0 (subchart) | N/A (inline Helm templates) |
-| **PostgreSQL version** | 15 | 17 | 15 | Subchart default | 16 |
-| **Container image** | ai-architecture-charts subchart default | `pgvector/pgvector:pg17` | `quay.io/rh-aiservices-bu/postgresql-15-pgvector-c9s:latest` | ai-architecture-charts subchart default | `pgvector/pgvector:pg16` |
-| **Chart relationship** | Dependency subchart | Dependency subchart (bundled) | Standalone Helm chart | Dependency subchart | Inline templates in parent chart |
-| **URL construction** | Assembled from individual secret keys in deployment template | Pre-built `uri` key consumed directly from secret | Pod DNS hardcoded in data loader Job | Helm template helpers (`_env-helpers.tpl`) generate env vars from secret | Full connection strings in Helm Secret; dual URLs for lending vs compliance |
-| **DB initialization** | `extraDatabases` values mechanism | ConfigMap init script with `CREATE EXTENSION VECTOR` | ConfigMap init script with `CREATE EXTENSION IF NOT EXISTS vector CASCADE` | `extraDatabases` values + `max_connections=200` args | ConfigMap init script with pgvector extension + dual role creation + extra database (mlflow) |
-| **Schema management** | Alembic migrations (async-to-sync URL rewrite) | `SQLModel.metadata.create_all` at startup | Raw SQL in Python data loader script | Alembic migrations via Kubernetes Job (services wait for version) | Alembic migrations with `pgvector.sqlalchemy.Vector` type and per-table GRANT statements |
-| **ORM** | SQLAlchemy ORM with PostgreSQL dialect types | SQLModel with JSON column type | None (raw psycopg2) | SQLAlchemy ORM + psycopg_pool for LangGraph | SQLAlchemy 2.0 with `pgvector.sqlalchemy.Vector` + raw SQL for vector search |
-| **Data seeding** | None | None | Kubernetes Job with OpenShift BuildConfig for large CSV datasets | None | None |
-| **Vector search usage** | Active via LlamaStack `vector_io` provider | Extension enabled but unused; embeddings in MinIO | Extension enabled; used for data governance, not RAG | Active via LlamaStack `vector_io` + metadata/kv/sql backends | Active via direct SQL with `<=>` cosine operator; HNSW index; tier-based result boosting |
-| **Security** | Standard credentials via secret | Standard credentials via secret | Read-only `mcp_readonly` user for MCP server defense-in-depth | Standard credentials via secret; advisory locks for session isolation | Dual PostgreSQL roles (`lending_app`, `compliance_app`) for HMDA data isolation; per-table GRANT permissions |
-| **Number of consumers** | Single backend service | Multiple services (backend, annotation-interface, phoenix) | Data loader Job + MCP server | 6+ services (agent, request-manager, dispatcher, migration, langfuse, langfuse-worker) | Single API service with two connection pools (lending + compliance) + MLflow |
-| **Connection pooling** | Single async SQLAlchemy pool | Single async SQLAlchemy pool | No pooling (raw psycopg2) | Dual pools: async SQLAlchemy + sync/async psycopg_pool for LangGraph | Dual async SQLAlchemy pools (one per role/connection string) |
-| **Distributed coordination** | None | None | None | PostgreSQL advisory locks for per-session request serialization | None |
-| **Credential passthrough** | Install script `--set` flags | Values file defaults | `--set` flags (placeholder defaults in values.yaml) | Helm template helpers; values defaults | Helm Secret with `secretKeyRef` in StatefulSet; `--set secrets.*` overrides |
-| **Best for** | Apps needing vector search + relational data in one DB | Multi-service apps using PostgreSQL as shared relational store | Data governance demos with seed data, MCP server access, and curated views | Multi-service agentic apps needing distributed session serialization, LangGraph checkpointing, and LlamaStack multi-store backends | Regulated-domain apps needing role-based data isolation, direct pgvector queries with domain-specific result ranking, and compliance KB with tiered boosting |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (multi-agent-loan-origination) | Approach F (product-recommender-system) |
+|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|------------------------------------------|----------------------------------------|
+| **pgvector chart version** | v0.5.5 (subchart) | v0.1.0 (bundled .tgz) | v0.1.0 (standalone chart) | v0.1.0 (subchart) | N/A (inline Helm templates) | v0.1.0 (subchart) |
+| **PostgreSQL version** | 15 | 17 | 15 | Subchart default | 16 | Subchart default |
+| **Container image** | ai-architecture-charts subchart default | `pgvector/pgvector:pg17` | `quay.io/rh-aiservices-bu/postgresql-15-pgvector-c9s:latest` | ai-architecture-charts subchart default | `pgvector/pgvector:pg16` | ai-architecture-charts subchart default |
+| **Chart relationship** | Dependency subchart | Dependency subchart (bundled) | Standalone Helm chart | Dependency subchart | Inline templates in parent chart | Dependency subchart |
+| **URL construction** | Assembled from individual secret keys in deployment template | Pre-built `uri` key consumed directly from secret | Pod DNS hardcoded in data loader Job | Helm template helpers (`_env-helpers.tpl`) generate env vars from secret | Full connection strings in Helm Secret; dual URLs for lending vs compliance | Both individual secret keys (DB_HOST, etc.) and pre-built `uri` key for DATABASE_URL |
+| **DB initialization** | `extraDatabases` values mechanism | ConfigMap init script with `CREATE EXTENSION VECTOR` | ConfigMap init script with `CREATE EXTENSION IF NOT EXISTS vector CASCADE` | `extraDatabases` values + `max_connections=200` args | ConfigMap init script with pgvector extension + dual role creation + extra database (mlflow) | Subchart default + Helm post-install Job running `init_backend.py` (drop_all + create_all) |
+| **Schema management** | Alembic migrations (async-to-sync URL rewrite) | `SQLModel.metadata.create_all` at startup | Raw SQL in Python data loader script | Alembic migrations via Kubernetes Job (services wait for version) | Alembic migrations with `pgvector.sqlalchemy.Vector` type and per-table GRANT statements | `Base.metadata.drop_all` + `create_all` in db-init Job (no migration framework) |
+| **ORM** | SQLAlchemy ORM with PostgreSQL dialect types | SQLModel with JSON column type | None (raw psycopg2) | SQLAlchemy ORM + psycopg_pool for LangGraph | SQLAlchemy 2.0 with `pgvector.sqlalchemy.Vector` + raw SQL for vector search | SQLAlchemy ORM async (asyncpg) + sync (psycopg2) for Feast direct queries |
+| **Data seeding** | None | None | Kubernetes Job with OpenShift BuildConfig for large CSV datasets | None | None | Helm post-install Job seeds categories, products, users, reviews from parquet files; optional LLM-generated reviews |
+| **Vector search usage** | Active via LlamaStack `vector_io` provider | Extension enabled but unused; embeddings in MinIO | Extension enabled; used for data governance, not RAG | Active via LlamaStack `vector_io` + metadata/kv/sql backends | Active via direct SQL with `<=>` cosine operator; HNSW index; tier-based result boosting | Active via Feast `retrieve_online_documents` with `vector_enabled: true` online store; 6 embedding feature views with cosine search |
+| **Security** | Standard credentials via secret | Standard credentials via secret | Read-only `mcp_readonly` user for MCP server defense-in-depth | Standard credentials via secret; advisory locks for session isolation | Dual PostgreSQL roles (`lending_app`, `compliance_app`) for HMDA data isolation; per-table GRANT permissions | Standard credentials via secret; job-viewer RBAC for db-init polling |
+| **Number of consumers** | Single backend service | Multiple services (backend, annotation-interface, phoenix) | Data loader Job + MCP server | 6+ services (agent, request-manager, dispatcher, migration, langfuse, langfuse-worker) | Single API service with two connection pools (lending + compliance) + MLflow | Backend + Feast online/offline/registry services + db-init Job + pipeline Job |
+| **Connection pooling** | Single async SQLAlchemy pool | Single async SQLAlchemy pool | No pooling (raw psycopg2) | Dual pools: async SQLAlchemy + sync/async psycopg_pool for LangGraph | Dual async SQLAlchemy pools (one per role/connection string) | Async SQLAlchemy pool (asyncpg) for API routes + ad-hoc sync engines (psycopg2) for Feast queries |
+| **Distributed coordination** | None | None | None | PostgreSQL advisory locks for per-session request serialization | None | None |
+| **Credential passthrough** | Install script `--set` flags | Values file defaults | `--set` flags (placeholder defaults in values.yaml) | Helm template helpers; values defaults | Helm Secret with `secretKeyRef` in StatefulSet; `--set secrets.*` overrides | Values env list with secretKeyRef for pgvector secret keys |
+| **Best for** | Apps needing vector search + relational data in one DB | Multi-service apps using PostgreSQL as shared relational store | Data governance demos with seed data, MCP server access, and curated views | Multi-service agentic apps needing distributed session serialization, LangGraph checkpointing, and LlamaStack multi-store backends | Regulated-domain apps needing role-based data isolation, direct pgvector queries with domain-specific result ranking, and compliance KB with tiered boosting | Recommendation systems using Feast as the feature/vector store layer with pgvector backend; hybrid deterministic + semantic search; multiple embedding types (item, user, text, CLIP) |
