@@ -1,13 +1,13 @@
 ---
 name: react-frontend
-description: React frontend patterns for AI Quickstarts -- PatternFly/SSE, shadcn+Tailwind/WebSocket, or CRA+serve video monitoring
-summary: "Provides three React frontend patterns for AI Quickstarts -- Approach A (React 18 + PatternFly 6 + @patternfly/chatbot) for chatbot-first UIs with SSE streaming via requestAnimationFrame batching, TanStack Router/Query/Form, OAuth redirect, and single-container deployment baked into FastAPI; Approach B (React 19 + shadcn/ui + Tailwind CSS 4 + Radix) for multi-persona enterprise apps with WebSocket JSON protocol streaming, Keycloak OIDC with PKCE and dev-mode role headers, Zod-validated layered API (Component->Hook->TanStack Query->Service->Schema), atomic design with Storybook 8, pnpm monorepo, and separate nginx container with window.__RUNTIME_CONFIG__ injection; Approach C (React 17 + CRA JavaScript + serve) for MJPEG video monitoring with SSE cross-tab config sync, setInterval polling with stale detection guards, feedNonce cache-buster for stream switching, ConfigMap-mounted window.__ENV__ with protocol auto-upgrade, and Helm-deployed separate container. Choose A for chatbot apps needing PatternFly design system, SSE rAF-batched streaming, TanStack Form admin panels, any OAuth provider, and single-container deploy -- choose B for multi-role domain-rich UIs needing Keycloak OIDC, role-based persona routing (ROLE_HOME mapping), WebSocket chat sidebar, Zod schema validation, and two-container nginx+API deploy -- choose C for video/multimodal monitoring needing MJPEG feeds via <img> tags, polling-based detection, SSE config sync, plain JavaScript frontend, and Helm-deployed serve+ConfigMap container. Critical patterns: A and B use TanStack Router file-based routing with code-splitting; A models chat content as SimpleContentItem discriminated union (output_text, reasoning, tool_call, graph_node, input_image) with LlamaStack isToolExecutionType()/isStructuralItemType() type guards; B injects Keycloak/company config at container start via nginx location returning JavaScript snippet with envsubst-substituted values; C uses ConfigMap env.js with fallback chain (runtime -> REACT_APP_API_URL -> location.origin/api) and natural language alert rules with CRUD management. Gotchas: Vite requires watch.usePolling:true in containers; A needs NODE_OPTIONS=--max-old-space-size=512 for builds, strips reasoning items on [DONE], raises chunkSizeWarningLimit to 2000, requires flushPendingUpdates() with confirmation modal on session switch during streaming, and excludes fetchSessionsData from useEffect deps to prevent infinite loops; B requires WebSocket upgrade map in nginx.conf (not conf.d/ where envsubst mangles $ variables), passes JWT as WebSocket query parameter (MVP trade-off), needs OpenShift arbitrary UID chmod/chgrp on nginx dirs, downgrades Vite 7 UNRESOLVED_IMPORT errors for pnpm hoisted deps, and uses deprecated ROPC grant for demo convenience; C requires --openssl-legacy-provider for Node 18+, must avoid <img> remounting to prevent MJPEG connection stacking, disables ESLint during Docker build, and polls inference readiness every 200ms until OVMS model processes first frame."
+description: React frontend patterns for AI Quickstarts -- PatternFly/SSE, shadcn+Tailwind/WebSocket, CRA+serve video, or Vite+nginx pipeline UI
+summary: "Provides four React frontend patterns for AI Quickstarts -- Approach A (React 18 + PatternFly 6 + @patternfly/chatbot) for chatbot-first UIs with SSE streaming via requestAnimationFrame batching, TanStack Router/Query/Form, SimpleContentItem discriminated union with GraphNodeContentItem/ProgressStepper agent visualization, OAuth redirect, and single-container deployment baked into FastAPI; Approach B (React 19 + shadcn/ui + Tailwind CSS 4 + Radix) for multi-persona enterprise apps with WebSocket JSON protocol streaming, Keycloak OIDC with PKCE and dev-mode role headers, Zod-validated layered API (Component->Hook->TanStack Query->Service->Schema), atomic design with Storybook 8, pnpm monorepo, and separate nginx container with window.__RUNTIME_CONFIG__ injection; Approach C (React 17 + CRA JavaScript + serve) for MJPEG video monitoring with SSE cross-tab config sync, setInterval polling with stale detection guards, feedNonce cache-buster for stream switching, ConfigMap-mounted window.__ENV__ with protocol auto-upgrade, natural language alert rules with CRUD, and Helm-deployed separate container; Approach D (React 19 + Vite 6 + vanilla CSS) for multi-step pipeline orchestration with accordion-based navigation (no router), REST POST chat unlocked after pipeline completion with bidirectional context feedback via updateOutputsFromContext, retry loop (MAX_PIPELINE_ATTEMPTS=10), dual runtime config (build ARGs + window.__RUNTIME_CONFIG__), UBI9/nginx-120 container with 300s proxy_read_timeout, and minimal 4 prod dependencies with MSW testing. Choose A for chatbot apps needing PatternFly design system, SSE rAF-batched streaming, TanStack Form admin panels, any OAuth provider, and single-container deploy -- choose B for multi-role domain-rich UIs needing Keycloak OIDC, role-based persona routing (ROLE_HOME mapping), WebSocket chat sidebar, Zod schema validation, and two-container nginx+API deploy -- choose C for video/multimodal monitoring needing MJPEG feeds via <img> tags, polling-based detection, SSE config sync, plain JavaScript frontend, and Helm-deployed serve+ConfigMap container -- choose D for pipeline-driven sequential workflows needing accordion UI, REST chat with bidirectional context feedback, no auth, UBI9/nginx-120 reverse proxy, and minimal dependencies. Critical patterns: A and B use TanStack Router file-based routing with code-splitting; A models chat content as SimpleContentItem discriminated union (output_text, reasoning, tool_call, graph_node, input_image) with LlamaStack isToolExecutionType()/isStructuralItemType() type guards; B injects Keycloak/company config at container start via nginx location returning JavaScript snippet with envsubst-substituted values; C uses ConfigMap env.js with fallback chain (runtime -> REACT_APP_API_URL -> location.origin/api); D passes full PipelineContext into every chat call and applies returned context updates back to pipeline outputs panel, with postJson using AbortController-based timeouts (300s default, 180s for email generation). Gotchas: Vite requires watch.usePolling:true in containers; A needs NODE_OPTIONS=--max-old-space-size=512 for builds, strips reasoning items on [DONE], raises chunkSizeWarningLimit to 2000, requires flushPendingUpdates() with confirmation modal on session switch during streaming, and excludes fetchSessionsData from useEffect deps to prevent infinite loops; B requires WebSocket upgrade map in nginx.conf (not conf.d/ where envsubst mangles $ variables), passes JWT as WebSocket query parameter (MVP trade-off), needs OpenShift arbitrary UID chmod/chgrp on nginx dirs, downgrades Vite 7 UNRESOLVED_IMPORT errors for pnpm hoisted deps, and uses deprecated ROPC grant for demo convenience; C requires --openssl-legacy-provider for Node 18+, must avoid <img> remounting to prevent MJPEG connection stacking, disables ESLint during Docker build, and polls inference readiness every 200ms until OVMS model processes first frame; D requires matching /api rewrite in both Vite dev proxy and nginx production config, locks chat until pipeline completes with hardcoded fallback message, uses useRef concurrency guard against double pipeline execution, and hardcodes default pipeline values including CloudFront-hosted PDF URL."
 metadata:
   type: component
 tags:
-  tech_stack: [react, patternfly, typescript, vite, tanstack-router, tanstack-query, tanstack-form, tailwindcss, shadcn-ui, radix-ui, zod, keycloak, storybook, vitest, pnpm, javascript, create-react-app, axios, react-markdown, serve]
+  tech_stack: [react, patternfly, typescript, vite, tanstack-router, tanstack-query, tanstack-form, tailwindcss, shadcn-ui, radix-ui, zod, keycloak, storybook, vitest, pnpm, javascript, create-react-app, axios, react-markdown, serve, nginx, msw, remark-gfm]
   ai_pattern: [agents, rag, mcp, multimodal, model-serving]
-  platform: [openshift, kserve]
+  platform: [openshift, kserve, rhoai]
 source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
@@ -21,6 +21,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multimodal-compliance-monitor"
     notes: "React 17 CRA JavaScript frontend with MJPEG video feed, SSE config sync, polling-based detection results, serve static server, Helm-deployed separate container with ConfigMap env injection"
     approach: "C"
+  - quickstart: "portfolio-manager-agent"
+    repo: "https://github.com/rh-ai-quickstart/portfolio-manager-agent"
+    notes: "React 19 + Vite + vanilla CSS pipeline orchestration UI with multi-step investment pipeline, REST POST chat with context feedback, UBI9 nginx-120 container, no component library or router"
+    approach: "D"
 ---
 
 # React Frontend
@@ -573,24 +577,220 @@ The main dashboard uses a three-column CSS layout: a left sidebar for video sour
 
 ---
 
+## Approach D: Vite + Vanilla CSS Pipeline Orchestration UI with REST Chat (from portfolio-manager-agent)
+
+### When to Use
+
+Use when the quickstart centers on a multi-step deterministic pipeline that the user configures and triggers from the browser, with a chat interface that unlocks after the pipeline completes. The frontend is a single-page app with accordion-based section navigation (no routing), plain CSS styling (no component library), and REST POST-based chat where pipeline context flows bidirectionally between the chat and the pipeline outputs. Preferred when simplicity is paramount -- no auth, no streaming, no component library, minimal dependencies.
+
+### Differences from Approach A
+
+| Concern | Approach A | Approach D |
+|---------|-----------|-----------|
+| Primary UI purpose | Chatbot-first with admin panels | Pipeline orchestration with post-pipeline chat |
+| UI framework | PatternFly 6 + @patternfly/chatbot | Vanilla CSS with CSS custom properties |
+| Chat mechanism | SSE streaming with rAF batching | REST POST (synchronous request/response) |
+| Routing | TanStack Router (file-based, code-split) | No router (single-page accordion UI) |
+| State management | TanStack Query for server state | Custom hooks (useChat, usePipeline, useSettings) |
+| Deployment | Frontend baked into backend container | Separate UBI9/nginx-120 container with reverse proxy |
+| Auth | OAuth redirect via window.location.href | None (open access) |
+| React version | React 18 | React 19 |
+| Container base (build) | UBI9/nodejs-22 | UBI9/nodejs-20 |
+| Container base (serve) | FastAPI (serves static) | UBI9/nginx-120 |
+| Dependencies | ~20+ prod deps (PatternFly, TanStack, etc.) | 4 prod deps (react, react-dom, react-markdown, remark-gfm) |
+
+### Tech Stack & Dependencies
+
+- **Runtime:** React 19, TypeScript ~5.8, Vite 6 with @vitejs/plugin-react
+- **Container image:** `registry.access.redhat.com/ubi9/nodejs-20` (builder), `registry.access.redhat.com/ubi9/nginx-120` (runtime)
+- **Key dependencies:** `react` ^19.1, `react-dom` ^19.1, `react-markdown` ^10.1, `remark-gfm` ^4.0
+- **Dev dependencies:** `vitest` ^3.1, `@testing-library/react` ^16.3, `msw` ^2.7 (Mock Service Worker for API mocking)
+- **Helm subchart:** None documented (standalone container)
+
+### Key Patterns
+
+#### Multi-Step Pipeline Orchestration with Retry Loop
+
+The `usePipeline` hook in `src/hooks/usePipeline.ts` drives a four-stage deterministic pipeline entirely from the frontend: guidelines parsing -> portfolio construction -> VaR calculation -> email generation. The portfolio+VaR stages retry in a loop (up to `MAX_PIPELINE_ATTEMPTS = 10`) until VaR falls within the user's specified limit:
+
+```typescript
+// src/hooks/usePipeline.ts
+let attempts = 0;
+while (attempts < MAX_PIPELINE_ATTEMPTS) {
+  attempts += 1;
+  logLines.push(`Building portfolio (attempt ${attempts})...`);
+  setRunning({ portfolio: "*Building...*", var: "...", email: "..." });
+  // ... postPortfolio, postVar ...
+  if (valueAtRisk <= form.maxVar) {
+    logLines.push("Done: VaR within limit.");
+    break;
+  }
+  logLines.push(
+    `VaR $${valueAtRisk.toLocaleString(...)} exceeds max ... - retrying...`
+  );
+}
+```
+
+Each stage updates the UI with progress lines via a `logLines` array rendered in a `ProgressLog` component.
+
+#### Pipeline Context Feedback to Chat
+
+After the pipeline completes, the full `PipelineContext` (prohibited tickers, portfolio positions, VaR, draft email, inputs) is passed into every chat API call. The chat backend can return an updated context, which the frontend applies back to the pipeline outputs panel:
+
+```typescript
+// src/hooks/useChat.ts
+const { reply, context: updatedContext } = await postChat(
+  settings, trimmed, historyForApi, context,
+);
+if (updatedContext) {
+  onContextUpdate?.(updatedContext);
+}
+
+// src/App.tsx -- updates pipeline outputs from chat response
+await chat.sendMessage(text, settings, pipeline.context, (ctx) => {
+  pipeline.updateOutputsFromContext(ctx);
+});
+```
+
+This bidirectional context flow allows users to ask the chat to modify the portfolio (e.g., "swap AAPL for MSFT") and see updated outputs in the pipeline panel.
+
+#### Dual Runtime Config: Build Args + window.__RUNTIME_CONFIG__
+
+The frontend supports two configuration injection methods. Build-time config uses Vite's `VITE_*` env vars passed as Docker `ARG` values. Runtime config uses `window.__RUNTIME_CONFIG__` loaded from `public/runtime-config.js` via a script tag in `index.html`. The `useSettings` hook checks both with runtime config taking priority:
+
+```typescript
+// src/hooks/useSettings.ts
+function envDefault(keys: string[], fallback = ""): string {
+  const rc = window.__RUNTIME_CONFIG__;
+  for (const key of keys) {
+    const rv = rc?.[key];
+    if (typeof rv === "string" && rv.trim()) return rv.trim();
+    const value = import.meta.env[key as keyof ImportMetaEnv];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return fallback;
+}
+```
+
+#### Accordion-Based Section Navigation
+
+The UI uses collapsible accordion sections (ConnectionSettings, Chat, PipelineOutputs, PipelineSetup) instead of a router. Sections auto-expand/collapse based on pipeline state -- the setup panel closes and the outputs panel opens when the pipeline completes:
+
+```typescript
+// src/App.tsx
+useEffect(() => {
+  if (pipeline.isComplete) {
+    chat.unlockChat();
+    setSetupOpen(false);
+    setOutputsOpen(true);
+  }
+}, [pipeline.isComplete, chat.unlockChat]);
+```
+
+#### UBI9 Nginx Reverse Proxy with API Rewrite
+
+The production Dockerfile uses a multi-stage build: UBI9/nodejs-20 builds the Vite SPA, then UBI9/nginx-120 serves static assets and proxies `/api/` requests to the orchestrator backend with path rewriting:
+
+```nginx
+# frontend/nginx.conf
+location /api/ {
+    rewrite ^/api/(.*)$ /$1 break;
+    proxy_pass http://orchestrator:5000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_read_timeout 300s;
+}
+
+location / {
+    try_files $uri $uri/ /index.html;
+}
+```
+
+The `proxy_read_timeout 300s` is set high to accommodate long-running pipeline and LLM calls.
+
+#### Typed API Client with Timeout and Abort
+
+The `src/api/client.ts` module implements a generic `postJson<T>` helper with AbortController-based timeouts (300s default, 180s for email generation). Error handling extracts structured error messages from JSON response bodies:
+
+```typescript
+// src/api/client.ts
+async function postJson<T>(
+  url: string, payload: unknown, timeoutMs = 300_000,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload), signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+    if (!res.ok) {
+      const err = typeof data.error === "string" ? data.error : `HTTP ${res.status}`;
+      throw new Error(err);
+    }
+    return data;
+  } finally { clearTimeout(timer); }
+}
+```
+
+### Configuration
+
+- **Environment variables (build-time Docker ARGs):**
+  - `VITE_ORCHESTRATOR_URL` - Orchestrator base URL (default: `/api/chat`)
+  - `VITE_OPENAI_API_ENDPOINT` - LLM endpoint URL (empty by default)
+  - `VITE_OPENAI_API_TOKEN` - LLM API key (empty by default)
+  - `VITE_OPENAI_MODEL` - LLM model name (empty by default)
+- **Config files:**
+  - `public/runtime-config.js` - Runtime config via `window.__RUNTIME_CONFIG__` (empty object by default, replaced at deploy time)
+  - `nginx.conf` - Custom nginx config with API reverse proxy, gzip compression, SPA fallback
+  - `vite.config.ts` - Vite 6 with dev proxy `/api` -> `http://localhost:5000`, Vitest config with jsdom
+- **Helm values:** Not documented (standalone container, no Helm chart found)
+
+### Known Gotchas
+
+- **Vite dev proxy rewrites /api prefix:** The Vite dev proxy strips the `/api` prefix before forwarding to `http://localhost:5000` via `rewrite: (path) => path.replace(/^\/api/, "")`. The nginx production config does the same with `rewrite ^/api/(.*)$ /$1 break`. Both layers must agree on this rewrite or API calls will 404.
+- **orchestratorBase strips /chat suffix:** The `orchestratorBase()` function in `client.ts` strips a trailing `/chat` from the configured URL: `if (u.endsWith("/chat")) { return u.slice(0, -"/chat".length); }`. This allows users to configure either `http://host:5000/chat` or `http://host:5000` and get the same base URL for pipeline endpoints like `/pipeline/guidelines`.
+- **Pipeline concurrency guard via useRef:** The `usePipeline` hook uses a `runningRef` (not state) to prevent double-execution of the pipeline if the user clicks "Run pipeline" rapidly. The ref is set before async work begins and cleared in all exit paths (success, error, validation failure).
+- **Chat locked until pipeline completes:** The chat input is disabled (`interactive={false}`) until `pipeline.isComplete`. If the user sends a message before pipeline completion, the `useChat` hook returns a hardcoded "Run **Portfolio setup** first" message without hitting the API.
+- **OpenShift group permissions on nginx html directory:** The Dockerfile runs `chgrp -R 0 /usr/share/nginx/html && chmod -R g+rwX /usr/share/nginx/html` so the container runs under OpenShift's arbitrary UID without root access.
+- **5-minute default timeout on API calls:** The `postJson` helper defaults to a 300-second timeout via AbortController. The email generation endpoint uses a shorter 180-second timeout. If the orchestrator or LLM is slow, these timeouts will abort the request.
+- **Default pipeline values hardcoded in frontend:** The `defaultPipelineForm()` function hardcodes defaults including a CloudFront-hosted PDF URL for investment guidelines (`https://d15bgksgja6rr0.cloudfront.net/...pdf`), $1M portfolio value, 5 symbols, and $35K max VaR. These are not configurable via env vars.
+
+### Testing Notes
+
+- Run `npm test` (Vitest with jsdom) for unit tests -- tests use Mock Service Worker (MSW) for API mocking
+- Tests cover API client functions (`orchestratorBase`, `extractReply`, `validatePipelineInputs`, `postGuidelines`, `postPortfolio`, `postVar`, `postChat`), formatter utilities, and component rendering
+- Verify the Vite dev proxy connects to the orchestrator backend at `http://localhost:5000`
+- After container deployment, verify nginx proxies `/api/` to the orchestrator service and serves the SPA at root
+
+### Related Patterns
+
+- Component: FastAPI backend (orchestrator service receiving pipeline and chat API calls)
+- Deployment: UBI9 nginx reverse proxy for SPA + API
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (PatternFly + SSE) | Approach B (shadcn/ui + WebSocket) | Approach C (CRA + serve + Video) |
-|----------|-------------------------------|-------------------------------------|-----------------------------------|
-| Primary UI purpose | Chatbot-first with admin config panels | Multi-persona app with chat as sidebar | Live video monitoring with detection overlays |
-| Language | TypeScript | TypeScript | JavaScript |
-| UI framework | PatternFly 6 (Red Hat design system) | shadcn/ui + Tailwind CSS (custom design) | Plain CSS (no component library) |
-| Build tooling | Vite 6 + SWC | Vite 7 + React plugin | Create React App (react-scripts 4) |
-| Chat streaming | SSE with rAF batching | WebSocket with JSON protocol | REST POST (no streaming) |
-| Real-time data | SSE for chat tokens | WebSocket for chat messages | MJPEG `<img>` for video; `setInterval` polling for detection data; SSE for config sync |
-| Auth provider | External OAuth (any provider) | Keycloak OIDC specifically | None (open access) |
-| Deployment model | Single container (baked into backend) | Two containers (nginx + API) | Two containers (serve + API) with Helm |
-| Runtime config | Vite env vars | nginx `window.__RUNTIME_CONFIG__` | ConfigMap-mounted `window.__ENV__` via env.js |
-| API validation | Unvalidated responses | Zod schema validation at service layer | Unvalidated responses |
-| Component library | @patternfly/chatbot for chat UI | Custom components with Radix primitives | Custom components with plain HTML/CSS |
-| Container base | UBI9/nodejs-22 | node:20-alpine + nginx:alpine | UBI9/nodejs-18 |
-| Static server | FastAPI (serves built assets) | nginx | serve (npm package) |
-| React version | React 18 | React 19 | React 17 |
-| Package manager | npm | pnpm (monorepo workspaces) | npm |
-| Best for | Chatbot apps, single-user personas | Multi-role enterprise apps, domain-rich UIs | Video/multimodal monitoring, OVMS-backed detection |
-| Dev tooling | Lint + format only | Storybook + Vitest + lint + format | CRA defaults only |
+| Criteria | Approach A (PatternFly + SSE) | Approach B (shadcn/ui + WebSocket) | Approach C (CRA + serve + Video) | Approach D (Vite + vanilla CSS + Pipeline) |
+|----------|-------------------------------|-------------------------------------|-----------------------------------|--------------------------------------------|
+| Primary UI purpose | Chatbot-first with admin config panels | Multi-persona app with chat as sidebar | Live video monitoring with detection overlays | Pipeline orchestration with post-pipeline chat |
+| Language | TypeScript | TypeScript | JavaScript | TypeScript |
+| UI framework | PatternFly 6 (Red Hat design system) | shadcn/ui + Tailwind CSS (custom design) | Plain CSS (no component library) | Vanilla CSS with CSS custom properties (no library) |
+| Build tooling | Vite 6 + SWC | Vite 7 + React plugin | Create React App (react-scripts 4) | Vite 6 + React plugin |
+| Chat streaming | SSE with rAF batching | WebSocket with JSON protocol | REST POST (no streaming) | REST POST (no streaming) |
+| Real-time data | SSE for chat tokens | WebSocket for chat messages | MJPEG `<img>` for video; `setInterval` polling for detection data; SSE for config sync | None (pipeline drives sequential API calls) |
+| Auth provider | External OAuth (any provider) | Keycloak OIDC specifically | None (open access) | None (open access) |
+| Deployment model | Single container (baked into backend) | Two containers (nginx + API) | Two containers (serve + API) with Helm | Two containers (UBI9 nginx + orchestrator) |
+| Runtime config | Vite env vars | nginx `window.__RUNTIME_CONFIG__` | ConfigMap-mounted `window.__ENV__` via env.js | Build ARGs + `window.__RUNTIME_CONFIG__` dual path |
+| API validation | Unvalidated responses | Zod schema validation at service layer | Unvalidated responses | Unvalidated (typed but not runtime-validated) |
+| Component library | @patternfly/chatbot for chat UI | Custom components with Radix primitives | Custom components with plain HTML/CSS | Custom accordion-based sections with plain HTML/CSS |
+| Container base | UBI9/nodejs-22 | node:20-alpine + nginx:alpine | UBI9/nodejs-18 | UBI9/nodejs-20 + UBI9/nginx-120 |
+| Static server | FastAPI (serves built assets) | nginx | serve (npm package) | UBI9 nginx-120 |
+| React version | React 18 | React 19 | React 17 | React 19 |
+| Package manager | npm | pnpm (monorepo workspaces) | npm | npm |
+| Routing | TanStack Router (file-based) | TanStack Router (file-based) | React Router v6 (two routes) | None (accordion sections) |
+| Best for | Chatbot apps, single-user personas | Multi-role enterprise apps, domain-rich UIs | Video/multimodal monitoring, OVMS-backed detection | Pipeline-driven apps with sequential workflow and post-pipeline chat |
+| Dev tooling | Lint + format only | Storybook + Vitest + lint + format | CRA defaults only | Vitest + MSW + React Testing Library |
+| Prod dependencies | ~20+ (PatternFly, TanStack, etc.) | ~15+ (Radix, keycloak-js, Zod, etc.) | ~3 (axios, react-router-dom, react-markdown) | 4 (react, react-dom, react-markdown, remark-gfm) |

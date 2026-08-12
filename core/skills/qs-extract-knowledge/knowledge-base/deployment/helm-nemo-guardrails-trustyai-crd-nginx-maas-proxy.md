@@ -1,7 +1,7 @@
 ---
 name: helm-nemo-guardrails-trustyai-crd-nginx-maas-proxy
 description: TrustyAI NemoGuardrails CRD with nginx HTTP-to-HTTPS proxy for MaaS LLM and vLLM content safety detector
-summary: "Deploys NVIDIA NeMo Guardrails via TrustyAI operator's NemoGuardrails CRD with a ConfigMap defining regex detection (SSN, credit cards), sensitive data entities, and content safety flows backed by a NemoGuard 8B model on KServe RawDeployment (MIG GPU, vLLM args --gpu-memory-utilization=0.95 --max-model-len=4096 --enforce-eager). Use when LLM applications need input guardrails against a MaaS HTTPS endpoint that NeMo Guardrails cannot reach directly -- the nginx proxy (UBI nginx, ports 8081/8085) bridges HTTP-to-HTTPS with proxy_ssl_server_name and path rewriting for MaaS, routes content safety to the vLLM InferenceService; Helm values toggle the stack via nemoGuardrails.enabled, content safety deployment, and MaaS upstream/pathPrefix. Critical config: the NemoGuardrails CR references a ConfigMap with models pointing to proxy ports (openai_api_base: http://nemo-guardrails-proxy:8081/v1 for main LLM, base_url: http://nemo-guardrails-proxy:8085/v1 for content_safety detector), and a Secret auto-populates NEMO_GUARDRAILS_ENDPOINT to http://nemo-guardrails-internal:8000 keeping the API layer unaware of guardrails. Gotchas: nginx hardcodes OpenShift DNS resolver 172.30.0.10 (fails on non-OpenShift K8s), RawDeployment mode means predictor DNS is content-safety-detector-predictor not Knative revision format, Helm templates must use {{ \"{{\" }} escaping for Jinja2 variables in content safety prompts, and nginx writes to /tmp/*_temp for non-root OpenShift restricted SCC compliance."
+summary: "Deploys NVIDIA NeMo Guardrails via TrustyAI operator's NemoGuardrails CRD with ConfigMap-based config for regex detection (SSN, credit cards), sensitive data entities, and content safety flows to guard LLM application inputs/outputs on OpenShift AI. Approach A (multi-agent-loan-origination) adds an nginx proxy (UBI nginx, ports 8081/8085) for HTTP-to-HTTPS MaaS bridging with proxy_ssl_server_name and path rewriting plus a vLLM KServe RawDeployment content safety detector (NemoGuard 8B, MIG GPU, --gpu-memory-utilization=0.95 --max-model-len=4096 --enforce-eager), RBAC, and enable-auth: false; Approach B (portfolio-manager-agent) is standalone with Colang flows, Python topic-check action, no proxy/GPU/RBAC, enable-auth: true, and a manual guardrails-internal Service. Critical config: the NemoGuardrails CR references a ConfigMap with models pointing to proxy ports (openai_api_base: http://nemo-guardrails-proxy:8081/v1 for main LLM, base_url on :8085 for content_safety) in Approach A, while Approach B embeds config.yaml, rails.co, and actions.py as separate ConfigMap data keys; Helm values toggle the stack via nemoGuardrails.enabled, contentSafety.deploy, and proxy.enabled, and a Secret auto-populates NEMO_GUARDRAILS_ENDPOINT to http://nemo-guardrails-internal:8000. Gotchas: nginx hardcodes OpenShift DNS resolver 172.30.0.10 (fails on non-OpenShift K8s), RawDeployment predictor DNS is content-safety-detector-predictor not Knative revision format, Helm templates must use {{ \"{{\" }} escaping for Jinja2 variables in content safety prompts, nginx writes to /tmp for non-root restricted SCC compliance, and OPENAI_API_KEY env var must be set even when unused in Approach B."
 metadata:
   type: deployment-pattern
 tags:
@@ -13,6 +13,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
     notes: "TrustyAI NemoGuardrails CRD + content safety vLLM InferenceService + nginx proxy for MaaS HTTP->HTTPS bridge and content safety routing"
     approach: "A"
+  - quickstart: "portfolio-manager-agent"
+    repo: "https://github.com/rh-ai-quickstart/portfolio-manager-agent"
+    notes: "Standalone NemoGuardrails CRD with ConfigMap containing Colang flows, Python topic-check action, regex/sensitive-data rails -- no nginx proxy, no content safety model, no RBAC"
+    approach: "B"
 ---
 
 # NeMo Guardrails via TrustyAI CRD with Nginx MaaS Proxy
@@ -172,6 +176,139 @@ rules:
 - The content safety detector InferenceService uses `serving.kserve.io/deploymentMode: RawDeployment` to avoid Knative/Istio requirements -- this means the predictor service DNS is `content-safety-detector-predictor` not the Knative revision format (see `deploy/helm/mortgage-ai/templates/nemo-guardrails-model.yaml`)
 - The nginx proxy writes temp files to `/tmp/*_temp` paths to run as non-root under OpenShift restricted SCC (see `nemo-guardrails-proxy.yaml` ConfigMap)
 - NeMo Guardrails config uses Helm's `{{ "{{" }}` escaping for Jinja2-style template variables (`{{ user_input }}`, `{{ bot_response }}`) used in content safety prompts (see `deploy/helm/mortgage-ai/templates/nemo-guardrails-config.yaml`)
+
+---
+
+## Approach B: Standalone NemoGuardrails CRD without Proxy or Content Safety Model (from portfolio-manager-agent)
+
+### When to Use
+
+When the application only needs input/output guardrails (regex, sensitive data detection, topic filtering) without external LLM proxy or GPU-based content safety models. Suited for simpler deployments where the guardrails run locally alongside the application.
+
+### Differences from Approach A
+
+- No nginx proxy -- the NemoGuardrails instance is accessed directly via an internal Service
+- No content safety detector model or InferenceService -- guardrails rely on regex patterns, sensitive data entities, and a custom Python action for topic checking
+- No RBAC (ServiceAccount/Role/RoleBinding) -- the CRD uses minimal configuration
+- The ConfigMap includes a Colang flow definition (`.co` file) and a Python action file (`actions.py`) embedded directly as ConfigMap data keys
+- `security.opendatahub.io/enable-auth: "true"` annotation enabled (Approach A uses `"false"`)
+- A manual internal Service is created alongside the CRD to provide a stable endpoint for the orchestrator
+
+### Implementation
+
+#### NemoGuardrails CRD with Manual Service
+
+```yaml
+# deploy/helm/templates/nemoguardrails-cr.yaml
+{{- if .Values.guardrails.enabled }}
+apiVersion: trustyai.opendatahub.io/v1alpha1
+kind: NemoGuardrails
+metadata:
+  name: guardrails
+  namespace: {{ .Values.namespace }}
+  annotations:
+    security.opendatahub.io/enable-auth: "true"
+spec:
+  nemoConfigs:
+    - name: guardrails-config
+      configMaps:
+        - guardrails-config
+  env:
+    - name: OPENAI_API_KEY
+      value: not-used
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guardrails-internal
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: guardrails
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+{{- end }}
+```
+
+#### ConfigMap with Colang Flows and Python Actions
+
+The ConfigMap embeds three files: `config.yaml` (rails config), `rails.co` (Colang flow definitions), and `actions.py` (custom Python action):
+
+```yaml
+# deploy/helm/templates/configmap-guardrails.yaml (excerpt)
+data:
+  config.yaml: |
+    rails:
+      config:
+        sensitive_data_detection:
+          input:
+            entities:
+              - CREDIT_CARD
+              - US_SSN
+              - PHONE_NUMBER
+        regex_detection:
+          input:
+            patterns:
+              - "\\b(password|secret|api[_-]?key|token)\\b"
+              - "\\d{3}-\\d{2}-\\d{4}"
+            case_insensitive: true
+      input:
+        flows:
+          - detect sensitive data on input
+          - regex check input
+          - check financial topic
+      output:
+        flows:
+          - detect sensitive data on output
+  rails.co: |
+    define flow check financial topic
+      $result = execute check_financial_topic
+      if $result == "blocked"
+        bot inform off topic
+        stop
+
+    define bot inform off topic
+      "I can only help with investment and portfolio-related questions."
+  actions.py: |
+    from nemoguardrails.actions import action
+
+    OFF_TOPIC_KEYWORDS = [
+        "recipe", "cooking", "weather forecast", "sports score",
+        "write me a poem", "tell me a joke", "song lyrics",
+    ]
+
+    @action(is_system_action=True)
+    async def check_financial_topic(context=None):
+        user_message = (context or {}).get("user_message", "").lower()
+        for keyword in OFF_TOPIC_KEYWORDS:
+            if keyword in user_message:
+                return "blocked"
+        return "allowed"
+```
+
+### Gotchas
+
+- The `OPENAI_API_KEY` env var is set to `"not-used"` because the NeMo Guardrails runtime requires it to be present even when no LLM-based guardrails are configured (see `deploy/helm/templates/nemoguardrails-cr.yaml`)
+- A manual Service `guardrails-internal` is created alongside the CRD to provide a stable endpoint -- the orchestrator references this via `GUARDRAILS_URL: "http://guardrails-internal:8000"` (see `deploy/helm/templates/deployment-orchestrator.yaml`)
+- The `guardrails.enabled` toggle in values.yaml gates both the NemoGuardrails CRD/Service/ConfigMap and the `GUARDRAILS_URL` env var in the orchestrator deployment (see `deploy/helm/templates/deployment-orchestrator.yaml` conditional block)
+- The ConfigMap uses multiple data keys (`config.yaml`, `rails.co`, `actions.py`) that NeMo Guardrails expects as separate files in its config directory -- the TrustyAI operator mounts the ConfigMap accordingly (see `deploy/helm/templates/configmap-guardrails.yaml`)
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A | Approach B |
+|----------|-----------|-----------|
+| LLM proxy | nginx HTTP-to-HTTPS proxy for MaaS | No proxy, direct internal Service |
+| Content safety | vLLM InferenceService (MIG GPU) | None -- regex + sensitive data + custom Python action only |
+| Auth annotation | `enable-auth: "false"` | `enable-auth: "true"` |
+| RBAC | ServiceAccount + Role + RoleBinding | None |
+| ConfigMap contents | models, regex, content safety flows | Regex, sensitive data, Colang flows, Python action |
+| GPU requirement | Yes (for content safety detector) | No |
 
 ## Related Patterns
 

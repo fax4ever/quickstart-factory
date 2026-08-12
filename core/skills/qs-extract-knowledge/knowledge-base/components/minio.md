@@ -1,11 +1,11 @@
 ---
 name: minio
-description: "S3-compatible object storage for attachments, models, RAG indexes, Langfuse, KServe, document/MLflow, video/config, and observability storage"
-summary: "Provides S3-compatible object storage across eight approaches (A-H) for chat attachments, RAG index/ML model persistence, infrastructure-only buckets, Langfuse v3 observability, KServe guardrail detector model serving, document uploads with MLflow artifacts, multimodal video/model/config pipeline storage, and cross-namespace Tempo/Loki observability backends. Choose A (boto3, compose profiles, DISABLE_ATTACHMENTS flag, configure-pipeline subchart) for optional single-consumer attachment uploads with lazy _get_s3() and session-scoped keys; B (minio SDK, StatefulSet/50Gi PVC, shared K8s Secret) for multi-consumer RAG/ML/Loki with LATEST.json status tracking and joblib serialization; C (in-repo Helm Deployment/100Gi PVC, post-install mc CLI Job, ODH dashboard labels) for infrastructure-only with Makefile DEPLOY_MINIO gating; D (embedded StatefulSet/10Gi PVC, init container mc with MC_CONFIG_DIR=/tmp/.mc, full restricted SCC) for Langfuse-dedicated S3 gated by langfuse.enabled with per-feature LANGFUSE_S3_*_FORCE_PATH_STYLE env vars; E (TrustyAI image, HuggingFace CLI init container, RHOAI data connection Secret with opendatahub.io/connection-type: s3) for KServe InferenceService detector models with helm.sh/weight ordering; F (async boto3 singleton via run_in_executor, embedded Deployment with minio.enabled toggle and external S3 override) for dual-consumer document uploads with presigned URLs and path traversal protection plus MLflow artifact storage with testcontainers integration tests; G (minio SDK v7.2.20 with retry-with-backoff, ai-architecture-charts subchart v0.5.4, ephemeral volumeClaimTemplates:[]) for multi-bucket video/model/config with s3:// URI scheme, config bucket for horizontal scaling, and server-side copy for demo seeding; H (in-repo chart with hardcoded fullname/namespace for cross-namespace CRD discovery, per-consumer credential Secrets, umbrella chart file:// dependency ordering, pinned mc CLI RELEASE.2024-11-21T17-21-54Z) for TempoStack/LokiStack operator CRD consumption with post-install/post-upgrade bucket-init Job. Env var naming differs per approach -- ATTACHMENTS_BUCKET_* (A), MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY with secure=False (B), minio.userId/password Helm values (C), LANGFUSE_S3_*_FORCE_PATH_STYLE: \"true\" required for path-style addressing (D), AWS_* keys in data connection Secret (E), S3_*/AWS_*/MLFLOW_S3_ENDPOINT_URL from centralized Secret with secretKeyRef (F), MINIO_ENDPOINT with http:// scheme auto-stripped by get_minio_client() plus CONFIG_BUCKET/MINIO_VIDEO_BUCKET for bucket-specific env vars (G), plain Helm values propagated via Makefile to both MinIO and consumer charts with per-consumer stringData Secrets using bucket (Tempo) vs bucketnames (Loki) field naming (H) -- and Python SDK splits between boto3 lazy initialization for test compatibility (A), minio SDK centralized client factory with config priority params > env > defaults (B), boto3 async singleton with _ensure_bucket() at app lifespan startup (F), and minio SDK with URL parsing and retry-with-backoff download (G). Common gotchas: inverted DISABLE_ATTACHMENTS logic bridged by start script (A); Loki deploys its own separate MinIO instance requiring anyuid SCC via minio-sa ServiceAccount (B); post-install bucket Job lacks wait-for-ready with backoffLimit: 3 and mc:latest unpinned (C); MC_CONFIG_DIR=/tmp/.mc required because default ~/.mc is not writable under restricted SCC, and anonymous download policy exposes all three buckets namespace-wide (D); credentials hardcoded as plain-text THEACCESSKEY/THESECRETKEY and TrustyAI image has different update cadence than standard quay.io/minio/minio (E); Helm entrypoint only pre-creates documents bucket while compose creates both documents and mlflow, and _ensure_bucket() raises ClientError if MinIO not yet healthy at API startup (F); volumeClaimTemplates:[] means all data lost on pod restart including user-uploaded configs, _ping_minio() succeeds before bucketCreation Job completes, and inconsistent retry defaults across download_file() (5 retries/3s) vs _ensure_object_with_retry() (12 retries/2s) (G); hardcoded fullname/namespace bypasses Helm naming causing conflicts on multi-release install, Makefile deletes routes post-install as \"broken upstream routes\" despite templates using correct fullname helper, and bucket-init Job runs asynchronously after helm install --wait returns so consumers may start before buckets exist (H)."
+description: "S3-compatible object storage for attachments, models, RAG indexes, Langfuse, KServe, document/MLflow, video/config, observability, and model-upload storage"
+summary: "Provides S3-compatible object storage across nine approaches (A-I) for chat attachments, RAG index/ML model persistence, infrastructure-only buckets, Langfuse v3 observability, KServe guardrail detector model serving, document uploads with MLflow artifacts, multimodal video/model/config pipeline storage, cross-namespace Tempo/Loki observability backends, and KServe sklearn model serving via mc CLI upload Job with ServiceAccount-based S3 auth. Choose A (boto3, compose profiles, DISABLE_ATTACHMENTS flag, configure-pipeline subchart) for optional single-consumer attachment uploads with lazy _get_s3() and session-scoped keys; B (minio SDK, StatefulSet/50Gi PVC, shared K8s Secret) for multi-consumer RAG/ML/Loki with LATEST.json status tracking and joblib serialization; C (in-repo Helm Deployment/100Gi PVC, post-install mc CLI Job, ODH dashboard labels) for infrastructure-only with Makefile DEPLOY_MINIO gating; D (embedded StatefulSet/10Gi PVC, init container mc with MC_CONFIG_DIR=/tmp/.mc, full restricted SCC) for Langfuse-dedicated S3 gated by langfuse.enabled with per-feature LANGFUSE_S3_*_FORCE_PATH_STYLE env vars; E (TrustyAI image, HuggingFace CLI init container, RHOAI data connection Secret with opendatahub.io/connection-type: s3) for KServe InferenceService detector models with helm.sh/weight ordering; F (async boto3 singleton via run_in_executor, embedded Deployment with minio.enabled toggle and external S3 override) for dual-consumer document uploads with presigned URLs and path traversal protection plus MLflow artifact storage with testcontainers integration tests; G (minio SDK v7.2.20 with retry-with-backoff, ai-architecture-charts subchart v0.5.4, ephemeral volumeClaimTemplates:[]) for multi-bucket video/model/config with s3:// URI scheme, config bucket for horizontal scaling, and server-side copy for demo seeding; H (in-repo chart with hardcoded fullname/namespace for cross-namespace CRD discovery, per-consumer credential Secrets, umbrella chart file:// dependency ordering, pinned mc CLI RELEASE.2024-11-21T17-21-54Z) for TempoStack/LokiStack operator CRD consumption with post-install/post-upgrade bucket-init Job; I (ServiceAccount-based serving.kserve.io/s3-* annotation auth, init container model extraction from pre-built image, mc CLI upload Job with 30-retry wait, RawDeployment InferenceService mode, 1Gi PVC) for KServe sklearn model serving with separate local dev (MLServer direct) vs cluster (MinIO + KServe) flows. Env var naming differs per approach -- ATTACHMENTS_BUCKET_* (A), MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY with secure=False (B), minio.userId/password Helm values (C), LANGFUSE_S3_*_FORCE_PATH_STYLE: \"true\" required for path-style addressing (D), AWS_* keys in data connection Secret (E), S3_*/AWS_*/MLFLOW_S3_ENDPOINT_URL from centralized Secret with secretKeyRef (F), MINIO_ENDPOINT with http:// scheme auto-stripped by get_minio_client() plus CONFIG_BUCKET/MINIO_VIDEO_BUCKET for bucket-specific env vars (G), plain Helm values propagated via Makefile to both MinIO and consumer charts with per-consumer stringData Secrets using bucket (Tempo) vs bucketnames (Loki) field naming (H), AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY in KServe-annotated Secret consumed via model-serving ServiceAccount with MC_CONFIG_DIR=/tmp/.mc in upload Job (I) -- and Python SDK splits between boto3 lazy initialization for test compatibility (A), minio SDK centralized client factory with config priority params > env > defaults (B), boto3 async singleton with _ensure_bucket() at app lifespan startup (F), and minio SDK with URL parsing and retry-with-backoff download (G). Common gotchas: inverted DISABLE_ATTACHMENTS logic bridged by start script (A); Loki deploys its own separate MinIO instance requiring anyuid SCC via minio-sa ServiceAccount (B); post-install bucket Job lacks wait-for-ready with backoffLimit: 3 and mc:latest unpinned (C); MC_CONFIG_DIR=/tmp/.mc required because default ~/.mc is not writable under restricted SCC, and anonymous download policy exposes all three buckets namespace-wide (D); credentials hardcoded as plain-text THEACCESSKEY/THESECRETKEY and TrustyAI image has different update cadence than standard quay.io/minio/minio (E); Helm entrypoint only pre-creates documents bucket while compose creates both documents and mlflow, and _ensure_bucket() raises ClientError if MinIO not yet healthy at API startup (F); volumeClaimTemplates:[] means all data lost on pod restart including user-uploaded configs, _ping_minio() succeeds before bucketCreation Job completes, and inconsistent retry defaults across download_file() (5 retries/3s) vs _ensure_object_with_retry() (12 retries/2s) (G); hardcoded fullname/namespace bypasses Helm naming causing conflicts on multi-release install, Makefile deletes routes post-install as \"broken upstream routes\" despite templates using correct fullname helper, and bucket-init Job runs asynchronously after helm install --wait returns so consumers may start before buckets exist (H); dual-purpose AWS_ACCESS_KEY_ID Secret key used both for KServe S3 auth and remapped to MINIO_ROOT_USER, mc alias set retry succeeds before MinIO fully ready for bucket operations, and Deployment lacks security contexts, health probes, and resource limits unlike approaches C and D (I)."
 metadata:
   type: component
 tags:
-  tech_stack: [minio, python, boto3, fastapi, flask, joblib, faiss, helm, langfuse, kserve, huggingface, mlflow, langgraph, opencv, mediamtx]
+  tech_stack: [minio, python, boto3, fastapi, flask, joblib, faiss, helm, langfuse, kserve, huggingface, mlflow, langgraph, opencv, mediamtx, mlserver, sklearn]
   ai_pattern: [rag, embeddings, vector-search, data-pipeline, evaluation, guardrails, model-serving, agents, multimodal, observability]
   platform: [openshift, rhoai, opendatahub, kserve, tempo, loki]
   data_layer: [minio]
@@ -42,6 +42,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/openshift-ai-observability-summarizer"
     notes: "Cross-namespace MinIO Deployment for observability backends (Tempo traces, Loki logs), hardcoded fullname for CRD consumer service discovery, per-consumer credential Secrets, umbrella chart dependency ordering"
     approach: "H"
+  - quickstart: "portfolio-manager-agent"
+    repo: "https://github.com/rh-ai-quickstart/portfolio-manager-agent"
+    notes: "MinIO Deployment for KServe sklearn model serving via mc CLI upload Job, ServiceAccount-based S3 auth with serving.kserve.io annotations, RawDeployment InferenceService mode"
+    approach: "I"
 ---
 
 # MinIO
@@ -1841,20 +1845,302 @@ The Makefile `install-minio` target includes a cleanup step that deletes routes 
 
 ---
 
+## Approach I: KServe Model Upload via mc CLI Job with ServiceAccount-Based S3 Auth (from portfolio-manager-agent)
+
+### When to Use
+
+When MinIO serves as S3-compatible storage for KServe-served ML models (e.g., sklearn classifiers) that are pre-packaged in container images and uploaded via an mc CLI Job at deploy time. This approach uses the native KServe ServiceAccount-based S3 authentication pattern with `serving.kserve.io/s3-*` annotations on the credentials Secret, and InferenceService `storageUri` with `serviceAccountName` -- rather than the RHOAI data connection Secret pattern used in Approach E.
+
+### Differences from Approaches A through H
+
+- **KServe auth method:** ServiceAccount-based auth with `serving.kserve.io/s3-endpoint`, `serving.kserve.io/s3-usehttps`, `serving.kserve.io/s3-region` annotations on the credentials Secret, consumed via `serviceAccountName` in InferenceService (not RHOAI data connection with `storage.key` like E)
+- **Model source:** Models are pre-packaged in a container image and copied out via an init container, then uploaded to MinIO by mc CLI -- not downloaded from HuggingFace (E) or serialized by Python code (B)
+- **Container image:** Standard `docker.io/minio/minio:latest` (not TrustyAI image like E)
+- **Upload mechanism:** Kubernetes Job with init container (model copy) + mc CLI container (bucket creation + upload) -- single Job handles both, unlike C's separate post-install hook Job or E's init container on the Deployment
+- **InferenceService mode:** Uses `serving.kserve.io/deploymentMode: RawDeployment` annotation with `mlserver-sklearn` runtime and `storageUri: s3://models/guidelines-mlp` (not `storage.key` + `path` like E)
+- **Deployment kind:** Kubernetes Deployment with separate 1Gi PVC (smallest PVC across all approaches)
+- **Chart source:** Embedded in parent chart templates at `deploy/helm/templates/` (not a subchart)
+- **No Python SDK:** No application code interacts with MinIO -- purely infrastructure for KServe model serving
+- **Compose pattern:** Separate `model-upload` service creates bucket only (model served from MLServer image locally, no MinIO upload needed for local dev)
+- **CI pattern:** MicroShift E2E creates a hostPath PV explicitly matched to the `minio-data` PVC claim
+- **Secret key names:** Uses `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` as Secret keys (matching AWS SDK convention for KServe compatibility)
+
+### Tech Stack & Dependencies
+- **Runtime:** MinIO server (S3-compatible API)
+- **Container image:** `docker.io/minio/minio:latest`
+- **Bucket init / model upload image:** `docker.io/minio/mc:latest`
+- **Model source image:** `quay.io/ikatav/portfolio-manager-agent:guidelines-model` (contains pre-trained sklearn model)
+- **Key dependencies:** KServe InferenceService with `mlserver-sklearn` ServingRuntime consumes the stored model
+- **Helm chart:** Embedded in parent chart `deploy/helm/templates/deployment-minio.yaml` (not a subchart)
+
+### Key Patterns
+
+#### Deployment with 1Gi PVC
+
+MinIO runs as a single-replica Deployment with a separate 1Gi PVC -- the smallest persistent storage allocation across all approaches, sized for a single sklearn model file.
+
+```yaml
+# deploy/helm/templates/deployment-minio.yaml (lines 1-11, 16-58)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: minio
+          image: docker.io/minio/minio:latest
+          args:
+            - server
+            - /data
+            - --console-address
+            - ":9001"
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-data
+```
+
+#### KServe-Annotated Credentials Secret with ServiceAccount
+
+The credentials Secret carries KServe-specific `serving.kserve.io/s3-*` annotations that tell KServe how to connect to MinIO. A dedicated `model-serving` ServiceAccount references this Secret, and InferenceServices use `serviceAccountName` to inherit the S3 credentials.
+
+```yaml
+# deploy/helm/templates/secret-minio.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+  annotations:
+    serving.kserve.io/s3-endpoint: minio.{{ .Values.namespace }}.svc.cluster.local:9000
+    serving.kserve.io/s3-usehttps: "0"
+    serving.kserve.io/s3-region: us-east-1
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: {{ .Values.minio.rootUser }}
+  AWS_SECRET_ACCESS_KEY: {{ .Values.minio.rootPassword }}
+```
+
+```yaml
+# deploy/helm/templates/sa-model-serving.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: model-serving
+secrets:
+  - name: minio-credentials
+```
+
+#### Model Upload Job with Init Container Pipeline
+
+A Kubernetes Job handles both model extraction and upload in a two-stage pipeline: the init container copies model files from a pre-built container image to a shared emptyDir volume, then the main container uses mc CLI to create a bucket and upload the model files. The mc container includes a wait-for-ready loop polling MinIO with 30 retries at 2-second intervals.
+
+```yaml
+# deploy/helm/templates/job-model-upload.yaml (lines 1-58)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-upload
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: prepare-model
+          image: {{ .Values.image.repository }}:{{ .Values.image.tags.guidelinesModel }}
+          command:
+            - sh
+            - -c
+            - cp /opt/mlserver/models/guidelines-mlp/* /export/
+          volumeMounts:
+            - name: model-files
+              mountPath: /export
+      containers:
+        - name: upload
+          image: docker.io/minio/mc:latest
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              for i in $(seq 1 30); do
+                mc alias set minio http://minio:9000 "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" && break
+                echo "Waiting for MinIO... ($i/30)"
+                sleep 2
+              done
+              mc mb --ignore-existing minio/models
+              mc cp --recursive /export/ minio/models/guidelines-mlp/
+          env:
+            - name: MC_CONFIG_DIR
+              value: /tmp/.mc
+```
+
+#### KServe InferenceService with RawDeployment Mode and storageUri
+
+The InferenceService uses `serving.kserve.io/deploymentMode: RawDeployment` annotation for simpler deployment without Knative, references the `model-serving` ServiceAccount for S3 credentials, and uses `storageUri: s3://models/guidelines-mlp` to locate the model in MinIO.
+
+```yaml
+# deploy/helm/templates/inferenceservice-guidelines-mlp.yaml
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: guidelines-mlp
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    serviceAccountName: model-serving
+    model:
+      modelFormat:
+        name: sklearn
+      runtime: mlserver-sklearn
+      storageUri: s3://models/guidelines-mlp
+```
+
+#### Compose: Local Dev Without MinIO Upload
+
+In the compose setup, MinIO still runs but the model-upload service only creates the bucket -- the model is served directly from the MLServer container image locally, avoiding the need to upload to MinIO for local development.
+
+```yaml
+# deploy/local/compose.yml (lines 82-100)
+model-upload:
+  image: docker.io/minio/mc:latest
+  depends_on:
+    minio:
+      condition: service_started
+  entrypoint: /bin/sh
+  command:
+    - -c
+    - |
+      for i in $$(seq 1 30); do
+        mc alias set minio http://minio:9000 minioadmin minioadmin && break
+        echo "Waiting for MinIO... ($$i/30)"
+        sleep 2
+      done
+      mc mb --ignore-existing minio/models
+      echo "MinIO bucket ready (model served from MLServer image locally)"
+  restart: "no"
+```
+
+#### CI: MicroShift hostPath PV for PVC Binding
+
+The E2E workflow creates a hostPath PV with an explicit `claimRef` to bind to the `minio-data` PVC, since MicroShift does not have a dynamic storage provisioner.
+
+```yaml
+# .github/workflows/e2e-microshift.yml (lines 107-126)
+sudo podman exec microshift-okd-1 mkdir -p /var/data/minio
+sudo podman exec microshift-okd-1 chmod 777 /var/data/minio
+
+oc apply -n "$NAMESPACE" -f - <<'EOF'
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /var/data/minio
+  claimRef:
+    namespace: ci-e2e
+    name: minio-data
+EOF
+```
+
+### Configuration
+- **Environment variables (MinIO container):**
+  - `MINIO_ROOT_USER` -- from `minio-credentials` Secret key `AWS_ACCESS_KEY_ID` (default: `minioadmin`)
+  - `MINIO_ROOT_PASSWORD` -- from `minio-credentials` Secret key `AWS_SECRET_ACCESS_KEY` (default: `minioadmin`)
+- **Environment variables (model-upload Job):**
+  - `MC_CONFIG_DIR` -- set to `/tmp/.mc` for OpenShift writability
+  - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` -- from `minio-credentials` Secret
+- **Helm values:**
+  - `minio.rootUser` -- MinIO root user (default: `minioadmin`)
+  - `minio.rootPassword` -- MinIO root password (default: `minioadmin`)
+  - `namespace` -- deployment namespace (default: `investment-advisor-agent`)
+- **KServe Secret annotations:**
+  - `serving.kserve.io/s3-endpoint` -- MinIO service FQDN (`minio.<namespace>.svc.cluster.local:9000`)
+  - `serving.kserve.io/s3-usehttps` -- set to `"0"` for plain HTTP
+  - `serving.kserve.io/s3-region` -- set to `us-east-1`
+- **Compose (local dev):**
+  - `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` -- hardcoded `minioadmin` (not from Secret)
+
+### Known Gotchas
+- The MinIO Deployment consumes credentials from `minio-credentials` Secret using `AWS_ACCESS_KEY_ID` as the key for `MINIO_ROOT_USER`. This dual-purpose naming means the same Secret key is used both as an AWS SDK credential name (for KServe) and remapped to the MinIO server root user (via `secretKeyRef`). Changing the Secret key name would break both consumers.
+- The model-upload Job uses `MC_CONFIG_DIR=/tmp/.mc` (line 52 of `job-model-upload.yaml`) for the same reason as Approach D -- the default `~/.mc` directory is not writable under OpenShift's restricted SCC.
+- The model-upload Job uses `minio/mc:latest` (unpinned) like Approach C, creating potential version mismatch risk. The `mc alias set` retry loop polls 30 times with 2-second sleeps (1 minute total), but there is no health check -- it retries `mc alias set` which can succeed before MinIO is fully ready to accept bucket operations.
+- The Job uses `ttlSecondsAfterFinished: 300` for automatic cleanup after 5 minutes of completion, unlike Approach C's `helm.sh/hook-delete-policy` or Approach H's `before-hook-creation,hook-succeeded` policies.
+- The compose model-upload service has `restart: "no"` and only creates the bucket -- the comment on line 99 of `compose.yml` explicitly notes "model served from MLServer image locally," meaning the local dev flow differs from the cluster flow where models must be uploaded to MinIO for KServe.
+- The `serving.kserve.io/s3-usehttps: "0"` annotation (line 8 of `secret-minio.yaml`) disables HTTPS for internal cluster traffic. The annotation value must be the string `"0"`, not `"false"` -- KServe's S3 config parsing expects this specific format.
+- The InferenceService uses `serving.kserve.io/deploymentMode: RawDeployment`, which deploys a standard Kubernetes Deployment instead of a Knative Service. This avoids needing the Knative Serving stack but loses autoscaling features.
+- The CI workflow (`e2e-microshift.yml` lines 107-108) creates the MinIO data directory with `chmod 777` inside the MicroShift container, which is necessary because the MinIO container runs as a non-root user. The PV uses `claimRef` to pre-bind to the `minio-data` PVC by name and namespace.
+- The Deployment and Service have no security contexts, health probes, or resource limits defined -- unlike Approach D (full restricted SCC) or Approach C (explicit readiness/liveness probes and resource limits).
+
+### Testing Notes
+- Verify MinIO deployment: `oc rollout status deployment/minio -n <namespace>`
+- Wait for model-upload Job completion: `oc wait --for=condition=Complete job/model-upload -n <namespace> --timeout=180s`
+- Verify model files uploaded: use MinIO console at port 9001 or exec into mc container to list `minio/models/guidelines-mlp/`
+- Verify InferenceService readiness: `oc get isvc guidelines-mlp` should show `READY=True` after model download from MinIO
+- The verify_cluster.sh script checks minio deployment rollout status as part of the overall health check
+- In local dev, verify MinIO is running and bucket exists, but model verification should target the MLServer container directly (port 8081)
+
+### Related Patterns
+- Architecture: KServe InferenceService with RawDeployment mode for sklearn model serving
+- Deployment: ServiceAccount-based S3 auth with `serving.kserve.io/s3-*` annotations
+- Deployment: Init container pipeline for model extraction from container images
+- Deployment: Separate local dev and cluster model serving flows (MLServer direct vs MinIO + KServe)
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (lemonade-stand-assistant) | Approach F (multi-agent-loan-origination) | Approach G (multimodal-compliance-monitor) | Approach H (openshift-ai-observability-summarizer) |
-|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|---------------------------------------|-------------------------------------------|---------------------------------------------|------------------------------------------------------|
-| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) | Langfuse v3 S3 backend (events, exports, media) | Guardrail detector model storage for KServe | Document uploads + MLflow artifact storage | Video/model/config storage for multimodal video processing pipeline | Observability backend storage (Tempo traces, Loki logs) |
-| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client | None -- Langfuse handles S3 internally | None -- KServe handles S3 via data connection | boto3 / botocore with async thread-pool executor wrapper | minio (>=7.2.20) with retry-with-backoff and URL parsing | None -- operator CRDs handle S3 internally |
-| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) | Embedded in parent chart templates (StatefulSet + VolumeClaimTemplate) | Embedded in parent chart templates (Deployment + separate PVC) | Embedded in parent chart templates (Deployment + optional PVC) | ai-architecture-charts minio subchart (StatefulSet, PVC disabled via override) | In-repo Helm chart (Deployment + separate PVC), cross-namespace to `observability-hub` |
-| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag | Conditional on `langfuse.enabled` | Always-on required dependency | Optional via Helm `minio.enabled` toggle with external S3 override | Always-on required dependency | Always-on required dependency (first in observability stack install order) |
-| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart | Two (Langfuse web + worker) | Multiple KServe InferenceServices (HAP, prompt injection detectors) | Two (FastAPI document API + MLflow artifact store) | Multiple (backend, init-data Job, video-stream init container, runtime-deployer) | Two operator CRDs (TempoStack, LokiStack) via per-consumer credential Secrets |
-| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label | `<release>-minio-secret` with access-key/secret-key fields | RHOAI data connection Secret with AWS_* keys and `opendatahub.io/connection-type: s3` | Centralized `<release>-secret` with S3_* and MINIO_ROOT_* keys via secretKeyRef | Plain values in Helm values.yaml injected directly into env vars | Per-consumer Secrets (`minio-tempo-credentials`, `minio-loki-credentials`) created by consumer charts with stringData |
-| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination | Not created (internal-only) | Not created (internal-only) | Not created (internal-only) | API + WebUI routes with TLS edge termination (from subchart) | Created by chart but deleted post-install by Makefile cleanup |
-| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC via StatefulSet VolumeClaimTemplate | 50Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC or emptyDir (toggled via `persistence.enabled`) | Ephemeral -- VolumeClaimTemplate overridden to [] (compose uses named volume) | 10Gi PVC (ReadWriteOnce, optional storageClassName) |
-| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI | Init container with mc CLI + wait-for-ready loop | Init container downloads models directly to PVC | Entrypoint mkdir + Python SDK auto-create on startup | Subchart `bucketCreation` feature with bucket list | Post-install/post-upgrade hook Job with mc CLI wait-for-ready loop, iterates configurable bucket array |
-| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) | No | Yes (`opendatahub.io/dashboard: 'true'` + `opendatahub.io/managed: 'true'` labels, `opendatahub.io/connection-type: s3` annotation) | No | No | No |
-| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) | Embedded in parent chart templates | Embedded in parent chart templates | Embedded in parent chart templates | ai-architecture-charts (minio v0.5.4 subchart) | In-repo (`deploy/helm/minio/`), listed as dependency in umbrella chart |
-| Image version | latest | latest | latest | Pinned release tag | latest (TrustyAI image) | latest | latest (from subchart) | latest (server), pinned RELEASE.2024-11-21T17-21-54Z (mc CLI) |
-| Security context | Not specified | Not specified | Empty (`{}`) | Full OpenShift restricted SCC (runAsNonRoot, drop ALL, seccomp) | Partial (drop ALL, seccomp, no runAsNonRoot) | Inherited from shared podSecurityContext/securityContext values | Not specified (subchart defaults) | Empty `{}` on Deployment (let OpenShift assign), full restricted SCC on bucket-init Job |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (lemonade-stand-assistant) | Approach F (multi-agent-loan-origination) | Approach G (multimodal-compliance-monitor) | Approach H (openshift-ai-observability-summarizer) | Approach I (portfolio-manager-agent) |
+|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|---------------------------------------|-------------------------------------------|---------------------------------------------|------------------------------------------------------|---------------------------------------|
+| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) | Langfuse v3 S3 backend (events, exports, media) | Guardrail detector model storage for KServe | Document uploads + MLflow artifact storage | Video/model/config storage for multimodal video processing pipeline | Observability backend storage (Tempo traces, Loki logs) | KServe sklearn model serving via mc CLI upload Job |
+| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client | None -- Langfuse handles S3 internally | None -- KServe handles S3 via data connection | boto3 / botocore with async thread-pool executor wrapper | minio (>=7.2.20) with retry-with-backoff and URL parsing | None -- operator CRDs handle S3 internally | None -- KServe handles S3 via ServiceAccount-based auth |
+| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) | Embedded in parent chart templates (StatefulSet + VolumeClaimTemplate) | Embedded in parent chart templates (Deployment + separate PVC) | Embedded in parent chart templates (Deployment + optional PVC) | ai-architecture-charts minio subchart (StatefulSet, PVC disabled via override) | In-repo Helm chart (Deployment + separate PVC), cross-namespace to `observability-hub` | Embedded in parent chart templates (Deployment + 1Gi PVC) |
+| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag | Conditional on `langfuse.enabled` | Always-on required dependency | Optional via Helm `minio.enabled` toggle with external S3 override | Always-on required dependency | Always-on required dependency (first in observability stack install order) | Always-on required dependency |
+| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart | Two (Langfuse web + worker) | Multiple KServe InferenceServices (HAP, prompt injection detectors) | Two (FastAPI document API + MLflow artifact store) | Multiple (backend, init-data Job, video-stream init container, runtime-deployer) | Two operator CRDs (TempoStack, LokiStack) via per-consumer credential Secrets | Single KServe InferenceService (guidelines-mlp sklearn model) |
+| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label | `<release>-minio-secret` with access-key/secret-key fields | RHOAI data connection Secret with AWS_* keys and `opendatahub.io/connection-type: s3` | Centralized `<release>-secret` with S3_* and MINIO_ROOT_* keys via secretKeyRef | Plain values in Helm values.yaml injected directly into env vars | Per-consumer Secrets (`minio-tempo-credentials`, `minio-loki-credentials`) created by consumer charts with stringData | `minio-credentials` Secret with `serving.kserve.io/s3-*` annotations, consumed via ServiceAccount |
+| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination | Not created (internal-only) | Not created (internal-only) | Not created (internal-only) | API + WebUI routes with TLS edge termination (from subchart) | Created by chart but deleted post-install by Makefile cleanup | Not created (internal-only) |
+| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC via StatefulSet VolumeClaimTemplate | 50Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC or emptyDir (toggled via `persistence.enabled`) | Ephemeral -- VolumeClaimTemplate overridden to [] (compose uses named volume) | 10Gi PVC (ReadWriteOnce, optional storageClassName) | 1Gi PVC (ReadWriteOnce, separate resource) |
+| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI | Init container with mc CLI + wait-for-ready loop | Init container downloads models directly to PVC | Entrypoint mkdir + Python SDK auto-create on startup | Subchart `bucketCreation` feature with bucket list | Post-install/post-upgrade hook Job with mc CLI wait-for-ready loop, iterates configurable bucket array | mc CLI Job with init container model copy + bucket creation + recursive upload |
+| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) | No | Yes (`opendatahub.io/dashboard: 'true'` + `opendatahub.io/managed: 'true'` labels, `opendatahub.io/connection-type: s3` annotation) | No | No | No | No |
+| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) | Embedded in parent chart templates | Embedded in parent chart templates | Embedded in parent chart templates | ai-architecture-charts (minio v0.5.4 subchart) | In-repo (`deploy/helm/minio/`), listed as dependency in umbrella chart | Embedded in parent chart templates (`deploy/helm/templates/`) |
+| Image version | latest | latest | latest | Pinned release tag | latest (TrustyAI image) | latest | latest (from subchart) | latest (server), pinned RELEASE.2024-11-21T17-21-54Z (mc CLI) | latest (both server and mc CLI) |
+| Security context | Not specified | Not specified | Empty (`{}`) | Full OpenShift restricted SCC (runAsNonRoot, drop ALL, seccomp) | Partial (drop ALL, seccomp, no runAsNonRoot) | Inherited from shared podSecurityContext/securityContext values | Not specified (subchart defaults) | Empty `{}` on Deployment (let OpenShift assign), full restricted SCC on bucket-init Job | Not specified |

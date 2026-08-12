@@ -1,7 +1,7 @@
 ---
 name: github-actions-reusable-workflow-per-image-path-trigger
 description: Per-component GitHub Actions workflows calling a shared reusable build-and-push workflow with path-filtered triggers
-summary: "Builds multiple container images from a monorepo using per-image GitHub Actions caller workflows with path-filtered push/pull_request triggers, each calling a shared reusable-docker-build.yml via workflow_call that runs Docker Buildx on linux/amd64, logs into Quay.io via explicitly-passed QUAY_USERNAME/QUAY_PASSWORD secrets, generates triple tags (latest/SHA/PR) with docker/metadata-action v5, and pushes only on non-PR events using GHA cache mode=max. Use over matrix-based builds (see github-actions-path-filtered-matrix-skopeo-retag.md) when each image needs independent trigger control and workflow clarity; supporting workflows cover pytest with PostgreSQL 16-alpine service container using astral-sh/setup-uv and hashFiles-keyed venv cache, pre-commit lint requiring Go 1.22 for yamlfmt, workflow_dispatch autofix PR creation, and DareFox/delete-cache-by-key for stale cache cleanup on uv.lock changes. The reusable workflow accepts inputs for image_name, context, dockerfile, and optional use_lfs boolean for Git LFS checkout; the data image uniquely sets context to ./app (not ./app/data-image) because its Dockerfile copies from sibling directories like app/models/ and app/data/. Each caller workflow must include its own .yml path in the paths filter for self-triggering rebuilds, the test workflow has PR triggers commented out, and pre-commit-autofix runs only via workflow_dispatch creating a PR rather than blocking merges."
+summary: "Builds multiple container images from a monorepo using per-image GitHub Actions caller workflows with path-filtered triggers (Approach A: 6 separate files, separate Quay repos) or a single dynamic jq-matrix caller with dorny/paths-filter v3 (Approach B: shared Quay repo with per-service tags via service_tag input, fail-fast: false), both invoking a shared reusable-docker-build.yml via workflow_call that runs Docker Buildx on linux/amd64, logs into Quay.io via explicitly-passed QUAY_USERNAME/QUAY_PASSWORD secrets, generates triple tags (latest/SHA/PR) with docker/metadata-action v5, and pushes only on non-PR events using GHA cache mode=max. Choose Approach A when each image needs independent trigger control, self-triggering on workflow file changes, and separate Quay repos per image; choose Approach B when images share one Quay repo with per-service tags and workflow_dispatch should build all services rather than one, with has_services output preventing empty matrix errors. The reusable workflow accepts inputs for image_name, context, dockerfile, and optional use_lfs boolean for Git LFS checkout; supporting workflows cover pytest with PostgreSQL 16-alpine service container using astral-sh/setup-uv and hashFiles-keyed venv cache, pre-commit lint requiring Go 1.22 for yamlfmt, workflow_dispatch autofix PR creation, DareFox/delete-cache-by-key for stale cache cleanup on uv.lock changes, and Helm lint + compose config validation (Approach B only). Each Approach A caller must include its own .yml path in the paths filter for self-triggering rebuilds, the data image uniquely sets context to ./app (not ./app/data-image) because its Dockerfile copies from sibling directories like app/models/ and app/data/, test workflow has PR triggers commented out, and pre-commit-autofix runs only via workflow_dispatch creating a PR rather than blocking merges."
 metadata:
   type: deployment-pattern
 tags:
@@ -13,6 +13,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multimodal-compliance-monitor"
     notes: "6 per-image caller workflows + 1 reusable workflow + 1 test + 1 lint + 1 pre-commit-autofix + 1 cache cleanup; Quay.io registry with GHA cache"
     approach: "A"
+  - quickstart: "portfolio-manager-agent"
+    repo: "https://github.com/rh-ai-quickstart/portfolio-manager-agent"
+    notes: "Single caller workflow with dorny/paths-filter change detection and dynamic jq-built matrix, calling the same reusable-docker-build.yml; shared image repo with per-service tags, workflow_dispatch builds all"
+    approach: "B"
 ---
 
 # Per-Image Path-Filtered Workflows with Reusable Docker Build
@@ -188,6 +192,125 @@ jobs:
 - The test workflow is triggered on `push` to main but has PR triggers commented out, suggesting tests were initially run on PRs but disabled
 - The `pre-commit-autofix` workflow only runs on `workflow_dispatch` and creates a PR with auto-fixes rather than blocking merges
 - The lint workflow installs Go 1.22 and `yamlfmt` in addition to Python for the `yamlfmt` pre-commit hook
+
+---
+
+## Approach B: Dynamic jq Matrix Caller with Reusable Build (from portfolio-manager-agent)
+
+### When to Use
+
+When all images share a single container registry repository with per-service tags and you want a single caller workflow rather than one per image. The dynamic matrix avoids spawning build jobs for unchanged services.
+
+### Differences from Approach A
+
+- Single caller workflow (`build-images.yml`) instead of 6 separate per-image workflow files
+- Matrix is dynamically constructed via `jq` based on `dorny/paths-filter@v3` outputs, so unchanged services produce no matrix entries (no job spawned at all)
+- All images share one Quay repo (`ikatav/portfolio-manager-agent`) differentiated by per-service tags (`ui`, `orchestrator`, `risk`, `portfolio`, `guidelines`) instead of separate repos per image
+- `workflow_dispatch` builds ALL services (hardcoded full matrix), not just changed ones
+- No `use_lfs` input, no stale cache cleanup workflow, no PostgreSQL test service container
+- Supporting workflows include helm lint + compose config validation, frontend npm test, backend pytest, pre-commit lint, and pre-commit autofix PR creation
+
+### Implementation
+
+#### Dynamic Matrix Construction
+
+The `build-matrix` job takes path-filter outputs and dynamically constructs a JSON matrix using jq:
+
+```yaml
+# .github/workflows/build-images.yml (build-matrix job)
+- name: Build matrix from changed services
+  id: set-matrix
+  run: |
+    services='[]'
+
+    # On workflow_dispatch, build all services
+    if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+      services='[
+        {"name":"ui","image_name":"ikatav/portfolio-manager-agent","service_tag":"ui","context":"./frontend","dockerfile":"./frontend/Dockerfile"},
+        {"name":"orchestrator","image_name":"ikatav/portfolio-manager-agent","service_tag":"orchestrator","context":"./orchestrator/src","dockerfile":"./orchestrator/src/Dockerfile"},
+        ...
+      ]'
+    else
+      services='[]'
+      if [ "${{ needs.detect-changes.outputs.ui }}" = "true" ]; then
+        services=$(echo "$services" | jq -c '. + [{"name":"ui",...}]')
+      fi
+      ...
+    fi
+
+    echo "matrix={\"service\":$services}" >> "$GITHUB_OUTPUT"
+    echo "has_services=$has_services" >> "$GITHUB_OUTPUT"
+```
+
+#### Reusable Workflow Call with Matrix
+
+The build job uses the dynamically constructed matrix to call the reusable workflow:
+
+```yaml
+# .github/workflows/build-images.yml (build job)
+build:
+  needs: build-matrix
+  if: needs.build-matrix.outputs.has_services == 'true'
+  strategy:
+    fail-fast: false
+    matrix: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
+  uses: ./.github/workflows/reusable-docker-build.yml
+  with:
+    image_name: ${{ matrix.service.image_name }}
+    service_tag: ${{ matrix.service.service_tag }}
+    context: ${{ matrix.service.context }}
+    dockerfile: ${{ matrix.service.dockerfile }}
+  secrets:
+    QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+    QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+```
+
+#### Per-Service Tag in Reusable Workflow
+
+The reusable workflow uses `service_tag` (Approach B addition) for per-service tagging within a shared image repo:
+
+```yaml
+# .github/workflows/reusable-docker-build.yml (metadata step)
+tags: |
+  type=raw,value=${{ inputs.service_tag }},enable={{is_default_branch}}
+  type=raw,value=${{ inputs.service_tag }}-{{sha}},enable={{is_default_branch}}
+  type=ref,event=pr,prefix=${{ inputs.service_tag }}-pr-
+```
+
+#### Deploy Manifest Validation
+
+A separate workflow validates Helm and compose configs without deploying:
+
+```yaml
+# .github/workflows/test-deploy.yml
+jobs:
+  helm:
+    steps:
+      - run: helm lint deploy/helm
+      - run: helm template ci-test deploy/helm
+  compose:
+    steps:
+      - run: podman compose -f deploy/local/compose.yml config
+```
+
+### Gotchas
+
+- The `has_services` output prevents the build job from running with an empty matrix, which would cause a GitHub Actions error (see `build-matrix` job)
+- The `fail-fast: false` on the matrix strategy ensures one failing service build does not cancel others (see `build` job)
+- The per-service tag approach means all images share one Quay repo -- `quay.io/ikatav/portfolio-manager-agent:ui` and `quay.io/ikatav/portfolio-manager-agent:orchestrator` -- unlike Approach A which uses separate repos per image
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A | Approach B |
+|----------|-----------|-----------|
+| Workflow files per image | One per image (6 callers) | One shared caller |
+| Matrix construction | No matrix; each file is standalone | Dynamic jq matrix from path-filter outputs |
+| Image repository | Separate repo per image | Shared repo with per-service tags |
+| Unchanged service builds | Workflow skipped by path filter | Matrix entry not created (no job spawned) |
+| workflow_dispatch | Builds one specific image | Builds all images |
+| Self-triggering on workflow changes | Yes (workflow path in filters) | No (only source paths filtered) |
 
 ## Related Patterns
 

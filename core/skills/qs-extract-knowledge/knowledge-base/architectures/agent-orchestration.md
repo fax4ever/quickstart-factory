@@ -1,13 +1,13 @@
 ---
 name: agent-orchestration
 description: Agent orchestration patterns from multi-runner dispatch to LangGraph DAGs to dual-provider factory
-summary: "Provides six agent orchestration patterns for AI quickstarts: (A) FastAPI ChatService dispatches to LlamaStack, LangGraph, or CrewAI runners based on VirtualAgent.runner_type in PostgreSQL, producing normalized SSE events for a React/PatternFly frontend; (B) hierarchical LangGraph DAG for automated event-driven processing with SentenceTransformer + DBSCAN/HDBSCAN clustering and nested subgraphs; (C) dual-provider factory selecting MCP-Direct or Llama Stack behind a single MCP tool server; (D) YAML-driven state machine with multi-agent routing via CloudEvents/Knative, LlamaStack Responses API with native MCP tools + file_search, and NeMo Guardrails; (E) multi-persona LangGraph agents with per-tool RBAC authorization graph node, NeMo Guardrails as StateGraph nodes (input_shield/output_shield), YAML-driven config with registry hot-reloading, WebSocket buffered response, and A2A protocol via Kagenti; (F) vision-context-aware LangGraph router with structured-output RouteDecision classifying context vs SQL paths, nested ReAct SQL agent querying via postgres-mcp, dual independent graphs (chat + alert), and synchronous Flask handlers with asyncio.run() per request. Use Approach A for interactive chat needing pluggable frameworks (LlamaStack default with AsyncLlamaStackClient auto-retry tool exclusion, LangGraph dual-mode switching on graph_config presence for create_react_agent vs declarative StateGraph DAG with typed nodes and MultiServerMCPClient, CrewAI with LiteLLM and _StreamDeduplicator for ReAct noise); Approach B for batch event-driven pipelines with Command(goto=...) routing, dual LLM endpoints, closure-bound Loki tools with result_id caching, and stream_with_fallback for partial content on interruption; Approach C (COPILOT_PROVIDER_MODE env var) for interactive copilots where MCP-Direct gives backend-managed agentic loop (100-iteration while loop, Nemotron TOOLCALL tag auto-detection with 11-char streaming buffer, hard-coded allowlist + Pydantic tool validation, appends \"/mcp\") and Llama Stack delegates orchestration via toolgroup registration (per-conversation sessions, appends \"/sse\"); Approach D for multi-agent IT service automation with 5 YAML state types (waiting, llm_processor, intent_classifier, llm_validator, terminal), dynamic LangGraph StateGraph construction, AsyncPostgresSaver checkpointing with __resume_dispatcher__ for pod restart resilience, response_analysis with trigger_phrases driving set_field/transition actions, and per-agent MCP+knowledge base configuration; Approach E for regulated-industry multi-persona apps with build_agent_graph factory creating input_shield -> agent -> tool_auth -> tools -> output_shield -> END graph, YAML-configured allowed_roles per tool checked by tool_auth node, deterministic thread IDs (user:{user_id}:agent:{agent_name}), and optional Kagenti A2A agent-to-agent invocation on sequential ports; Approach F for multimodal analytics combining live CV detection context with historical SQL queries, using llm.with_structured_output(RouteDecision) to classify context vs sql paths, a nested @tool-decorated query_metric function with inner LLM SQL generation and execute_sql MCP tool, separate alert graph converting English rules to SQL, and MemorySaver with version-counter session reset. All Approach A runners implement BaseRunner.stream() yielding SSE strings terminated by [DONE]; VirtualAgent model stores runner_type, model_name, prompt, tools, knowledge_base_ids, vector_store_ids, shields, and graph_config; Approach B graphs compile at module load with shared module-level LLM instance; Approach C's factory creates MCPDirectProvider or LlamaStackProvider with runtime governance policy injection (Llama Stack requires full agent recreation clearing sessions); Approach D dynamically creates AgentState TypedDict from YAML state_schema.business_fields, routes between specialist agents via routing_decision state field, and uses LlamaStack Responses API create_response_with_retry with exponential backoff (1s-16s) for empty responses; Approach E's registry caches compiled graphs with 5-second mtime check interval for hot-reloading, WebSocket handler buffers full response then strips think tags before sending single done message, and agent configs support nested env var substitution (${VAR:-${FALLBACK:-default}}) with up to 3 resolution passes; Approach F uses asyncio.run() inside synchronous Flask handlers creating new event loop per request, session reset via version counter appended to thread_id (f\"{session_id}:{version}\"), and build_sql_generator_prompt constructs worked SQL examples tailored to detection class metadata. Runners are lazily imported with _check_langgraph()/CREWAI_AVAILABLE guards; LangGraph InMemorySaver must swap to PostgresSaver for multi-worker; both LangGraph and CrewAI use LLM-based _extract_input_fields for structured field parsing from natural language; Approach B's offline pipeline separates preparation (clustering) from processing to wait for RAG readiness; Approach C's tool validation only applies in MCP-Direct mode (Llama Stack has no equivalent security layer) and conversation_store is in-memory (lost on pod restart); Approach D's _consumed_this_invoke flag prevents multiple waiting states from consuming the same HumanMessage, session locks (180s timeout) prevent concurrent CloudEvent processing, and FaultInjectingAsyncLlamaStackClient exempts vector_stores namespace from fault injection; Approach E's tool_auth node uses graph-level defaults only to prevent state injection attacks, output_shield NeMo Guardrails check can exceed httpx 30s timeout (OUTPUT_SHIELD_DISABLED workaround exists), and A2A integration uses in-memory MemorySaver (conversation state lost on pod restart); Approach F's SQL generator prompt explicitly instructs \"Never alias detection_observations as 'do'\" to avoid PostgreSQL reserved keyword errors, the router decision is irreversible within a single invocation (context_answer has no database access, sql chain has no visual context), and LLMChat uses asyncio.run() blocking a worker thread per request."
+summary: "Covers seven agent orchestration patterns for RHOAI quickstarts spanning multi-runner dispatch with LlamaStack/LangGraph/CrewAI behind a unified ChatService (A), hierarchical LangGraph DAG for batch log analysis with clustering deduplication (B), dual-provider factory with MCP-Direct vs Llama Stack (C), YAML-driven conversational state machines with CloudEvent microservices via Knative broker (D), multi-persona LangGraph agents with per-tool RBAC authorization nodes (E), vision-context-aware structured-output router for CV+SQL queries (F), and custom OpenAI SDK loop with HTTP tool discovery and two-phase pipeline-then-chat (G). Choose A for runtime-selectable frameworks with normalized SSE streaming (BaseRunner.stream()); B for event-driven batch processing with no user interaction and Command(goto=...) conditional routing; C for deployment-time provider selection via COPILOT_PROVIDER_MODE env var (backend agentic loop with Nemotron TOOLCALL tag parsing vs delegated Llama Stack); D for YAML-defined typed states (waiting/llm_processor/intent_classifier/llm_validator/terminal) with LlamaStack Responses API and multi-agent routing; E for regulated-industry per-tool allowed_roles enforced by a tool_auth graph node with AsyncPostgresSaver checkpointing and A2A protocol via Kagenti; F for multimodal apps routing between live CV context and SQL agent queries via RouteDecision structured output; G for deterministic pipeline before agentic chat with REST tool protocol (GET /tools, POST /tools/<name>) and PHASE2_TOOLS subset filtering. Critical patterns: ChatService._get_runner() dispatches by runner_type with lazy imports for optional packages (A); create_provider() factory selects MCPDirectProvider or LlamaStackProvider with hard-coded tool allowlist+Pydantic validation in MCP-Direct only (C); build_agent_graph() embeds NeMo Guardrails as input_shield/output_shield StateGraph nodes with tool_auth RBAC node using conditional edges (E); NeMo integration varies across approaches -- runner-level shields (A), graph nodes (E), Colang flows with jailbreak detection (D), HTTP client with fail-open degradation (G); session persistence ranges from in-memory InMemorySaver/dict (A/C/F) to PostgreSQL AsyncPostgresSaver (D/E). Common gotchas: dual LLM endpoints may be needed when the default model lacks tool-calling support (B); Nemotron streaming requires an 11-character buffer window to avoid splitting TOOLCALL/think tags and tool validation is absent in the Llama Stack provider path (C); the _consumed_this_invoke flag prevents multiple waiting states from consuming the same HumanMessage in a single graph invocation (D); output_shield re-sends full response for NeMo evaluation triggering a ~32s LLM call that can exceed the httpx 30s timeout (E); asyncio.run() inside synchronous Flask handlers creates a new event loop per request (F); tool schemas are rediscovered on every HTTP request with no cross-request caching (G)."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, flask, langchain, langgraph, crewai, llamastack, python, gradio, sentence-transformers, scikit-learn, sveltekit, openai-sdk, vega-lite, cloudevents, nemo-guardrails, zammad, react, tailwindcss, tanstack-router, keycloak, a2a-protocol, kagenti, opencv]
+  tech_stack: [fastapi, flask, langchain, langgraph, crewai, llamastack, python, gradio, sentence-transformers, scikit-learn, sveltekit, openai-sdk, vega-lite, cloudevents, nemo-guardrails, zammad, react, tailwindcss, tanstack-router, keycloak, a2a-protocol, kagenti, opencv, yfinance, scipy, mlserver]
   ai_pattern: [agents, prompt-chaining, model-serving, embeddings, data-governance, guardrails, rag, multimodal]
-  platform: [llamastack, vllm, rhoai, openshift, kserve, knative, openvino, triton]
+  platform: [llamastack, vllm, rhoai, openshift, kserve, knative, openvino, triton, mlserver]
   data_layer: [postgresql, pgvector, minio]
 source_examples:
   - quickstart: "ai-virtual-agent"
@@ -34,6 +34,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multimodal-compliance-monitor"
     notes: "Vision-context-aware LangGraph router with structured-output routing (context vs SQL path), ReAct SQL agents querying detection data via postgres-mcp, and a separate alert graph converting English rules to SQL"
     approach: "F"
+  - quickstart: "portfolio-manager-agent"
+    repo: "https://github.com/rh-ai-quickstart/portfolio-manager-agent"
+    notes: "Custom OpenAI function-calling loop with HTTP tool discovery protocol, two-phase architecture (deterministic pipeline then agentic chat with tool filtering), context injection via system prompt, and NeMo Guardrails input/output checks"
+    approach: "G"
 ---
 
 # Agent Orchestration
@@ -1191,21 +1195,212 @@ Prompts are dynamically generated from detection class metadata. The `build_sql_
 
 ---
 
+## Approach G: HTTP Tool Discovery with Two-Phase Pipeline (from portfolio-manager-agent)
+
+### When to Use
+
+Use this approach when building a financial services or domain-specific AI agent that requires a deterministic pipeline phase (data ingestion, computation, validation) before entering an interactive agentic chat phase. This is suited for scenarios where: tool agents are simple HTTP microservices with self-describing JSON Schema interfaces (no MCP or framework-specific protocol needed), the LLM should only access a subset of tools during chat, and the orchestrator must maintain mutable domain state (e.g., portfolio holdings) across tool calls with automatic side-effects (e.g., recalculating VaR after any portfolio change).
+
+### Differences from Other Approaches
+
+| Aspect | Approach A (Multi-Runner Dispatch) | Approach G (HTTP Tool Discovery + Two-Phase) |
+|--------|-----------------------------------|----------------------------------------------|
+| Agent framework | Pluggable (LlamaStack, LangGraph, CrewAI) | None -- hand-written Orchestrator class with direct OpenAI SDK |
+| Tool protocol | MCP servers via framework-specific adapters | Custom HTTP: `GET /tools` for discovery, `POST /tools/<name>` for invocation |
+| Graph definition | Configurable via database (runner_type, graph_config) | Not applicable -- simple while loop with max 20 iterations |
+| Pipeline structure | Single-phase agentic chat | Two-phase: deterministic pipeline (no LLM) then agentic chat with tool filtering |
+| Tool filtering | All registered tools available | Phase 2 restricts tools to `PHASE2_TOOLS` subset |
+| State management | Database-driven (VirtualAgent model) | Mutable context dict injected into system prompt, updated via `on_tool_result` callbacks |
+| Streaming | SSE event stream | Synchronous REST (no streaming) |
+| ML model integration | None (LLM-only) | scikit-learn MLP via KServe MLServer for guideline classification |
+| Guardrails | Per-agent shields in runner code | Application-level NeMo Guardrails client with fail-open degradation |
+
+### Data Flow
+
+**Phase 1 -- Deterministic Pipeline (no LLM needed except for email generation):**
+
+1. User configures investment parameters (guidelines URL, portfolio value, number of symbols, max VaR) via React frontend
+2. `POST /pipeline` triggers `run_pipeline()` in the Flask orchestrator
+3. `parse_guidelines()` calls the guidelines tool agent (`POST /tools/prohibited_symbols`), which fetches a PDF, splits it into sentences, classifies each via the scikit-learn MLP model (local or remote via MLServer), and extracts prohibited tickers from high-confidence prohibition sentences
+4. `run_portfolio_var_loop()` iterates up to 10 times: calls `portfolio_equities` tool to build random portfolio excluding prohibited tickers, then calls `value_at_risk` tool to compute VaR -- retries until VaR <= max threshold
+5. `generate_draft_email()` sends portfolio + VaR to the LLM (OpenAI-compatible endpoint) to compose a client-facing email
+6. NeMo Guardrails output check validates the generated email for PII
+7. `build_context_from_pipeline()` assembles the portfolio context dict for Phase 2
+
+**Phase 2 -- Agentic Chat:**
+
+1. User sends a chat message via `POST /chat`
+2. NeMo Guardrails input check validates the user message
+3. The orchestrator creates an `Orchestrator` instance with filtered tools (`PHASE2_TOOLS`)
+4. Portfolio context is injected as a JSON block into the system prompt
+5. `chat_with_context()` runs the agentic loop: LLM generates a response, if it includes `tool_calls`, the orchestrator executes them via HTTP tool agents and feeds results back
+6. `on_tool_result` callback updates the mutable context (portfolio, VaR) after each tool call, including automatic VaR recalculation after portfolio mutations
+7. NeMo Guardrails output check validates the LLM response
+8. Updated context is returned to the frontend for display
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| React frontend | Flask orchestrator | REST (port 5000) | Pipeline execution, chat messages |
+| Flask orchestrator | Risk tool agent | REST (port 7001) | VaR calculation via `POST /tools/value_at_risk` |
+| Flask orchestrator | Portfolio tool agent | REST (port 7002) | Portfolio construction via `POST /tools/portfolio_equities`, symbol replacement via `POST /tools/portfolio_replace_symbol` |
+| Flask orchestrator | Guidelines tool agent | REST (port 7003) | Guideline parsing via `POST /tools/prohibited_symbols` |
+| Guidelines tool agent | MLServer (KServe) | REST (V2 inference API, port 80) | Remote MLP inference via `POST /v2/models/guidelines-mlp/infer` |
+| Guidelines tool agent | External URL | HTTPS | PDF download for investment guidelines |
+| Flask orchestrator | NeMo Guardrails service | REST (port 8000) | Input/output validation via `POST /v1/guardrail/checks` |
+| Flask orchestrator | OpenAI-compatible LLM | REST | Chat completions with function calling for email generation and agentic chat |
+| MinIO | KServe MLServer | S3 | Model artifact storage for guidelines-mlp |
+
+### Key Integration Points
+
+#### HTTP Tool Discovery Protocol
+
+Each tool agent exposes a `GET /tools` endpoint returning JSON Schema tool definitions, and a `POST /tools/<name>` endpoint for invocation. The `HttpToolServer` adapter discovers and invokes tools using this protocol.
+
+```python
+# orchestrator/src/orchestrator.py (lines 27-56)
+class HttpToolServer:
+    def __init__(self, base_url: str, timeout: float = 30.0):
+        self.base_url = base_url.rstrip("/") + "/"
+        self.timeout = timeout
+
+    def discover(self) -> list[DiscoveredTool]:
+        url = urljoin(self.base_url, "tools")
+        resp = requests.get(url, timeout=self.timeout)
+        resp.raise_for_status()
+        tools = []
+        for item in resp.json():
+            tools.append(DiscoveredTool(
+                name=item["name"],
+                description=item.get("description", ""),
+                parameters=item.get("parameters", {"type": "object", "properties": {}}),
+                server_base=self.base_url,
+            ))
+        return tools
+
+    def call(self, tool_name: str, arguments: dict) -> dict:
+        url = urljoin(self.base_url, f"tools/{tool_name}")
+        resp = requests.post(url, json=arguments, timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.json()
+```
+
+#### Agentic Loop with Tool Filtering
+
+The `Orchestrator._run_agentic_loop()` implements a while loop (max 20 iterations) that calls the LLM, executes any tool calls, and re-invokes the LLM with results until no more tool calls are requested. Phase 2 chat filters available tools to a subset via `refresh_tools_filtered()`.
+
+```python
+# orchestrator/src/orchestrator.py (lines 135-212)
+def _run_agentic_loop(self, prompts, tools, temperature, on_tool_result=None):
+    need_to_call_llm = True
+    while need_to_call_llm and llm_count < 20:
+        response = self.openai.chat.completions.create(
+            model=self.model, messages=prompts, temperature=temperature,
+            **({"tools": tools} if tools else {}),
+        )
+        need_to_call_llm = False
+        tool_calls = response.choices[0].message.tool_calls or []
+        for item in tool_calls:
+            if item.type != "function":
+                continue
+            need_to_call_llm = True
+            result = self._execute_tool_call(item.function.name, item.function.arguments)
+            if on_tool_result and not (isinstance(result, dict) and result.get("error")):
+                on_tool_result(item.function.name, result, json.loads(item.function.arguments))
+            prompts.append({"role": "assistant", "content": response.choices[0].message.content,
+                            "tool_calls": [item]})
+            prompts.append({"role": "tool", "tool_call_id": item.id,
+                            "name": item.function.name, "content": json.dumps(result)})
+```
+
+#### Two-Phase Pipeline with Context Handoff
+
+Phase 1 runs deterministic tool calls without LLM involvement (except email generation). The pipeline result is converted to a context dict passed to Phase 2 chat via the system prompt.
+
+```python
+# orchestrator/src/pipeline.py (lines 151-189)
+def run_pipeline(registry, llm_client, model, url_investment_guidelines,
+                 portfolio_value, qty_symbols, max_var):
+    guidelines = parse_guidelines(registry, url_investment_guidelines)
+    prohibited = guidelines["prohibited_tickers"]
+    portfolio, value_at_risk, attempts = run_portfolio_var_loop(
+        registry, portfolio_value, qty_symbols, prohibited, max_var,
+    )
+    draft_email = generate_draft_email(llm_client, model, portfolio, value_at_risk)
+    return {
+        "prohibited_tickers": prohibited, "portfolio": portfolio,
+        "valueAtRisk": value_at_risk, "draft_email": draft_email, ...
+    }
+
+# orchestrator/src/app.py (lines 256-261)
+full_system = (
+    f"{system_prompt}\n\n"
+    f"Current portfolio context (authoritative; update via tools when the user "
+    f"requests portfolio or risk changes):\n{json.dumps(context, indent=2)}"
+)
+```
+
+#### Mutable Context with Automatic Side-Effects
+
+After any portfolio mutation tool call in Phase 2, the orchestrator automatically recalculates VaR by calling the `value_at_risk` tool, keeping the context consistent without the LLM needing to request it.
+
+```python
+# orchestrator/src/pipeline.py (lines 238-263)
+def apply_phase2_tool_result(context, tool_name, result, registry, tool_args=None):
+    ctx = apply_tool_result_to_context(context, tool_name, result)
+    if tool_name not in PORTFOLIO_MUTATION_TOOLS or _tool_result_failed(result):
+        return ctx
+    portfolio = ctx.get("portfolio")
+    if not portfolio:
+        return ctx
+    try:
+        var_result = calculate_var(registry, portfolio)
+        return apply_tool_result_to_context(ctx, "value_at_risk", var_result)
+    except Exception as e:
+        logger.warning("Auto VaR after %s failed: %s", tool_name, e)
+        return ctx
+```
+
+### Prompt / Chain Patterns
+
+The system uses two distinct prompt patterns:
+
+- **Phase 1 email generation**: A static system prompt (`DRAFT_EMAIL_SYSTEM` in `pipeline.py` line 20) defining the role as a portfolio manager, with the portfolio data and VaR sent as a JSON user message. Single LLM call, no tool calling.
+- **Phase 2 agentic chat**: A configurable system prompt (`PHASE2_SYSTEM` in `app.py` line 39) defining conversational style and tool usage rules, with the full portfolio context appended as a JSON block. The prompt explicitly instructs: "Never paste JSON, code blocks, tool payloads" and "The UI already shows the full portfolio table" to prevent the LLM from echoing structured data. Tool calls are used for portfolio modifications and risk recalculation.
+
+### Gotchas
+
+- The `HttpToolServer.discover()` method calls `GET /tools` on each tool agent at the start of every HTTP request (via `get_tool_registry()` in Flask's `g` context at line 64-70 of `app.py`). There is no cross-request caching of tool schemas -- each request rediscovers all tools from all three servers.
+- The `ToolRegistry` (in `pipeline.py` line 38) enforces tool name uniqueness across all servers. A duplicate tool name across different tool agents raises a `RuntimeError` at discovery time.
+- The `disliked_symbol_in_message()` function (line 272 of `pipeline.py`) uses a regex pattern matching "do not like {SYMBOL} in this portfolio" to detect explicit symbol rejection. This is a hard-coded pattern designed for the integration test script, not a general NLP-based intent classifier.
+- Phase 2 tool filtering uses a hard-coded set `PHASE2_TOOLS = {"portfolio_equities", "portfolio_replace_symbol", "value_at_risk"}` (line 37 of `app.py`). The `prohibited_symbols` tool is excluded from Phase 2 because guidelines should not be re-parsed during chat.
+- The portfolio construction uses random selection from the S&P 100 universe (line 253 of `tools/portfolio/src/app.py`). The `run_portfolio_var_loop()` retries up to 10 times if the VaR exceeds the threshold, with each retry generating a completely new random portfolio.
+- The guidelines tool agent can operate in two modes: local inference using a joblib-loaded scikit-learn model, or remote inference via MLServer's V2 API (controlled by `INFERENCE_URL` env var). When `INFERENCE_URL` is set, the local model is not loaded at startup (line 550-553 of `tools/guidelines/src/app.py`).
+- The LLM endpoint configuration (URL, model name, API key) is sent by the frontend in every request payload (lines 73-81 of `app.py`), not stored in environment variables or backend config. This allows dynamic model switching from the UI.
+
+### Related Architectures
+
+- [guardrails-layer](guardrails-layer.md) -- NeMo Guardrails input/output checks are applied at the application level via a client module
+- [model-serving-gateway](model-serving-gateway.md) -- The guidelines MLP model is served via KServe MLServer with scikit-learn runtime
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Multi-Runner Dispatch) | Approach B (Hierarchical LangGraph DAG) | Approach C (Dual-Provider Factory) | Approach D (YAML State Machine) | Approach E (Multi-Persona RBAC Agents) | Approach F (Vision-Context-Aware Router) |
-|----------|-----------------------------------|----------------------------------------|-----------------------------------|---------------------------------|----------------------------------------|------------------------------------------|
-| Use case | Interactive chat with configurable AI agents | Automated event-driven data processing pipeline | Interactive copilot with deployment-mode flexibility | Multi-agent IT service automation with structured conversational workflows | Multi-persona regulated-industry application with per-tool RBAC | Real-time multimodal analytics combining CV detections with conversational database queries |
-| User interaction | Real-time chat with SSE streaming | No user interaction during processing; results viewed after | Real-time chat with SSE streaming | Real-time chat via web, CLI, Slack, or ticketing system | Real-time chat via WebSocket with buffered response | Synchronous REST chat + MJPEG video feed; separate alert rule creation endpoint |
-| Agent framework | Pluggable (LlamaStack, LangGraph, CrewAI) | LangGraph only, with LangChain tool-calling agent | MCP-Direct (custom loop) or Llama Stack (delegated) | LangGraph (execution engine) + LlamaStack Responses API (inference + tools) | LangGraph only via shared build_agent_graph factory | LangGraph only, two independent graphs (chat + alert) |
-| Graph definition | Configurable via database (runner_type, graph_config) | Fixed Python code, compiled at module load | Not applicable (simple tool-calling loop, no graph) | YAML configuration files with typed states and declarative transitions | Shared graph structure per-agent, tools and RBAC from YAML config | Fixed Python code, two graphs compiled at startup with hardcoded node topology |
-| Framework selection | Runtime (per-agent, stored in database) | Hardcoded | Deployment-time (environment variable) | Startup (per-agent YAML config files, overridable via env vars) | Startup (per-agent YAML config, mtime-based hot-reload) | Hardcoded (chat graph selected by /api/chat, alert graph by /api/alerts) |
-| Context retrieval | RAG via file_search tool (transparent to prompt) | RAG as explicit graph node + Loki log retrieval subgraph | Not applicable (tools query database directly) | RAG via file_search tool (transparent to prompt, knowledge bases in YAML) | RAG via pgvector compliance KB search tool (direct SQL, no LlamaStack) | Live CV detection context injected as state field; historical data via SQL through MCP |
-| Processing model | One request at a time per chat session | Batch processing with log clustering for deduplication | One request at a time per chat session | One request at a time per session, with session lock preventing concurrent processing | One request at a time per WebSocket, with asyncio.wait disconnect cancellation | One request at a time per Flask worker thread; asyncio.run() per request |
-| LLM routing | Not used (dispatch is by runner_type config) | LLM structured output drives conditional graph edges | Not applicable (single sequential loop) | LLM intent classification drives `routing_decision` field, session manager dispatches to specialist | Not used (single agent per persona, WebSocket path selects agent) | LLM structured output (RouteDecision) classifies "context" vs "sql" path within the chat graph |
-| Tool security | Framework-managed tool registration | No explicit validation | Hard-coded allowlist + Pydantic schema validation (MCP-Direct only) | LlamaStack-managed MCP tool execution with per-request AUTHORITATIVE_USER_ID header | YAML-configured per-tool allowed_roles checked by tool_auth graph node | SQL-level scoping wrapper using contextvars to enforce app_config_id filtering |
-| Model format support | Standard OpenAI tool calling | Standard OpenAI tool calling | Auto-detects Nemotron TOOLCALL tags vs OpenAI format | Standard OpenAI tool calling via LlamaStack Responses API | Standard OpenAI tool calling via ChatOpenAI | Standard OpenAI tool calling via ChatOpenAI with structured output for routing/planning |
-| Policy management | Per-agent shields via LlamaStack safety API | Not applicable | Runtime policy injection into system prompt | NeMo Guardrails service with custom Colang flows and jailbreak detection NIM | NeMo Guardrails as LangGraph graph nodes (input_shield, output_shield) | Not applicable (no guardrails; SQL scoping is the only security layer) |
-| Multi-agent support | Not built in (single agent per session) | Not applicable | Not applicable | Built-in routing agent + specialist agent dispatch with session state handoff | Five independent agents, each on its own WebSocket path; A2A protocol for cross-agent invocation | Two independent graphs (chat + alert) instantiated at startup, no inter-graph communication |
-| Communication model | Direct REST/SSE | Direct Python method calls | Direct REST/SSE | CloudEvent-driven microservices via Knative broker | Direct WebSocket with optional A2A (JSON-RPC) | Direct REST (synchronous Flask); MJPEG streaming for video feed |
-| Complexity | Higher (multi-framework, SSE normalization) | Moderate (single framework, hierarchical subgraphs) | Moderate (two providers, shared interface) | Higher (multi-service, CloudEvents, YAML state machines, multi-agent routing) | Moderate (single framework, shared graph factory, YAML-driven config) | Lower (single framework, fixed graph topology, synchronous Flask, no streaming for chat) |
+| Criteria | Approach A (Multi-Runner Dispatch) | Approach B (Hierarchical LangGraph DAG) | Approach C (Dual-Provider Factory) | Approach D (YAML State Machine) | Approach E (Multi-Persona RBAC Agents) | Approach F (Vision-Context-Aware Router) | Approach G (HTTP Tool Discovery + Two-Phase) |
+|----------|-----------------------------------|----------------------------------------|-----------------------------------|---------------------------------|----------------------------------------|------------------------------------------|----------------------------------------------|
+| Use case | Interactive chat with configurable AI agents | Automated event-driven data processing pipeline | Interactive copilot with deployment-mode flexibility | Multi-agent IT service automation with structured conversational workflows | Multi-persona regulated-industry application with per-tool RBAC | Real-time multimodal analytics combining CV detections with conversational database queries | Deterministic domain pipeline followed by interactive agentic chat with tool filtering |
+| User interaction | Real-time chat with SSE streaming | No user interaction during processing; results viewed after | Real-time chat with SSE streaming | Real-time chat via web, CLI, Slack, or ticketing system | Real-time chat via WebSocket with buffered response | Synchronous REST chat + MJPEG video feed; separate alert rule creation endpoint | Synchronous REST; pipeline results displayed then user enters agentic chat |
+| Agent framework | Pluggable (LlamaStack, LangGraph, CrewAI) | LangGraph only, with LangChain tool-calling agent | MCP-Direct (custom loop) or Llama Stack (delegated) | LangGraph (execution engine) + LlamaStack Responses API (inference + tools) | LangGraph only via shared build_agent_graph factory | LangGraph only, two independent graphs (chat + alert) | None -- custom Orchestrator class with direct OpenAI SDK |
+| Graph definition | Configurable via database (runner_type, graph_config) | Fixed Python code, compiled at module load | Not applicable (simple tool-calling loop, no graph) | YAML configuration files with typed states and declarative transitions | Shared graph structure per-agent, tools and RBAC from YAML config | Fixed Python code, two graphs compiled at startup with hardcoded node topology | Not applicable (while loop with max 20 iterations) |
+| Framework selection | Runtime (per-agent, stored in database) | Hardcoded | Deployment-time (environment variable) | Startup (per-agent YAML config files, overridable via env vars) | Startup (per-agent YAML config, mtime-based hot-reload) | Hardcoded (chat graph selected by /api/chat, alert graph by /api/alerts) | Not applicable (single custom orchestrator) |
+| Context retrieval | RAG via file_search tool (transparent to prompt) | RAG as explicit graph node + Loki log retrieval subgraph | Not applicable (tools query database directly) | RAG via file_search tool (transparent to prompt, knowledge bases in YAML) | RAG via pgvector compliance KB search tool (direct SQL, no LlamaStack) | Live CV detection context injected as state field; historical data via SQL through MCP | Deterministic pipeline produces domain context; injected as JSON into system prompt |
+| Processing model | One request at a time per chat session | Batch processing with log clustering for deduplication | One request at a time per chat session | One request at a time per session, with session lock preventing concurrent processing | One request at a time per WebSocket, with asyncio.wait disconnect cancellation | One request at a time per Flask worker thread; asyncio.run() per request | Two phases: batch pipeline then one-at-a-time agentic chat per session |
+| LLM routing | Not used (dispatch is by runner_type config) | LLM structured output drives conditional graph edges | Not applicable (single sequential loop) | LLM intent classification drives `routing_decision` field, session manager dispatches to specialist | Not used (single agent per persona, WebSocket path selects agent) | LLM structured output (RouteDecision) classifies "context" vs "sql" path within the chat graph | Not used (single orchestrator, tool filtering is programmatic) |
+| Tool security | Framework-managed tool registration | No explicit validation | Hard-coded allowlist + Pydantic schema validation (MCP-Direct only) | LlamaStack-managed MCP tool execution with per-request AUTHORITATIVE_USER_ID header | YAML-configured per-tool allowed_roles checked by tool_auth graph node | SQL-level scoping wrapper using contextvars to enforce app_config_id filtering | Programmatic tool subset filtering (`PHASE2_TOOLS`) and duplicate name detection |
+| Model format support | Standard OpenAI tool calling | Standard OpenAI tool calling | Auto-detects Nemotron TOOLCALL tags vs OpenAI format | Standard OpenAI tool calling via LlamaStack Responses API | Standard OpenAI tool calling via ChatOpenAI | Standard OpenAI tool calling via ChatOpenAI with structured output for routing/planning | Standard OpenAI tool calling via direct OpenAI SDK |
+| Policy management | Per-agent shields via LlamaStack safety API | Not applicable | Runtime policy injection into system prompt | NeMo Guardrails service with custom Colang flows and jailbreak detection NIM | NeMo Guardrails as LangGraph graph nodes (input_shield, output_shield) | Not applicable (no guardrails; SQL scoping is the only security layer) | Application-level NeMo Guardrails client with fail-open degradation |
+| Multi-agent support | Not built in (single agent per session) | Not applicable | Not applicable | Built-in routing agent + specialist agent dispatch with session state handoff | Five independent agents, each on its own WebSocket path; A2A protocol for cross-agent invocation | Two independent graphs (chat + alert) instantiated at startup, no inter-graph communication | Three independent HTTP tool agents behind single orchestrator |
+| Communication model | Direct REST/SSE | Direct Python method calls | Direct REST/SSE | CloudEvent-driven microservices via Knative broker | Direct WebSocket with optional A2A (JSON-RPC) | Direct REST (synchronous Flask); MJPEG streaming for video feed | Direct REST with HTTP tool discovery protocol (GET /tools, POST /tools/<name>) |
+| Complexity | Higher (multi-framework, SSE normalization) | Moderate (single framework, hierarchical subgraphs) | Moderate (two providers, shared interface) | Higher (multi-service, CloudEvents, YAML state machines, multi-agent routing) | Moderate (single framework, shared graph factory, YAML-driven config) | Lower (single framework, fixed graph topology, synchronous Flask, no streaming for chat) | Lower (no framework, simple while loop, HTTP-based tool protocol) |
