@@ -1,12 +1,12 @@
 ---
 name: rag-pipeline
-description: RAG patterns from LlamaStack vector stores to NVIDIA Blueprints to standalone FAISS microservices to Helm-only dual-frontend deployments
-summary: "Implements retrieval-augmented generation across eight approaches: (A) LlamaStack with external ingestion pipeline, pgvector vector stores, and transparent file_search retrieval via Responses API requiring no RAG-specific prompting; (B) NVIDIA RAG Blueprint with NV-Ingest document processing, GPU-accelerated Milvus GPU_CAGRA, vLLM on KServe with MIG-sliced GPUs, NIM-to-vLLM translation proxies for embedding/reranking, ODF ObjectBucketClaim for S3 storage, and optional query rewriting/reflection/decomposition with /no_think Nemotron directive; (C) standalone FAISS microservice with TEI nomic-embed-text-v1.5 (search_document:/search_query: prefixes), MinIO LATEST.json pointer file for init-job-to-service coordination, and results consumed as agent-internal context enrichment from static PDFs; (D) frontend-only Streamlit using LlamaStack rag_tool APIs with manual CONTEXT: prompt injection, direct pgvector access via asyncpg, all-MiniLM-L6-v2 at 384 dimensions, and triple-fallback vector DB registration; (E) startup-time ingestion of curated text files via LlamaStack OpenAI-compatible files.create/vector_stores.files.create with per-agent knowledge_bases YAML config, explicit extra_body={\"provider_id\": \"pgvector\"}, and transparent file_search retrieval identical to Approach A; (F) dual-mode Streamlit frontend with Direct mode (vector_stores.search + manual context injection) and Agent-based mode (Responses API file_search), Docling-based ingestion service (DocumentConverter + HybridChunker filtering TEXT/PARAGRAPH labels) with multi-source support (GitHub/S3/URL), Kubeflow Pipelines for automated ingestion, OpenAI-compatible Files API for document management, frontend-integrated input/output shields via safety.run_shield, file citation stripping for four marker formats, reasoning_content support for R1-style models, suggested questions via ConfigMap, and Podman Compose local dev with host Ollama; (G) Helm-only dual-frontend RAG with AnythingLLM (LanceDB + native embeddings + LocalAI provider) and LlamaStackDistribution CR (inline Milvus SQLite-backed + sentence-transformers granite-embedding-125m-english at 768 dimensions + remote::vllm), Kubernetes Job seeding from web URLs with HTML stripping (script/style/nav/header/footer/aside removal), admin username auto-discovery via Kubernetes RoleBindings for SHA-256-hashed vector store naming matching RHOAI Playground convention, SQLite sidecar for AnythingLLM API key injection, zero custom code, and CPU-only inference; (H) domain-specific compliance RAG using direct pgvector queries (no LlamaStack) with three-tier boosting (federal=1.5x, agency=1.2x, internal=1.0x), markdown-aware chunking with ##-header splitting, paragraph-boundary sub-splitting with ~64-token overlap, pairwise conflict detection across sources (numeric threshold disagreements, contradictory must/must-not directives, same-tier value divergence), audit-logged search as a LangGraph tool with InjectedState, and configurable embedding provider (local sentence-transformers or remote OpenAI-compatible). Choose A for custom FastAPI backends needing LlamaStack-integrated transparent retrieval; B for no-custom-code GPU-heavy deployments with pre-built NVIDIA RAG server and built-in multimodal/reranking capabilities; C for agent-pipeline context enrichment from curated PDF knowledge bases with minimal GPU requirements (TEI only); D for minimal-complexity frontend-only demos where RAG is a supporting feature alongside other capabilities like guardrails; E for curated text knowledge bases bundled with the application or ConfigMap-mounted, requiring automatic startup ingestion and per-agent knowledge base assignment without user-facing document management; F for self-contained RAG chatbots needing automated multi-source ingestion (GitHub/S3/URL), dual retrieval modes (Direct control vs Agent-based transparency), standard OpenAI-compatible document management without direct database access, and optional local development support; G for zero-custom-code CPU-only deployments needing two independent UIs (AnythingLLM workbench for daily use + RHOAI Playground for exploration) with deploy-time document seeding from web URLs and no GPU requirements; H for regulated-industry RAG needing hierarchical authority ranking with tier-based boosting, cross-source conflict detection with audit trail, direct pgvector control without LlamaStack, and curated markdown knowledge bases organized by authority tier. Critical config: A requires update_vector_store_ids() to sync dual metadata (PostgreSQL + LlamaStack); B needs cross-chart ConfigMap (ingestor-server-prompt) installed before rag-server, anyuid SCC for three service accounts, and NV-Ingest MESSAGE_CLIENT_HOST hardcoded to ingest-redis-master; C requires TEI connection pooling and FAISS index files on disk (faiss.read_index needs file paths not buffers); D hardcodes embedding dimension 384 and uses direct pgvector queries with vs_{id.replace('-','_')} table naming; E requires extra_body={\"provider_id\": \"pgvector\"} for LlamaStack 0.3.3+ vector store creation and creates new UUID-suffixed vector stores each restart; F uses legacy vector_dbs.register() in ingestion service but vector_stores.create() in UI, Docling HybridChunker discards tables/images, and vector_stores.search response format varies across LlamaStack versions (data/chunks/results fallback); G's rag-seed Job uses llama-stack-client SDK with SHA-256-hashed admin username for vector store naming matching RHOAI Playground auto-provisioning, inline Milvus stores data in SQLite at pod-local path requiring PVC for persistence, and AnythingLLM uses native embedding engine separate from vLLM inference endpoint; H's search fetches 3x top_k candidates then applies tier boost factors (_TIER_BOOST {1:1.5, 2:1.2, 3:1.0}) before re-sorting with _MIN_SIMILARITY=0.3 floor, uses separate COMPLIANCE_DATABASE_URL for HMDA data isolation while KB tables (kb_chunks, kb_documents) live in main schema, and ingestion is idempotent via clear_kb_content() that deletes all before re-ingesting from disk. Common gotchas: A's dual metadata can desync if update_vector_store_ids fails and RAG only works with LlamaStack runner (not LangGraph/CrewAI); B depends on NVIDIA cloud NIMs for OCR/table/graphic detection (external network dependency) and embedding proxy strips input_type losing query-vs-passage distinction; C's FAISS index must fit entirely in RAM and RAGHandler singleton silently returns empty strings if RAG is disabled; D bypasses LlamaStack for document management via direct pgvector access that breaks if LlamaStack changes its internal schema; E accumulates stale vector stores across restarts (_get_vector_store_id selects latest by created_at) and only supports .txt files (no PDF/DOCX); F's search_vector_stores_fallback() must explicitly re-search after streaming because Responses API stream doesn't consistently include file_search results, file citation stripping handles partial markers during streaming to prevent UI flicker, and ingestion service uses rag_tool.insert (pre-chunked via Docling) while UI uses files.create (server-side chunking via LlamaStack pypdf provider); G's inline Milvus (SQLite-backed) loses all indexed documents on pod restart without a PVC, the RHOAI Playground auto-provisioning vector store hash must match the seed Job's naming convention, and AnythingLLM's hardcoded API key (sk-automation-workspace-setup) is injected via SQLite sidecar that runs indefinitely; H's conflict detection is heuristic-based (regex for percentages and must/must-not directives) missing subtler regulatory interpretation conflicts, chunks stored without embeddings on embedding failure are silently excluded from search (WHERE c.embedding IS NOT NULL), and _parse_frontmatter uses simple string splitting on first colon that fails if values contain colons."
+description: RAG patterns from LlamaStack vector stores to NVIDIA Blueprints to standalone FAISS microservices to Helm-only dual-frontend deployments to Quarkus semantic people search
+summary: "Implements retrieval-augmented generation across nine approaches: (A) LlamaStack with external ingestion pipeline, pgvector vector stores, and transparent file_search retrieval via Responses API requiring no RAG-specific prompting; (B) NVIDIA RAG Blueprint with NV-Ingest document processing, GPU-accelerated Milvus GPU_CAGRA, vLLM on KServe with MIG-sliced GPUs, NIM-to-vLLM translation proxies for embedding/reranking, ODF ObjectBucketClaim for S3 storage, and optional query rewriting/reflection/decomposition with /no_think Nemotron directive; (C) standalone FAISS microservice with TEI nomic-embed-text-v1.5 (search_document:/search_query: prefixes), MinIO LATEST.json pointer file for init-job-to-service coordination, and results consumed as agent-internal context enrichment from static PDFs; (D) frontend-only Streamlit using LlamaStack rag_tool APIs with manual CONTEXT: prompt injection, direct pgvector access via asyncpg, all-MiniLM-L6-v2 at 384 dimensions, and triple-fallback vector DB registration; (E) startup-time ingestion of curated text files via LlamaStack OpenAI-compatible files.create/vector_stores.files.create with per-agent knowledge_bases YAML config, explicit extra_body={\"provider_id\": \"pgvector\"}, and transparent file_search retrieval identical to Approach A; (F) dual-mode Streamlit frontend with Direct mode (vector_stores.search + manual context injection) and Agent-based mode (Responses API file_search), Docling-based ingestion service (DocumentConverter + HybridChunker filtering TEXT/PARAGRAPH labels) with multi-source support (GitHub/S3/URL), Kubeflow Pipelines for automated ingestion, OpenAI-compatible Files API for document management, frontend-integrated input/output shields via safety.run_shield, file citation stripping for four marker formats, reasoning_content support for R1-style models, suggested questions via ConfigMap, and Podman Compose local dev with host Ollama; (G) Helm-only dual-frontend RAG with AnythingLLM (LanceDB + native embeddings + LocalAI provider) and LlamaStackDistribution CR (inline Milvus SQLite-backed + sentence-transformers granite-embedding-125m-english at 768 dimensions + remote::vllm), Kubernetes Job seeding from web URLs with HTML stripping (script/style/nav/header/footer/aside removal), admin username auto-discovery via Kubernetes RoleBindings for SHA-256-hashed vector store naming matching RHOAI Playground convention, SQLite sidecar for AnythingLLM API key injection, zero custom code, and CPU-only inference; (H) domain-specific compliance RAG using direct pgvector queries (no LlamaStack) with three-tier boosting (federal=1.5x, agency=1.2x, internal=1.0x), markdown-aware chunking with ##-header splitting, paragraph-boundary sub-splitting with ~64-token overlap, pairwise conflict detection across sources (numeric threshold disagreements, contradictory must/must-not directives, same-tier value divergence), audit-logged search as a LangGraph tool with InjectedState, and configurable embedding provider (local sentence-transformers or remote OpenAI-compatible); (I) Quarkus/LangChain4j semantic people search with Docling document parsing microservice, Ollama/vLLM dual-mode LLM serving via OpenAI-compatible API, three-step resume ingestion (Docling parse, LLM structure, pgvector embed), Keycloak OIDC via operator-managed CR with post-install secrets sync job, Ollama init container model pre-pull with skip-if-exists logic, and Flyway migration variants for model-specific seed data (classpath:db/granite vs classpath:db/openai). Choose A for custom FastAPI backends needing LlamaStack-integrated transparent retrieval; B for no-custom-code GPU-heavy deployments with pre-built NVIDIA RAG server and built-in multimodal/reranking capabilities; C for agent-pipeline context enrichment from curated PDF knowledge bases with minimal GPU requirements (TEI only); D for minimal-complexity frontend-only demos where RAG is a supporting feature alongside other capabilities like guardrails; E for curated text knowledge bases bundled with the application or ConfigMap-mounted, requiring automatic startup ingestion and per-agent knowledge base assignment without user-facing document management; F for self-contained RAG chatbots needing automated multi-source ingestion (GitHub/S3/URL), dual retrieval modes (Direct control vs Agent-based transparency), standard OpenAI-compatible document management without direct database access, and optional local development support; G for zero-custom-code CPU-only deployments needing two independent UIs (AnythingLLM workbench for daily use + RHOAI Playground for exploration) with deploy-time document seeding from web URLs and no GPU requirements; H for regulated-industry RAG needing hierarchical authority ranking with tier-based boosting, cross-source conflict detection with audit trail, direct pgvector control without LlamaStack, and curated markdown knowledge bases organized by authority tier; I for semantic entity search over structured profiles (not document Q&A) with Java/Quarkus backend, Docling multi-format document parsing (PDF/DOCX/images with OCR), dual-mode LLM serving (Ollama CPU with granite4:3b or vLLM GPU with Qwen2.5-7B-Instruct-AWQ switchable via Helm values), and Keycloak OIDC enterprise authentication with operator-managed realm import. Critical config: A requires update_vector_store_ids() to sync dual metadata (PostgreSQL + LlamaStack); B needs cross-chart ConfigMap (ingestor-server-prompt) installed before rag-server, anyuid SCC for three service accounts, and NV-Ingest MESSAGE_CLIENT_HOST hardcoded to ingest-redis-master; C requires TEI connection pooling and FAISS index files on disk (faiss.read_index needs file paths not buffers); D hardcodes embedding dimension 384 and uses direct pgvector queries with vs_{id.replace('-','_')} table naming; E requires extra_body={\"provider_id\": \"pgvector\"} for LlamaStack 0.3.3+ vector store creation and creates new UUID-suffixed vector stores each restart; F uses legacy vector_dbs.register() in ingestion service but vector_stores.create() in UI, Docling HybridChunker discards tables/images, and vector_stores.search response format varies across LlamaStack versions (data/chunks/results fallback); G's rag-seed Job uses llama-stack-client SDK with SHA-256-hashed admin username for vector store naming matching RHOAI Playground auto-provisioning, inline Milvus stores data in SQLite at pod-local path requiring PVC for persistence, and AnythingLLM uses native embedding engine separate from vLLM inference endpoint; H's search fetches 3x top_k candidates then applies tier boost factors (_TIER_BOOST {1:1.5, 2:1.2, 3:1.0}) before re-sorting with _MIN_SIMILARITY=0.3 floor, uses separate COMPLIANCE_DATABASE_URL for HMDA data isolation while KB tables (kb_chunks, kb_documents) live in main schema, and ingestion is idempotent via clear_kb_content() that deletes all before re-ingesting from disk; I's ConfigMap switches OPENAI_BASE_URL/LLM_MODEL/EMBEDDING_MODEL between Ollama (granite4:3b chat + granite-embedding:30m at 384 dimensions, QUARKUS_LANGCHAIN4J_OPENAI_TIMEOUT=240s) and vLLM (Qwen2.5-7B-Instruct-AWQ at 768 dimensions, token from SA secret via Helm lookup with \"vllm-token-pending\" fallback), Keycloak issuer URL auto-detected from OpenShift console route domain via regexReplaceAll on console-openshift-console host, and pgvector extension enabled via init script using POSTGRESQL_ADMIN_PASSWORD credentials. Common gotchas: A's dual metadata can desync if update_vector_store_ids fails and RAG only works with LlamaStack runner (not LangGraph/CrewAI); B depends on NVIDIA cloud NIMs for OCR/table/graphic detection (external network dependency) and embedding proxy strips input_type losing query-vs-passage distinction; C's FAISS index must fit entirely in RAM and RAGHandler singleton silently returns empty strings if RAG is disabled; D bypasses LlamaStack for document management via direct pgvector access that breaks if LlamaStack changes its internal schema; E accumulates stale vector stores across restarts (_get_vector_store_id selects latest by created_at) and only supports .txt files (no PDF/DOCX); F's search_vector_stores_fallback() must explicitly re-search after streaming because Responses API stream doesn't consistently include file_search results, file citation stripping handles partial markers during streaming to prevent UI flicker, and ingestion service uses rag_tool.insert (pre-chunked via Docling) while UI uses files.create (server-side chunking via LlamaStack pypdf provider); G's inline Milvus (SQLite-backed) loses all indexed documents on pod restart without a PVC, the RHOAI Playground auto-provisioning vector store hash must match the seed Job's naming convention, and AnythingLLM's hardcoded API key (sk-automation-workspace-setup) is injected via SQLite sidecar that runs indefinitely; H's conflict detection is heuristic-based (regex for percentages and must/must-not directives) missing subtler regulatory interpretation conflicts, chunks stored without embeddings on embedding failure are silently excluded from search (WHERE c.embedding IS NOT NULL), and _parse_frontmatter uses simple string splitting on first colon that fails if values contain colons; I's application source code is not in the repo (pre-built container image, Helm-only), switching between Ollama and vLLM modes requires rebuilding vector embeddings due to incompatible dimensions (384 vs 768), vLLM SA token secret may not exist on first install (fallback \"vllm-token-pending\" requires helm upgrade or secrets sync Job), Keycloak issuer URL auto-detection fails if OpenShift console route is unavailable, and Ollama init container model pull failure causes CrashLoopBackOff."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, llamastack, python, vllm, nvidia-rag-blueprint, langchain, langgraph, gradio, streamlit, cloudevents, docling, deepeval, anythingllm, sentence-transformers]
-  ai_pattern: [rag, embeddings, vector-search, reranking, multimodal, evaluation]
+  tech_stack: [fastapi, llamastack, python, vllm, nvidia-rag-blueprint, langchain, langgraph, gradio, streamlit, cloudevents, docling, deepeval, anythingllm, sentence-transformers, quarkus, langchain4j, react, keycloak]
+  ai_pattern: [rag, embeddings, vector-search, reranking, multimodal, evaluation, semantic-search, document-parsing]
   platform: [llamastack, rhoai, openshift, kubernetes, kserve, vllm, tei, ollama, kubeflow-pipelines]
   data_layer: [pgvector, milvus, faiss, minio, lancedb]
 source_examples:
@@ -46,6 +46,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
     notes: "Domain-specific compliance RAG using pgvector with three-tier boosting (federal > agency > internal), markdown-aware chunking with paragraph-boundary splitting and overlap, conflict detection across sources, and audit-logged search as a LangGraph agent tool"
     approach: "H"
+  - quickstart: "peoplemesh"
+    repo: "https://github.com/rh-ai-quickstart/peoplemesh"
+    notes: "Quarkus/LangChain4j semantic people search with Docling document parsing microservice, Ollama/vLLM dual-mode LLM serving via OpenAI-compatible API, three-step resume ingestion (Docling parse, LLM structure, pgvector embed), and Keycloak OIDC via operator-managed CR with post-install secrets sync job"
+    approach: "I"
 ---
 
 # RAG Pipeline
@@ -1633,21 +1637,293 @@ The `kb_search` tool is invoked by the LLM as a standard LangGraph tool when the
 
 ---
 
+## Approach I: Quarkus/LangChain4j Semantic People Search with Docling and Dual-Mode LLM (from peoplemesh)
+
+### When to Use
+
+Use this approach when building a semantic search application over structured entity profiles (people, products, assets) rather than document Q&A, where the RAG pipeline ingests unstructured documents (resumes, specs), extracts structured data via an LLM, and stores both the structured fields and vector embeddings for semantic similarity search. This approach suits scenarios where: the backend is Java/Quarkus (not Python), document parsing requires a dedicated service for multi-format support (PDF, DOCX, images), the LLM serves dual purposes (query intent parsing and entity extraction), and the deployment needs flexible LLM serving with Ollama (CPU) or vLLM via KServe (GPU) selectable at install time. The application code is pre-built as a container image -- the repository contains only Helm charts for deployment.
+
+### Differences from Approaches A through H
+
+| Aspect | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach H (Compliance RAG) | Approach I (Quarkus Semantic Search) |
+|--------|------------------------|-----------------------------------|-------------------------------|-------------------------------|
+| Backend technology | Python (FastAPI + SQLAlchemy) | No custom code (NVIDIA pre-built) | Python (FastAPI + LangGraph) | Java (Quarkus REST + LangChain4j) |
+| RAG paradigm | Document Q&A (retrieve text chunks, generate answer) | Document Q&A | Document Q&A with tier boosting | Structured entity search (parse documents into profiles, embed profiles, similarity search) |
+| Vector database | pgvector via LlamaStack vector stores | GPU-accelerated Milvus | pgvector via direct SQL | pgvector via Quarkus Hibernate/JPA |
+| Document processing | LlamaStack internal or external pipeline | NV-Ingest with cloud NIMs | Custom markdown parser | Docling microservice (IBM Research) for format conversion + LLM for entity extraction |
+| LLM framework | LlamaStack client | NVIDIA RAG server | LangChain/LangGraph | LangChain4j (Java) |
+| LLM serving | LlamaStack server | vLLM via KServe (MIG-sliced GPUs) | Any OpenAI-compatible endpoint | Ollama (CPU default) or vLLM via KServe (GPU), switchable via Helm values |
+| LLM purpose | Response generation grounded in retrieved context | Response generation | Response generation + kb_search tool | Dual: query intent parsing AND resume-to-profile structuring |
+| Application code in repo | Yes (FastAPI backend + React frontend) | No (Helm-only) | Yes (FastAPI + LangGraph) | No (pre-built container image, Helm-only repo) |
+| Authentication | None or custom | None | None | Red Hat build of Keycloak via Kubernetes operator + OIDC |
+| Deployment | Manual Helm + make targets | Helm with GPU scheduling | Helm + make targets | Umbrella Helm chart with install.sh wrapper |
+| Knowledge base type | Dynamic (user-uploaded documents) | Dynamic (user-uploaded) | Static (curated markdown by authority tier) | Dynamic (user-uploaded resumes parsed into structured profiles) |
+
+### Data Flow
+
+**Resume Ingestion Flow:**
+
+1. User uploads a resume (PDF, DOCX, or image) via the React SPA frontend
+2. Frontend sends the file to the Quarkus REST API
+3. API forwards the document to the Docling microservice (`http://docling-service.{namespace}.svc.cluster.local:5001`) for intelligent document parsing
+4. Docling detects document layout and structure, extracts text while preserving formatting, handles multi-column layouts, tables, headers, and scanned documents (OCR)
+5. Docling returns the extracted text to the Quarkus API
+6. API sends the extracted text to the LLM (Ollama or vLLM) via the OpenAI-compatible `/v1` API for structured profile extraction
+7. LLM structures the text into profile fields (skills, experience, location, languages, etc.)
+8. API stores the structured profile with vector embeddings in pgvector for semantic search
+9. Processing time: 10-20 seconds with GPU, 2-3 minutes with CPU
+
+**Semantic Search Flow:**
+
+1. User submits a natural language query (e.g., "mobile developer in Italy") via the React SPA
+2. Frontend sends the query to the Quarkus REST API
+3. API sends the query to the LLM (Ollama or vLLM) to parse search intent into structured filters
+4. API performs vector similarity search against pgvector using the parsed query embedding
+5. pgvector returns semantically matched profiles ranked by cosine similarity
+6. API returns ranked results to the frontend with score breakdowns (semantic similarity, skill match, location match)
+
+**Authentication Flow:**
+
+1. User clicks "Sign In" in the React SPA
+2. SPA redirects to Red Hat build of Keycloak OIDC authorization endpoint
+3. User authenticates via Keycloak (local credentials, Google, Microsoft, or LDAP)
+4. Keycloak issues OIDC callback to `/api/v1/auth/callback/keycloak` on the Quarkus API
+5. API establishes a session; subsequent requests include the session cookie
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| React SPA | Quarkus REST API | REST (port 8080) | Search queries, profile management, resume upload, authentication flow |
+| Quarkus REST API | Docling microservice | HTTP (port 5001) | Document parsing (PDF/DOCX/images to structured text) |
+| Quarkus REST API | Ollama (when mode=ollama) | HTTP (port 11434, OpenAI-compatible `/v1`) | Query parsing and resume-to-profile structuring |
+| Quarkus REST API | vLLM predictor (when mode=vllm) | HTTP (port 8080, OpenAI-compatible `/v1`) | Query parsing and resume-to-profile structuring |
+| Quarkus REST API | pgvector | JDBC (port 5432) | Profile storage, vector embedding persistence, semantic similarity search |
+| Quarkus REST API | Keycloak | HTTPS (OIDC) | Authentication, token validation, user management |
+| Keycloak | Keycloak PostgreSQL | TCP (port 5432) | User data, realm configuration, session storage |
+| Red Hat build of Keycloak Operator | Keycloak CR | Kubernetes API | Manages Keycloak instance lifecycle |
+| Secrets sync Job | Keycloak client-secret | Kubernetes API | Reads OIDC client secret and issuer URL from Keycloak |
+| Secrets sync Job | Peoplemesh secrets | Kubernetes API | Patches OIDC credentials into application secrets |
+
+### Key Integration Points
+
+#### Dual-Mode LLM Serving via ConfigMap
+
+The Quarkus backend communicates with the LLM via a standard OpenAI-compatible API. The ConfigMap switches between Ollama and vLLM by changing the `OPENAI_BASE_URL`, `LLM_MODEL`, and `EMBEDDING_MODEL` environment variables. The application code is identical regardless of which LLM backend is active.
+
+```yaml
+# charts/peoplemesh/templates/config-map.yaml (lines 26-43)
+{{- if eq .Values.llm.mode "ollama" }}
+# Ollama mode - local CPU-based LLM
+OPENAI_BASE_URL: "http://{{ .Values.llm.ollama.serviceName }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.llm.ollama.port }}/v1"
+LLM_MODEL: {{ .Values.llm.ollama.chatModel | quote }}
+EMBEDDING_MODEL: {{ .Values.llm.ollama.embeddingModel | quote }}
+EMBEDDING_DIMENSION: {{ .Values.llm.ollama.embeddingDimension | quote }}
+# Extended to 240s to handle edge cases with concurrent requests or complex queries
+QUARKUS_LANGCHAIN4J_OPENAI_TIMEOUT: "240s"
+{{- else if eq .Values.llm.mode "vllm" }}
+# vLLM mode - GPU-based LLM (KServe)
+OPENAI_BASE_URL: "http://{{ .Values.llm.vllm.serviceName }}.{{ .Release.Namespace }}.svc.cluster.local/v1"
+LLM_MODEL: {{ .Values.llm.vllm.modelName | quote }}
+EMBEDDING_MODEL: {{ .Values.llm.vllm.modelName | quote }}
+EMBEDDING_DIMENSION: "768"
+{{- end }}
+```
+
+#### Ollama Model Pre-Pull via InitContainer
+
+The Ollama StatefulSet uses an init container that starts the Ollama server in the background, pulls the required models (chat and embedding), then shuts down. This ensures models are available before the main container starts serving requests.
+
+```yaml
+# charts/ollama/templates/statefulset.yaml (lines 33-69)
+initContainers:
+  - name: pull-models
+    image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        /bin/ollama serve &
+        OLLAMA_PID=$!
+        until ollama list >/dev/null 2>&1; do
+          sleep 2
+        done
+        {{- range .Values.models }}
+        if ollama list | grep -q "{{ . }}"; then
+          echo "Model {{ . }} already exists, skipping pull"
+        else
+          ollama pull {{ . }}
+        fi
+        {{- end }}
+        kill $OLLAMA_PID
+```
+
+Default models are `granite4:3b` for chat and `granite-embedding:30m` (384 dimensions) for embeddings.
+
+#### Docling Document Parsing Microservice
+
+Docling runs as a separate Deployment with its own Service, exposing IBM Research's document understanding API on port 5001. The GPU-enabled variant uses a different container image (`docling-serve` vs `docling-serve-cpu`), selected via a Helm boolean flag.
+
+```yaml
+# charts/docling/templates/deployment.yaml (lines 26-30)
+{{- if .Values.gpu.enabled }}
+image: quay.io/docling-project/docling-serve:latest
+{{- else }}
+image: {{ .Values.docling.image.repository }}:{{ .Values.docling.image.tag }}
+{{- end }}
+```
+
+The Quarkus backend connects to Docling via the `QUARKUS_DOCLING_BASE_URL` environment variable:
+
+```yaml
+# charts/peoplemesh/templates/config-map.yaml (lines 46-48)
+{{- if .Values.docling.enabled }}
+QUARKUS_DOCLING_BASE_URL: "http://{{ .Values.docling.serviceName }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.docling.port }}"
+{{- end }}
+```
+
+#### vLLM via KServe InferenceService with OAuth Token Retrieval
+
+When using vLLM mode, the model is deployed as a KServe InferenceService with `RawDeployment` mode. The Peoplemesh secrets template dynamically retrieves the vLLM service account token from the cluster to authenticate API requests.
+
+```yaml
+# charts/peoplemesh/templates/secrets.yaml (lines 22-29)
+{{- else if eq .Values.llm.mode "vllm" }}
+# vLLM mode - retrieve service account token from vLLM chart
+{{- $vllmTokenSecret := lookup "v1" "Secret" .Release.Namespace (printf "default-name-%s-sa" .Values.llm.vllm.modelName) }}
+{{- if $vllmTokenSecret }}
+OPENAI_API_KEY: {{ index $vllmTokenSecret.data "token" | b64dec | quote }}
+{{- else }}
+# Fallback if vLLM secret doesn't exist yet (first install)
+OPENAI_API_KEY: "vllm-token-pending"
+{{- end }}
+```
+
+The InferenceService uses Qwen2.5-7B-Instruct-AWQ (4-bit quantized) with vLLM args optimized for a single A10G GPU:
+
+```yaml
+# charts/vllm/values.yaml (lines 12-31)
+storage:
+  type: uri
+  uri: "hf://Qwen/Qwen2.5-7B-Instruct-AWQ"
+runtime:
+  args:
+    - --quantization
+    - awq
+    - --max-model-len=8192
+    - --enforce_eager
+    - --gpu-memory-utilization
+    - "0.90"
+    - --max-num-seqs
+    - "4"
+    - --task=generate
+```
+
+#### Keycloak OIDC Integration via Operator and Secrets Sync Job
+
+Keycloak is deployed via the Red Hat build of Keycloak Operator using a `Keycloak` CR and `KeycloakRealmImport` CR. The realm is configured declaratively with an OIDC client, redirect URIs, and a test user. A Helm post-install/post-upgrade Job synchronizes the OIDC client secret and issuer URL into the Peoplemesh application secrets.
+
+```bash
+# charts/peoplemesh/templates/secrets-sync-job.yaml (lines 30-57)
+# Waits for keycloak-client-secret, then patches Peoplemesh secrets
+CLIENT_SECRET=$(oc get secret keycloak-client-secret -n {{ .Release.Namespace }} \
+  -o jsonpath='{.data.clientSecret}' | base64 -d)
+ISSUER_URL=$(oc get secret keycloak-client-secret -n {{ .Release.Namespace }} \
+  -o jsonpath='{.data.issuerUrl}' | base64 -d)
+
+oc patch secret {{ .Values.applicationName }}-secrets -n {{ .Release.Namespace }} \
+  --type='json' \
+  -p="[
+    {\"op\":\"replace\",\"path\":\"/data/OIDC_KEYCLOAK_CLIENT_SECRET\",\"value\":\"$(echo -n "$CLIENT_SECRET" | base64 -w0)\"},
+    {\"op\":\"replace\",\"path\":\"/data/OIDC_KEYCLOAK_ISSUER_URL\",\"value\":\"$(echo -n "$ISSUER_URL" | base64 -w0)\"}
+  ]"
+
+# Restart Peoplemesh deployment to pick up new secrets
+oc rollout restart deployment/{{ .Values.applicationName }} -n {{ .Release.Namespace }}
+```
+
+The Keycloak issuer URL is auto-detected from the OpenShift console route, eliminating manual URL configuration:
+
+```go
+# charts/peoplemesh/templates/_helpers.tpl (lines 40-53)
+{{- define "peoplemesh.keycloakIssuerUrl" -}}
+{{- if .Values.security.oidc.keycloak.issuerUrl -}}
+  {{- .Values.security.oidc.keycloak.issuerUrl -}}
+{{- else -}}
+  {{- $console := lookup "route.openshift.io/v1" "Route" "openshift-console" "console" }}
+  {{- if $console }}
+    {{- $host := $console.spec.host }}
+    {{- $clusterDomain := regexReplaceAll "^console-openshift-console\\." $host "" }}
+    {{- printf "https://keycloak-%s.%s/realms/peoplemesh" .Release.Namespace $clusterDomain }}
+  {{- end }}
+{{- end -}}
+{{- end }}
+```
+
+#### pgvector Init Script for Extension Enablement
+
+The pgvector StatefulSet includes an init script (mounted via ConfigMap) that waits for PostgreSQL readiness and then enables the `vector` extension using admin privileges, since the application user does not have superuser access.
+
+```bash
+# charts/pgvector/templates/config-map.yaml (lines 12-30)
+until pg_isready -U "$POSTGRESQL_USER" -d "$POSTGRESQL_DATABASE"; do
+  echo "Waiting for PostgreSQL to be ready..."
+  sleep 2
+done
+PGPASSWORD="$POSTGRESQL_ADMIN_PASSWORD" psql -v ON_ERROR_STOP=1 \
+  --username postgres --dbname "$POSTGRESQL_DATABASE" <<-EOSQL
+    CREATE EXTENSION IF NOT EXISTS vector;
+    SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';
+EOSQL
+```
+
+### Prompt / Chain Patterns
+
+The LLM serves two distinct purposes in this architecture, both accessed via the OpenAI-compatible `/v1` API through LangChain4j:
+
+1. **Query intent parsing**: Natural language search queries (e.g., "mobile developer in Italy") are sent to the LLM to extract structured search parameters (skills, location, experience level, languages). The LLM understands semantic equivalences ("iOS engineer" matches "mobile developer") and geographic variations.
+
+2. **Resume-to-profile structuring**: After Docling extracts raw text from a resume, the LLM structures it into profile fields. The Quarkus backend uses LangChain4j's OpenAI-compatible client to communicate with either Ollama or vLLM.
+
+The `QUARKUS_LANGCHAIN4J_OPENAI_TIMEOUT` is set to 240 seconds for Ollama mode to accommodate first model load time and CPU-based inference delays (ConfigMap line 34). Flyway database migrations control which seed data variant is loaded: `classpath:db/migration,classpath:db/granite` for Granite models or `classpath:db/migration,classpath:db/openai` for OpenAI-compatible models (ConfigMap line 23).
+
+### Gotchas
+
+- The application source code is not in this repository -- only Helm charts. The Quarkus backend and React frontend are pre-built as `quay.io/rh-ai-quickstart/peoplemesh:latest`. Architecture details about internal LangChain4j wiring, embedding generation, and query parsing logic are inferred from the environment variables and ConfigMap configuration exposed by the Helm charts, not from direct source code inspection.
+- The LLM timeout (`QUARKUS_LANGCHAIN4J_OPENAI_TIMEOUT: "240s"`) in Ollama mode is 4x the typical HTTP timeout. The ConfigMap comment (line 33) explains this is needed because "first model load can take 30-60s" and extended to 120s initially, then to 240s "to handle edge cases with concurrent requests or complex queries." vLLM mode does not set this timeout, relying on defaults.
+- The Ollama init container pulls models at deploy time by starting the Ollama server in the background, pulling each model, and then killing the server process (statefulset.yaml lines 43-69). If the model pull fails, the init container fails and the pod enters CrashLoopBackOff. Models are stored on a 50Gi PVC and persist across pod restarts, so subsequent starts skip already-pulled models.
+- The `OPENAI_API_KEY` in Ollama mode is set to the literal string `"ollama-no-key-needed"` (secrets.yaml line 20) since Ollama does not require authentication. In vLLM mode, the key is dynamically looked up from the vLLM service account token secret using Helm's `lookup` function (secrets.yaml lines 23-24). On first install, this secret may not exist yet, so a fallback value `"vllm-token-pending"` is used, requiring a subsequent `helm upgrade` or secrets sync to inject the real token.
+- The secrets sync Job (secrets-sync-job.yaml) uses `oc patch` to inject Keycloak OIDC credentials into the Peoplemesh secrets after Keycloak is ready. It waits up to 120 seconds (60 iterations x 2 seconds) for the `keycloak-client-secret` to exist. If Keycloak takes longer to provision, the Job times out and the Peoplemesh deployment starts without valid OIDC credentials. The Job also triggers a `oc rollout restart` to force the deployment to pick up the patched secrets.
+- The Keycloak realm import creates the OIDC client with PKCE disabled -- the realm-import.yaml has a TODO comment: "Enable PKCE (S256) once peoplemesh implements PKCE support" (line 66). The `oauth2.pkce.code.challenge.method` attribute is set to an empty string, disabling PKCE.
+- The embedding dimension differs between Ollama mode (384, from `granite-embedding:30m`) and vLLM mode (768, hardcoded in ConfigMap line 40). This means switching between modes requires rebuilding the vector embeddings in pgvector, as the dimensions are incompatible.
+- Docling's GPU acceleration is controlled by a boolean flag (`gpu.enabled`) that switches between two different container images: `docling-serve-cpu` (CPU-only) and `docling-serve` (GPU-enabled). Both Docling and Ollama can use GPUs independently -- the Helm chart allows enabling GPU for either or both via separate `gpu.enabled` flags.
+- The Peoplemesh deployment tolerates GPU node taints (`nvidia.com/gpu` and `g5-gpu`) even though the application itself does not use a GPU (deployment.yaml lines 21-26). This is present to allow scheduling the application pod on GPU nodes in mixed clusters.
+- The Keycloak issuer URL auto-detection (in `_helpers.tpl`) uses the OpenShift console route to derive the cluster domain via `regexReplaceAll "^console-openshift-console\\." $host ""`. If the console route is unavailable (e.g., console disabled or different route naming), it falls back to `apps.cluster.local`, which will not resolve correctly.
+- Reinstallation after uninstall may cause login errors due to stale browser cookies from the previous Keycloak session (noted in README.md lines 292-295). Users must clear cookies for the Peoplemesh domain or delete cookies starting with `peoplemesh` in browser developer tools.
+
+### Related Architectures
+
+- [model-serving-gateway](model-serving-gateway.md) -- Ollama and vLLM via KServe serving patterns used by the Quarkus backend for LLM inference
+- [api-security-gateway](api-security-gateway.md) -- Keycloak OIDC authentication pattern for enterprise access control
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach C (FAISS Microservice) | Approach D (Frontend-Driven) | Approach E (Startup Ingestion) | Approach F (Dual-Mode + Docling) | Approach G (Helm-Only Dual-Frontend) | Approach H (Compliance RAG + Tier Boosting) |
-|----------|------------------------|-----------------------------------|-------------------------------|------------------------------|-------------------------------|-------------------------------|-------------------------------|----------------------------------------------|
-| Custom backend logic needed | Yes -- build your own RAG pipeline with FastAPI | No -- use pre-built NVIDIA RAG server | Yes -- standalone RAG service + init pipeline | No -- frontend handles all RAG orchestration | Minimal -- startup ingestion code in KnowledgeBaseManager | Minimal -- Streamlit frontend + separate Docling ingestion service | No -- pure Helm templates and Kubernetes Jobs | Yes -- custom ingestion, search with tier boosting, and conflict detection |
-| RAG retrieval integration | Transparent via file_search tool (LlamaStack handles internally) | Explicit via prompt template context injection | HTTP API consumed by agent graph node | Manual context prepend in frontend code | Transparent via file_search tool (LlamaStack handles internally) | Both: Direct mode uses vector_stores.search + manual context prepend; Agent mode uses transparent file_search | Transparent via both AnythingLLM built-in RAG and RHOAI Playground file_search | LangGraph tool returning formatted results with citations to the agent |
-| Vector database | pgvector (integrated with LlamaStack) | GPU-accelerated Milvus (GPU_CAGRA index) | FAISS in-memory (loaded from MinIO) | pgvector (integrated with LlamaStack) | pgvector (integrated with LlamaStack, explicit provider_id) | pgvector (integrated with LlamaStack, no explicit provider_id for UI creation) | Inline Milvus (SQLite-backed) for Llama Stack; LanceDB (built-in) for AnythingLLM | pgvector (direct SQL, no LlamaStack) |
-| Document processing | External ingestion pipeline via HTTP API | NV-Ingest with cloud NIMs (OCR, table/graphic detection) | Custom PDF parser (PyPDF-based) | LlamaStack rag_tool.insert (base64 data URL) | Direct files.create + vector_stores.files.create (text files only) | Docling (DocumentConverter + HybridChunker) for pipeline; LlamaStack pypdf provider for UI uploads | Web page fetch + HTML stripping (rag-seed Job); URL upload-link (AnythingLLM seed Job) | Custom markdown parser with YAML frontmatter and section-header chunking |
-| Model serving | LlamaStack server | vLLM via KServe with MIG-sliced GPUs | TEI for embeddings, separate LLM for inference | LlamaStack server + vLLM via KServe | LlamaStack server + vLLM via KServe | LlamaStack server + vLLM via KServe (GPU/CPU/HPU/Xeon) or Ollama for local dev | vLLM CPU via KServe (shared by both frontends, no GPU) | Any OpenAI-compatible endpoint; embeddings via local sentence-transformers or remote |
-| Multimodal support | Not built in | Built-in VLM inference for image captioning | Not built in | Not built in | Not built in | Not built in | Not built in | Not built in |
-| GPU requirements | Lower (LlamaStack manages inference) | Higher (4-5 GPUs or MIG-partitioned) | Minimal (TEI for embeddings, no GPU for FAISS) | Lower (LlamaStack manages inference) | Lower (LlamaStack manages inference) | Configurable (GPU, CPU, HPU, Xeon via device flag in Helm values) | None (CPU-only, designed for GPU-less environments) | Minimal (embedding can run locally on CPU with sentence-transformers) |
-| External dependencies | Minimal (self-contained LlamaStack) | NVIDIA NGC cloud NIMs | MinIO for index storage, TEI for embeddings | Minimal (LlamaStack + pgvector) | Minimal (LlamaStack + pgvector) | Minimal (LlamaStack + pgvector); optional MinIO for configure-pipeline | Minimal (seed document URLs must be reachable from cluster) | None (pgvector in same database, no LlamaStack needed) |
-| Retrieval consumer | User-facing agent response | User-facing frontend | Internal agent pipeline (context enrichment) | User-facing frontend (dual-panel comparison) | Agent state machine via LlamaStack Responses API | User-facing frontend (selectable Direct or Agent mode) | Two independent UIs: AnythingLLM workbench + RHOAI Playground | Agent tool output with citations and conflict warnings |
-| Index lifecycle | Managed by LlamaStack API (with dual metadata) | Managed by Milvus | Init job + MinIO pointer file + polling | Managed by LlamaStack API (via frontend) | Created at startup, accumulates across restarts | Managed by LlamaStack API (via ingestion service and frontend) | Seeded at deploy time by Kubernetes Jobs; no lifecycle management | Idempotent rebuild from files on disk (clear + re-ingest) |
-| Knowledge base type | Dynamic (user-uploaded documents) | Dynamic (user-uploaded documents) | Static (curated PDFs bundled with deployment) | Dynamic (user-uploaded via Streamlit UI) | Static (curated text files bundled or ConfigMap-mounted) | Hybrid: automated from GitHub/S3/URLs at deploy time + dynamic user uploads via UI | Static (web URLs in values.yaml, seeded at deploy time); AnythingLLM allows post-deploy uploads via UI | Static (curated markdown files with tiered authority bundled with deployment) |
-| Document management | FastAPI CRUD API + PostgreSQL metadata | Frontend + NV-Ingest APIs | Init job (static) | Streamlit UI + direct pgvector access | None (files deployed with application or via ConfigMap) | Streamlit UI + OpenAI-compatible vector_stores.files API (no direct DB access) | None (seed jobs only); AnythingLLM UI available post-deploy | None (files bundled in data/compliance-kb/ directory structure) |
-| Data sources | User-uploaded documents | User-uploaded documents | Curated PDFs | User-uploaded via UI | Curated text files | GitHub repos, S3/MinIO, URLs (automated) + user uploads via UI | Web URLs (defined in values.yaml) | Curated markdown files with YAML frontmatter organized by authority tier |
-| Local development | Not supported | Not supported | Not supported | Not supported | Not supported | Podman Compose with Ollama on host | Not supported | Supported (local sentence-transformers embeddings, same PostgreSQL) |
+| Criteria | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach C (FAISS Microservice) | Approach D (Frontend-Driven) | Approach E (Startup Ingestion) | Approach F (Dual-Mode + Docling) | Approach G (Helm-Only Dual-Frontend) | Approach H (Compliance RAG + Tier Boosting) | Approach I (Quarkus Semantic People Search) |
+|----------|------------------------|-----------------------------------|-------------------------------|------------------------------|-------------------------------|-------------------------------|-------------------------------|----------------------------------------------|----------------------------------------------|
+| Custom backend logic needed | Yes -- build your own RAG pipeline with FastAPI | No -- use pre-built NVIDIA RAG server | Yes -- standalone RAG service + init pipeline | No -- frontend handles all RAG orchestration | Minimal -- startup ingestion code in KnowledgeBaseManager | Minimal -- Streamlit frontend + separate Docling ingestion service | No -- pure Helm templates and Kubernetes Jobs | Yes -- custom ingestion, search with tier boosting, and conflict detection | No -- pre-built Quarkus container image, Helm-only repo |
+| RAG retrieval integration | Transparent via file_search tool (LlamaStack handles internally) | Explicit via prompt template context injection | HTTP API consumed by agent graph node | Manual context prepend in frontend code | Transparent via file_search tool (LlamaStack handles internally) | Both: Direct mode uses vector_stores.search + manual context prepend; Agent mode uses transparent file_search | Transparent via both AnythingLLM built-in RAG and RHOAI Playground file_search | LangGraph tool returning formatted results with citations to the agent | Application-internal: Quarkus/LangChain4j embeds query and searches pgvector, returns ranked profile matches |
+| Vector database | pgvector (integrated with LlamaStack) | GPU-accelerated Milvus (GPU_CAGRA index) | FAISS in-memory (loaded from MinIO) | pgvector (integrated with LlamaStack) | pgvector (integrated with LlamaStack, explicit provider_id) | pgvector (integrated with LlamaStack, no explicit provider_id for UI creation) | Inline Milvus (SQLite-backed) for Llama Stack; LanceDB (built-in) for AnythingLLM | pgvector (direct SQL, no LlamaStack) | pgvector (via Quarkus Hibernate/JPA, no LlamaStack) |
+| Document processing | External ingestion pipeline via HTTP API | NV-Ingest with cloud NIMs (OCR, table/graphic detection) | Custom PDF parser (PyPDF-based) | LlamaStack rag_tool.insert (base64 data URL) | Direct files.create + vector_stores.files.create (text files only) | Docling (DocumentConverter + HybridChunker) for pipeline; LlamaStack pypdf provider for UI uploads | Web page fetch + HTML stripping (rag-seed Job); URL upload-link (AnythingLLM seed Job) | Custom markdown parser with YAML frontmatter and section-header chunking | Three-step: Docling microservice (format conversion) + LLM (entity extraction) + pgvector (embed and store) |
+| Model serving | LlamaStack server | vLLM via KServe with MIG-sliced GPUs | TEI for embeddings, separate LLM for inference | LlamaStack server + vLLM via KServe | LlamaStack server + vLLM via KServe | LlamaStack server + vLLM via KServe (GPU/CPU/HPU/Xeon) or Ollama for local dev | vLLM CPU via KServe (shared by both frontends, no GPU) | Any OpenAI-compatible endpoint; embeddings via local sentence-transformers or remote | Ollama (CPU default, Granite 3B + granite-embedding:30m) or vLLM via KServe (GPU, Qwen2.5-7B-AWQ), switchable via Helm |
+| Multimodal support | Not built in | Built-in VLM inference for image captioning | Not built in | Not built in | Not built in | Not built in | Not built in | Not built in | Docling handles PDF, DOCX, and scanned images (OCR) for resume ingestion |
+| GPU requirements | Lower (LlamaStack manages inference) | Higher (4-5 GPUs or MIG-partitioned) | Minimal (TEI for embeddings, no GPU for FAISS) | Lower (LlamaStack manages inference) | Lower (LlamaStack manages inference) | Configurable (GPU, CPU, HPU, Xeon via device flag in Helm values) | None (CPU-only, designed for GPU-less environments) | Minimal (embedding can run locally on CPU with sentence-transformers) | Optional (CPU works but 10-20x slower; GPU for Ollama and/or Docling independently configurable) |
+| External dependencies | Minimal (self-contained LlamaStack) | NVIDIA NGC cloud NIMs | MinIO for index storage, TEI for embeddings | Minimal (LlamaStack + pgvector) | Minimal (LlamaStack + pgvector) | Minimal (LlamaStack + pgvector); optional MinIO for configure-pipeline | Minimal (seed document URLs must be reachable from cluster) | None (pgvector in same database, no LlamaStack needed) | Red Hat build of Keycloak Operator (must be pre-installed in namespace) |
+| Retrieval consumer | User-facing agent response | User-facing frontend | Internal agent pipeline (context enrichment) | User-facing frontend (dual-panel comparison) | Agent state machine via LlamaStack Responses API | User-facing frontend (selectable Direct or Agent mode) | Two independent UIs: AnythingLLM workbench + RHOAI Playground | Agent tool output with citations and conflict warnings | User-facing React SPA showing ranked people profiles with score breakdowns |
+| Index lifecycle | Managed by LlamaStack API (with dual metadata) | Managed by Milvus | Init job + MinIO pointer file + polling | Managed by LlamaStack API (via frontend) | Created at startup, accumulates across restarts | Managed by LlamaStack API (via ingestion service and frontend) | Seeded at deploy time by Kubernetes Jobs; no lifecycle management | Idempotent rebuild from files on disk (clear + re-ingest) | Managed by application: profiles embedded on upload, Flyway migrations for schema |
+| Knowledge base type | Dynamic (user-uploaded documents) | Dynamic (user-uploaded documents) | Static (curated PDFs bundled with deployment) | Dynamic (user-uploaded via Streamlit UI) | Static (curated text files bundled or ConfigMap-mounted) | Hybrid: automated from GitHub/S3/URLs at deploy time + dynamic user uploads via UI | Static (web URLs in values.yaml, seeded at deploy time); AnythingLLM allows post-deploy uploads via UI | Static (curated markdown files with tiered authority bundled with deployment) | Dynamic (user-uploaded resumes parsed into structured people profiles) |
+| Document management | FastAPI CRUD API + PostgreSQL metadata | Frontend + NV-Ingest APIs | Init job (static) | Streamlit UI + direct pgvector access | None (files deployed with application or via ConfigMap) | Streamlit UI + OpenAI-compatible vector_stores.files API (no direct DB access) | None (seed jobs only); AnythingLLM UI available post-deploy | None (files bundled in data/compliance-kb/ directory structure) | React SPA profile management (upload, review extracted data, apply changes) |
+| Data sources | User-uploaded documents | User-uploaded documents | Curated PDFs | User-uploaded via UI | Curated text files | GitHub repos, S3/MinIO, URLs (automated) + user uploads via UI | Web URLs (defined in values.yaml) | Curated markdown files with YAML frontmatter organized by authority tier | User-uploaded resumes (PDF, DOCX, TXT, PNG, JPG) |
+| Local development | Not supported | Not supported | Not supported | Not supported | Not supported | Podman Compose with Ollama on host | Not supported | Supported (local sentence-transformers embeddings, same PostgreSQL) | Not documented in repo |

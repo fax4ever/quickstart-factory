@@ -1,7 +1,7 @@
 ---
 name: keycloak
 description: Keycloak OIDC identity provider deployed via operator CR or raw container with realm import and JWT validation
-summary: "Keycloak provides SSO and identity management for OpenShift quickstarts via two approaches: Approach A deploys via Red Hat Build of Keycloak Operator (k8s.keycloak.org/v2alpha1 CR) with CNPG PostgreSQL (XA-enabled), automated OAuth patching via cluster-admin Helm post-install Job, bulk user provisioning with oidc-usermodel-realm-role-mapper mapping realm roles to OpenShift groups claims, and ClusterRoleBinding granting admin role full cluster-admin; Approach B uses raw quay.io/keycloak/keycloak:26.0 in dev mode (embedded H2) for application-level OIDC with domain-specific roles (borrower/loan_officer/underwriter/ceo), PyJWT JWKS-cached validation with kid-mismatch cache-bust retry, keycloak-js PKCE S256 frontend, AUTH_DISABLED dev bypass with X-Dev-Role simulation, and DataScope-driven per-role data scoping. Use Approach A for cluster-wide SSO requiring OpenShift OAuth integration and RBAC via ClusterRoleBinding; use Approach B for per-application persona-based auth without cluster privileges -- chart is disabled by default (keycloak.enabled: false) in both approaches and must be explicitly enabled. Approach A creates openid-client-secret in openshift-config namespace (not Keycloak namespace), connects to CNPG Postgres via convention-based secret (<cluster-name>-app), uses TLS re-encryption at Route <name>.<wildcardDomain> with serving certs, and supports ingressCA for custom CA injection; Approach B constructs JWT issuer as {KEYCLOAK_ISSUER or KEYCLOAK_URL}/realms/{realm} with accessTokenLifespan 900s and frontend token refresh 60s pre-expiry. Approach A's removeKubeAdmin (default false) permanently deletes kubeadmin secret, external Postgres requires overriding both postgresCluster.host and credentialsSecret together, and OAuth patching requires cluster-admin in openshift-authentication namespace; Approach B's directAccessGrantsEnabled enables deprecated ROPC flow (OAuth 2.1), demo passwords are hardcoded in realm JSON (not env-driven), and Keycloak only starts with compose --profile auth or --profile full."
+summary: "Keycloak provides SSO/OIDC identity management for OpenShift quickstarts via three approaches: (A) Operator CR (k8s.keycloak.org/v2alpha1) with CNPG PostgreSQL for cluster-level OAuth SSO using KeycloakRealmImport CR, bulk templated users, automated post-install OAuth patching, TLS re-encryption Route, openid-client-secret in openshift-config namespace, and optional kubeadmin removal; (B) raw quay.io/keycloak/keycloak:26.0 container in dev mode for application-level OIDC with domain-specific roles (borrower/loan_officer/underwriter/ceo) driving DataScope-based data visibility, PyJWT/JWKS validation with configurable cache TTL, keycloak-js with PKCE S256, and AUTH_DISABLED dev bypass with X-Dev-Role header; (C) Operator CR with standalone PostgreSQL StatefulSet for production app-level OIDC using namespace-scoped rhbk-operator subscription, KeycloakRealmImport CR (PKCE intentionally disabled), cross-chart keycloak-client-secret sharing via post-install sync Job with Helm lookup for idempotent upgrades, pre-delete cleanup hook, and Route edge termination. Choose A for cluster-wide SSO with OpenShift groups/RBAC mapping (requires cluster-admin), B for per-application persona-based RBAC without operator dependency (fastest dev loop via AUTH_DISABLED=true and X-Dev-Role header, activated with compose --profile auth), or C for production app-level OIDC with persistent state and umbrella chart integration (no cluster privileges needed). Set KEYCLOAK_ISSUER when Keycloak is behind an OpenShift Route to avoid issuer mismatch causing InvalidTokenError; A's CNPG host defaults to <cluster-name>-rw; C requires postgres.password and realm.testUser.password at install with no defaults; B activates Keycloak only with compose --profile auth. A's OAuth patching Job runs in openshift-authentication namespace with cluster-admin; B's directAccessGrantsEnabled enables deprecated ROPC flow (OAuth 2.1); C's sync Job polls 120s for keycloak-client-secret and uses hostname.strict: false disabling hostname verification; JWKS cache-bust on kid mismatch forces refresh for all coroutines across B."
 metadata:
   type: component
 tags:
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
     notes: "Keycloak as application-level OIDC provider with raw container Deployment, realm JSON import, domain-specific RBAC roles, PyJWT validation, and keycloak-js frontend SDK"
     approach: "B"
+  - quickstart: "peoplemesh"
+    repo: "https://github.com/rh-ai-quickstart/peoplemesh"
+    notes: "Keycloak via operator CR with standalone PostgreSQL StatefulSet, application-level OIDC via KeycloakRealmImport CR, cross-chart secret sharing via sync Job, and namespace-scoped rhbk-operator subscription"
+    approach: "C"
 ---
 
 # Keycloak
@@ -438,17 +442,238 @@ containers:
 
 ---
 
+## Approach C: Operator CR with Standalone PostgreSQL for Application OIDC (from peoplemesh)
+
+### When to Use
+
+When the quickstart needs a production-grade Keycloak (operator-managed, persistent database) for application-level OIDC authentication, without cluster-level OAuth patching or CNPG dependency. Suitable when the umbrella chart pattern is used and OIDC client credentials must be shared across subcharts automatically.
+
+### Differences from Approach A
+
+- **No cluster-level OAuth patching** -- Keycloak provides application-level OIDC, not OpenShift SSO
+- **No CNPG dependency** -- uses a standalone PostgreSQL StatefulSet instead of CloudNativePG Cluster CR
+- **No cluster-admin privileges required** -- no changes to `openshift-config` or `openshift-authentication` namespaces
+- **Namespace-scoped operator** -- rhbk-operator installed per-namespace with `OperatorGroup.targetNamespaces`
+- **Cross-chart secret sharing** -- OIDC client credentials shared via a `keycloak-client-secret` Secret and a post-install sync Job
+
+### Differences from Approach B
+
+- **Operator-managed** -- uses `k8s.keycloak.org/v2alpha1` Keycloak CR, not a raw container Deployment
+- **Persistent PostgreSQL** -- standalone StatefulSet with PVC, not embedded H2
+- **Realm via CR** -- `KeycloakRealmImport` CR instead of JSON volume mount
+- **Helm subchart pattern** -- standalone `charts/keycloak/` subchart wired through an umbrella chart
+- **Auto-generated secrets** -- client secret and issuer URL published as a Kubernetes Secret for other charts to consume
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Red Hat Build of Keycloak 24.0 (operator-managed)
+- **Container image:** Managed by the Keycloak Operator (rhbk-operator stable-v26 channel)
+- **Key dependencies:** rhbk-operator (namespace-scoped subscription), PostgreSQL 15 (standalone StatefulSet)
+- **Helm subchart:** Standalone subchart at `charts/keycloak/` (v0.1.0), wired via umbrella chart at `peoplemesh-umbrella/Chart.yaml`
+- **PostgreSQL image:** `quay.io/rh-aiservices-bu/postgresql-15-pgvector-c9s:latest`
+
+### Key Patterns
+
+#### Operator CR with Standalone PostgreSQL
+
+Unlike Approach A (CNPG), this chart deploys its own PostgreSQL StatefulSet with a PVC and wires Keycloak to it via a pre-install Secret. The Keycloak CR references the database credentials from a Helm hook-created Secret.
+
+```yaml
+# templates/keycloak-cr.yaml
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: Keycloak
+metadata:
+  name: {{ .Values.applicationName }}
+spec:
+  instances: {{ .Values.keycloak.instances }}
+  db:
+    vendor: postgres
+    host: {{ .Values.postgres.service.name }}
+    usernameSecret:
+      name: {{ .Values.applicationName }}-db-secret
+      key: username
+    passwordSecret:
+      name: {{ .Values.applicationName }}-db-secret
+      key: password
+  hostname:
+    strict: false
+    strictBackchannel: false
+  proxy:
+    headers: {{ .Values.keycloak.proxy.headers }}
+```
+
+#### PostgreSQL StatefulSet with PVC
+
+The database is a single-replica StatefulSet with `volumeClaimTemplates` for persistent storage. Credentials come from a Helm pre-install hook Secret, ensuring the Secret exists before Keycloak or PostgreSQL attempt to start.
+
+```yaml
+# templates/postgres-secret.yaml
+annotations:
+  "helm.sh/hook": pre-install,pre-upgrade
+  "helm.sh/hook-weight": "-10"
+  "helm.sh/hook-delete-policy": before-hook-creation
+stringData:
+  username: {{ .Values.postgres.user | quote }}
+  password: {{ include "keycloak.postgresPassword" . | quote }}
+```
+
+The StatefulSet includes both liveness and readiness probes using `pg_isready`.
+
+#### KeycloakRealmImport with OIDC Client
+
+The realm is provisioned via a `KeycloakRealmImport` CR that creates an OIDC client with auto-configured redirect URIs based on the cluster domain. The chart dynamically discovers the cluster domain by looking up the OpenShift console Route.
+
+```yaml
+# templates/_helpers.tpl
+{{- define "keycloak.clusterDomain" -}}
+{{- $console := lookup "route.openshift.io/v1" "Route" "openshift-console" "console" }}
+{{- if $console }}
+{{- $host := $console.spec.host }}
+{{- regexReplaceAll "^console-openshift-console\\." $host "" }}
+{{- else }}
+apps.cluster.local
+{{- end }}
+{{- end }}
+```
+
+Redirect URIs are constructed at template time using the release namespace and discovered cluster domain, ensuring they match the actual application Route.
+
+#### Cross-Chart Secret Sharing via Sync Job
+
+The keycloak subchart publishes OIDC credentials (client secret and issuer URL) as a `keycloak-client-secret` Secret. The consuming application chart (peoplemesh) reads this Secret at template time via `lookup`, with a fallback for first-install when the Secret does not yet exist. A Helm post-install Job waits for the Secret and patches the application Secret with the actual values.
+
+```yaml
+# charts/peoplemesh/templates/secrets-sync-job.yaml (post-install hook)
+for i in {1..60}; do
+  if oc get secret keycloak-client-secret -n {{ .Release.Namespace }} >/dev/null 2>&1; then
+    echo "Found keycloak-client-secret"
+    break
+  fi
+  sleep 2
+done
+CLIENT_SECRET=$(oc get secret keycloak-client-secret -n {{ .Release.Namespace }} \
+  -o jsonpath='{.data.clientSecret}' | base64 -d)
+oc patch secret {{ .Values.applicationName }}-secrets -n {{ .Release.Namespace }} \
+  --type='json' \
+  -p="[{\"op\":\"replace\",\"path\":\"/data/OIDC_KEYCLOAK_CLIENT_SECRET\", ...}]"
+oc rollout restart deployment/{{ .Values.applicationName }} -n {{ .Release.Namespace }}
+```
+
+#### Idempotent Secret Helpers with Lookup
+
+The `_helpers.tpl` file uses Helm `lookup` to check for existing Secrets before requiring user-provided values. On first install, the password and client secret are required from values; on upgrades, the existing Secret values are reused automatically.
+
+```yaml
+# templates/_helpers.tpl
+{{- define "keycloak.clientSecret" -}}
+{{- $secret := lookup "v1" "Secret" .Release.Namespace "keycloak-client-secret" -}}
+{{- if $secret -}}
+  {{- index $secret.data "clientSecret" | b64dec -}}
+{{- else -}}
+  {{- required "keycloak.realm.client.clientSecret is required." .Values.realm.client.clientSecret -}}
+{{- end -}}
+{{- end }}
+```
+
+#### Namespace-Scoped Operator Subscription
+
+The rhbk-operator is installed per-namespace rather than cluster-wide. The `OperatorGroup` restricts the operator's scope to the quickstart namespace only.
+
+```yaml
+# installer/operators/keycloak.yaml
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  generateName: ${NAMESPACE}-
+  namespace: ${NAMESPACE}
+spec:
+  targetNamespaces:
+    - ${NAMESPACE}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhbk-operator
+  namespace: ${NAMESPACE}
+spec:
+  channel: stable-v26
+  name: rhbk-operator
+  source: redhat-operators
+```
+
+#### Helm Pre-Delete Cleanup Hook
+
+A pre-delete Job cleans up operator-managed resources (Secrets, KeycloakRealmImport CRs) that Helm does not own directly. The Job uses a dedicated ServiceAccount with a scoped Role.
+
+```yaml
+# templates/cleanup-secrets-hook.yaml
+annotations:
+  "helm.sh/hook": pre-delete
+  "helm.sh/hook-weight": "-5"
+  "helm.sh/hook-delete-policy": hook-succeeded,hook-failed
+# Job runs:
+oc delete secret keycloak-client-secret keycloak-db-secret \
+  -n {{ include "keycloak.namespace" . }} --ignore-not-found
+oc delete keycloakrealmimport peoplemesh-realm \
+  -n {{ include "keycloak.namespace" . }} --ignore-not-found
+```
+
+### Configuration
+
+- **Environment variables:** None directly set on Keycloak; all config is via the Keycloak CR, realm import CR, and Helm values. The consuming application receives `OIDC_KEYCLOAK_CLIENT_ID`, `OIDC_KEYCLOAK_CLIENT_SECRET`, and `OIDC_KEYCLOAK_ISSUER_URL` via its own secrets.
+- **Config files:** None -- all configuration is declarative via Helm templates and CRs
+- **Helm values:**
+  - `namespace` -- Target namespace (empty = release namespace)
+  - `postgres.user` / `postgres.password` -- Database credentials (password REQUIRED)
+  - `postgres.image.repository` / `postgres.image.tag` -- PostgreSQL image
+  - `postgres.persistence.size` -- PVC size (default: `10Gi`)
+  - `keycloak.instances` -- Keycloak replica count (default: `1`)
+  - `keycloak.http.enabled` -- Enable HTTP (default: `true`)
+  - `keycloak.proxy.headers` -- Proxy header mode (default: `xforwarded`)
+  - `realm.enabled` / `realm.name` -- Whether to create realm and its name
+  - `realm.client.clientId` / `realm.client.clientSecret` -- OIDC client credentials (secret auto-generated if empty)
+  - `realm.testUser.enabled` / `realm.testUser.password` -- Test user for demos (password REQUIRED)
+
+### Known Gotchas
+
+- The `postgres.password` and `realm.testUser.password` values have no defaults and are marked REQUIRED. Helm install will fail with a `required` error if not provided. Generate passwords with: `openssl rand -base64 24`.
+- The PostgreSQL image is `quay.io/rh-aiservices-bu/postgresql-15-pgvector-c9s` (a pgvector image), reused from the pgvector subchart. This works fine for Keycloak since pgvector is just an extension that does not interfere with standard PostgreSQL operations. The comment in `values.yaml` says: "same as pgvector - proven to work".
+- The cross-chart secret sharing relies on the keycloak subchart installing before the peoplemesh subchart in the umbrella chart. The `dependencies` order in `peoplemesh-umbrella/Chart.yaml` lists keycloak first, and the sync Job polls for up to 120 seconds (60 iterations x 2s sleep) for the `keycloak-client-secret` to appear.
+- The realm import CR has a TODO comment noting PKCE is intentionally disabled: "TODO: Enable PKCE (S256) once peoplemesh implements PKCE support". The `oauth2.pkce.code.challenge.method` attribute is set to empty string.
+- The cleanup hook uses `oc delete` commands, meaning it requires the `oc` CLI image (`quay.io/openshift/origin-cli:latest`) and a ServiceAccount with delete permissions on secrets and `keycloakrealmimports`.
+- The `hostname.strict: false` and `hostname.strictBackchannel: false` settings in the Keycloak CR disable hostname verification. This allows Keycloak to accept requests on any hostname, which is necessary when the Route hostname is not known at CR creation time.
+- The Keycloak Route uses TLS `edge` termination (not `reencrypt` as in Approach A), meaning traffic between the Route and Keycloak pod is unencrypted.
+
+### Testing Notes
+
+- Verify the rhbk-operator Subscription is installed and the CSV reaches `Succeeded` phase in the target namespace
+- Check that the `keycloak-client-secret` Secret exists with both `clientSecret` and `issuerUrl` keys
+- Confirm the secrets-sync Job completes and the application Secret is patched with OIDC values
+- Test login via the Keycloak admin console at `https://<keycloak-route>/admin` using credentials from the `keycloak-initial-admin` Secret
+- Verify the test user can authenticate through the application's OIDC callback at `/api/v1/auth/callback/keycloak`
+
+### Related Patterns
+
+- Umbrella chart dependency ordering for cross-chart coordination
+- Helm `lookup` for idempotent secret management across install/upgrade
+- Helm hook ordering (`pre-install` weight `-10` for secrets, `post-install` weight `5` for sync)
+- Namespace-scoped OLM operator subscriptions
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Operator CR) | Approach B (Raw Container) |
-|----------|--------------------------|----------------------------|
-| Deployment method | Keycloak Operator CR (`k8s.keycloak.org/v2alpha1`) | Raw container Deployment |
-| Database | CNPG PostgreSQL cluster | Embedded H2 (dev mode) |
-| Auth integration | OpenShift OAuth (cluster-level SSO) | Application-level OIDC (JWT validation) |
-| Realm provisioning | `KeycloakRealmImport` CR with templated users | Static JSON file via volume mount |
-| Role model | Generic SSO roles mapped to OpenShift groups | Domain-specific roles (borrower, underwriter, etc.) |
-| User provisioning | Bulk templated users (user1..userN) | Named demo personas with fixed UUIDs |
-| TLS | OpenShift serving certs with Route re-encryption | Keycloak dev mode (HTTP), TLS at Route/proxy level |
-| Dev experience | Requires Keycloak Operator installed | `AUTH_DISABLED=true` bypass, no Keycloak needed |
-| Cluster privileges | Requires `cluster-admin` for OAuth patching | No cluster-level changes needed |
-| Best for | Cluster-wide SSO for all OpenShift users | Per-application auth with persona-based RBAC |
+| Criteria | Approach A (Operator CR + CNPG) | Approach B (Raw Container) | Approach C (Operator CR + StatefulSet) |
+|----------|--------------------------|----------------------------|----------------------------------------|
+| Deployment method | Keycloak Operator CR (`k8s.keycloak.org/v2alpha1`) | Raw container Deployment | Keycloak Operator CR (`k8s.keycloak.org/v2alpha1`) |
+| Database | CNPG PostgreSQL cluster | Embedded H2 (dev mode) | Standalone PostgreSQL StatefulSet with PVC |
+| Auth integration | OpenShift OAuth (cluster-level SSO) | Application-level OIDC (JWT validation) | Application-level OIDC (KeycloakRealmImport CR) |
+| Realm provisioning | `KeycloakRealmImport` CR with templated users | Static JSON file via volume mount | `KeycloakRealmImport` CR with single test user |
+| Role model | Generic SSO roles mapped to OpenShift groups | Domain-specific roles (borrower, underwriter, etc.) | Application-specific OIDC client with standard scopes |
+| User provisioning | Bulk templated users (user1..userN) | Named demo personas with fixed UUIDs | Single configurable test user |
+| TLS | OpenShift serving certs with Route re-encryption | Keycloak dev mode (HTTP), TLS at Route/proxy level | HTTP-enabled Keycloak with Route edge termination |
+| Secret sharing | `openid-client-secret` in `openshift-config` namespace | Environment variables per service | Cross-chart `keycloak-client-secret` Secret + sync Job |
+| Dev experience | Requires Keycloak Operator installed | `AUTH_DISABLED=true` bypass, no Keycloak needed | Requires rhbk-operator in namespace |
+| Cluster privileges | Requires `cluster-admin` for OAuth patching | No cluster-level changes needed | No cluster-level changes needed |
+| Operator scope | Cluster-wide operator assumed | No operator needed | Namespace-scoped operator subscription |
+| Best for | Cluster-wide SSO for all OpenShift users | Per-application auth with persona-based RBAC | Production app-level OIDC with persistent state and umbrella chart integration |

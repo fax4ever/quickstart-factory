@@ -1,7 +1,7 @@
 ---
 name: kserve-oauth-proxy-timeout-patch-job
 description: Helm post-install Job that patches oauth-proxy upstream-timeout on KServe predictor deployments
-summary: "Patches the oauth-proxy sidecar's --upstream-timeout on KServe predictor deployments via a Helm post-install Job, solving the lack of native timeout configuration when security.enableAuth: true injects the proxy with a default too short for long-running LLM inference. Use when KServe InferenceServices with oauth-proxy need extended timeouts for model serving; the Job complements InferenceService annotations (security.opendatahub.io/oauth-proxy-upstream-timeout, haproxy.router.openshift.io/timeout, haproxy.router.openshift.io/timeout-tunnel) which alone do not configure the sidecar container args. The Job (hook-weight \"10\", backoffLimit: 10) uses openshift/cli:latest to poll up to 10 minutes for <model-name>-predictor, then injects --upstream-timeout via oc get/jq/oc apply, with RBAC (ServiceAccount, Role, RoleBinding) deployed at hook-weight \"5\" pre-install and route.oauthProxyUpstreamTimeout defaulting to 10m. The oc get|jq|oc apply pipeline replaces the full deployment spec risking concurrent KServe controller overwrites, the fixed <model-name>-predictor naming requires duplicate Job templates per model chart (e.g., nemotron-model and qwen3-model), and the Job silently exits 0 if no oauth-proxy container or --upstream-timeout already exists (idempotency guards)."
+summary: "Patches the oauth-proxy sidecar's --upstream-timeout on KServe predictor deployments via a Helm post-install/post-upgrade Job, solving the lack of native timeout configuration when security.enableAuth: true injects the proxy with a default too short for long-running LLM inference. Use when KServe InferenceServices with oauth-proxy need extended timeouts for model serving; the Job complements InferenceService annotations (security.opendatahub.io/oauth-proxy-upstream-timeout, haproxy.router.openshift.io/timeout, haproxy.router.openshift.io/timeout-tunnel) which alone do not configure the sidecar container args. The Job (hook-weight \"10\", hook-delete-policy: before-hook-creation/hook-succeeded, backoffLimit: 10) uses openshift/cli:latest to poll up to 10 minutes for <model-name>-predictor, then injects --upstream-timeout via oc get/jq/oc apply, with RBAC (ServiceAccount, Role, RoleBinding) at hook-weight \"5\" pre-install, route.oauthProxyUpstreamTimeout defaulting to 10m, and route.timeout to 600s. The oc get|jq|oc apply pipeline replaces the full deployment spec risking concurrent KServe controller overwrites, the fixed <model-name>-predictor naming requires duplicate Job templates per model chart (e.g., nemotron-model and qwen3-model), and the Job silently exits 0 if no oauth-proxy container or --upstream-timeout already exists (idempotency guards)."
 metadata:
   type: deployment-pattern
 tags:
@@ -12,6 +12,10 @@ source_examples:
   - quickstart: "data-governance-co-pilot"
     repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
     notes: "Post-install Job patches oauth-proxy --upstream-timeout=10m on both nemotron and qwen3 model predictor deployments"
+    approach: "A"
+  - quickstart: "peoplemesh"
+    repo: "https://github.com/rh-ai-quickstart/peoplemesh"
+    notes: "Same pattern in vllm subchart: post-install Job at hook-weight 10 patches oauth-proxy --upstream-timeout=10m on peoplemesh-llm-predictor, conditional on security.enableAuth, with idempotency checks for container existence and existing timeout arg"
     approach: "A"
 ---
 
