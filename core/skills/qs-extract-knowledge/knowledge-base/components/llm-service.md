@@ -1,7 +1,7 @@
 ---
 name: llm-service
 description: "Helm subchart for deploying LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI"
-summary: "Deploys LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI via the llm-service Helm subchart (v0.5.9+ from ai-architecture-charts), with LlamaStack orchestrating inference between backend and model servers across three runner types -- LlamaStack (via LLAMASTACK_URL), LangGraph (direct OpenAI-compat API, falls back to LlamaStack /v1), and CrewAI (LiteLLM routing requiring `openai/`-prefixed model names via `_to_litellm_model()`). Use when deploying GPU-backed LLM inference on RHOAI/OpenShift AI (24GB+ VRAM, HF_TOKEN for gated models) with multi-device support (cpu/gpu/hpu/xeon via DEVICE variable); pre-existing model URLs skip InferenceService creation, `rawDeploymentMode` bypasses KServe for non-KServe clusters, `llm-service.enabled: false` disables the subchart entirely for MaaS/remote-only paths (with `skipModelWait: true` and empty `initContainers`), and local dev uses Ollama via LlamaStack's `remote::ollama` provider with silent fallback to first available model. Models configured entirely through `global.models.<name>.enabled/id/url/apiToken/tolerations/maxTokens` at `helm install` via install_with_env.sh or Makefile with rag-values.yaml catalog (values.yaml only has commented examples), GPU tolerations passed as `--set-json`, safety/shield models use separate SAFETY parameter and `registerShield: true` flag (filtered from `/api/v1/llama-stack/llms`), per-model `device`/`accelerators` overrides with tool-call-parser/vision model `args` for function-calling models, dynamic provider registration patches the LlamaStack ConfigMap at runtime with deployment restart, and LlamaStack client port resolution uses LLAMASTACK_CLIENT_PORT > LLAMASTACK_SERVICE_PORT > 8321 to avoid K8s `tcp://` format in LLAMASTACK_PORT. Gotchas: no explicit `llm-service:` block in ai-virtual-agent values.yaml (f5-ai-guardrails has one with `secret.enabled` for HF token validation; check install script or `helm get values`), LLM (YAML-safe config key) vs LLM_ID (model identifier) distinction where LLM_ID defaults to LLM, LlamaStack API breaks between 0.3.x and 0.6.1 handled by multi-attribute fallback helpers, init container waits for LlamaStack not llm-service causing 10-30min startup for large model downloads, HPU/Xeon models need different vLLM args (`--max-num-seqs 32`) and max-model-len than GPU counterparts, post-init replica scaling requires dedicated RBAC (ServiceAccount/Role/RoleBinding) for `kubectl scale` hook Job, `maxTokens` is server-side only (Responses API lacks per-request support, default 2048 via LLM_MAX_TOKENS), Chart.yaml vs Chart.lock version drift resolved by `make depend`, and CrewAI install script auto-prepends `openai/` prefix for LiteLLM routing."
+summary: "Deploys LLM model servers (vLLM/TGI) as KServe InferenceServices on RHOAI via the llm-service Helm subchart (v0.5.9+ from ai-architecture-charts), with LlamaStack orchestrating inference between backend and model servers across three runner types -- LlamaStack (via LLAMASTACK_URL), LangGraph (direct OpenAI-compat API, falls back to LlamaStack /v1), and CrewAI (LiteLLM routing requiring `openai/`-prefixed model names via `_to_litellm_model()`). Use when deploying GPU-backed LLM inference on RHOAI/OpenShift AI (24GB+ VRAM, HF_TOKEN for gated models) with multi-device support (cpu/gpu/hpu/xeon via DEVICE variable); pre-existing model URLs skip InferenceService creation, `rawDeploymentMode` bypasses KServe for non-KServe clusters, `llm-service.enabled: false` disables the subchart entirely for MaaS/remote-only paths (with `skipModelWait: true` and empty `initContainers`), and local dev uses Ollama via LlamaStack's `remote::ollama` provider with silent fallback to first available model. Models configured entirely through `global.models.<name>.enabled/id/url/apiToken/tolerations/maxTokens` at `helm install` via install_with_env.sh or Makefile with rag-values.yaml catalog (values.yaml only has commented examples), GPU tolerations passed as `--set-json`, safety/shield models use separate SAFETY parameter and `registerShield: true` flag (filtered from `/api/v1/llama-stack/llms`), per-model `device`/`accelerators` overrides with tool-call-parser/vision model `args` for function-calling models including FP8-quantized entries, dynamic provider registration patches the LlamaStack ConfigMap at runtime, LlamaStack client port uses LLAMASTACK_CLIENT_PORT > LLAMASTACK_SERVICE_PORT > 8321 to avoid K8s `tcp://` LLAMASTACK_PORT, and umbrella chart nesting (aiobs-stack > rag > llm-service) scopes values under `rag.llm-service` prefix with OLM operator form descriptors for OpenShift Console. Gotchas: no explicit `llm-service:` block in ai-virtual-agent values.yaml (f5-ai-guardrails has one with `secret.enabled` for HF token validation; check install script or `helm get values`), LLM (YAML-safe config key) vs LLM_ID (model identifier) distinction where LLM_ID defaults to LLM, LlamaStack API breaks between 0.3.x and 0.6.1 handled by multi-attribute fallback helpers, init container waits for LlamaStack not llm-service causing 10-30min startup for large model downloads, HPU/Xeon models need different vLLM args (`--max-num-seqs 32`) and max-model-len than GPU counterparts, post-init replica scaling requires dedicated RBAC (ServiceAccount/Role/RoleBinding) for `kubectl scale` hook Job, `maxTokens` is server-side only (Responses API lacks per-request support, default 2048 via LLM_MAX_TOKENS), Chart.yaml vs Chart.lock version drift resolved by `make depend`, CrewAI auto-prepends `openai/` prefix for LiteLLM routing, vLLM PrometheusRule defines 6 alerts (abort rate, latency, success rate, inference time, queue time, GPU cache), RHOAI 3.x auto-detection from DataScienceCluster enables LlamaStack operator mode silently, and `LLM_URL` auto-appends `:8080/v1` when no port is specified."
 metadata:
   type: component
 tags:
@@ -29,6 +29,10 @@ source_examples:
   - quickstart: "RAG"
     repo: "https://github.com/rh-ai-quickstart/RAG"
     notes: "llm-service v0.5.10 subchart with conditional enablement, remote LLM as first-class deployment path (LLM=remotellm), MaaS-only e2e testing, FP8/vision model catalog, and tenant bootstrap with llm-service disabled"
+    approach: "A"
+  - quickstart: "openshift-ai-observability-summarizer"
+    repo: "https://github.com/rh-ai-quickstart/openshift-ai-observability-summarizer"
+    notes: "llm-service v0.5.9 subchart in umbrella chart (aiobs-stack > rag > llm-service), OLM operator form for HF token/device/model selection, RHOAI version auto-detection for LlamaStack operator mode, vLLM PrometheusRule alerting, and LLM_URL auto-port normalization"
     approach: "A"
 ---
 
@@ -438,6 +442,110 @@ def _get_model_type(model):
     return meta.get("model_type")
 ```
 
+### OLM Operator Form for LLM Configuration (from openshift-ai-observability-summarizer)
+
+The OLM operator CSV exposes llm-service settings as form descriptors in the OpenShift Console UI, allowing users to configure HF token, device type, and model selection through the operator install form rather than `helm --set` or Makefile variables:
+
+```yaml
+# From deploy/operator/bundle/manifests/aiobs-operator.clusterserviceversion.yaml
+- description: 'HuggingFace token for downloading gated LLM models'
+  displayName: HuggingFace Token
+  path: rag.llm-service.secret.hf_token
+  x-descriptors:
+  - urn:alm:descriptor:com.tectonic.ui:fieldGroup:LLM Configuration
+  - urn:alm:descriptor:com.tectonic.ui:password
+- description: Hardware type for LLM deployment
+  displayName: Device Type
+  path: rag.llm-service.device
+  x-descriptors:
+  - urn:alm:descriptor:com.tectonic.ui:select:gpu
+  - urn:alm:descriptor:com.tectonic.ui:select:hpu
+  - urn:alm:descriptor:com.tectonic.ui:select:gpu-amd
+  - urn:alm:descriptor:com.tectonic.ui:select:cpu
+```
+
+### vLLM PrometheusRule Alerts (from openshift-ai-observability-summarizer)
+
+The alerting chart deploys PrometheusRules that monitor vLLM metrics emitted by the llm-service model servers, providing automated alerting for model serving health:
+
+```yaml
+# From deploy/helm/alerting/templates/prometheusrule.yaml
+- alert: VLLMHighAbortedRequestRate
+  expr: |
+    rate(vllm:num_aborted_requests[5m]) / rate(vllm:num_total_requests[5m]) > 0.10 and rate(vllm:num_total_requests[5m]) > 0
+  for: 5m
+  labels:
+    severity: critical
+
+- alert: VLLMHighGPUCacheUsage
+  expr: |
+    vllm:gpu_cache_usage_perc > 0.9
+  for: 10m
+  labels:
+    severity: warning
+```
+
+Six alerts are defined: `VLLMHighAbortedRequestRate`, `VLLMHighP95Latency`, `VLLMLowRequestSuccessRate`, `VLLMHighAverageInferenceTime`, `VLLMHighP95RequestQueueTime`, and `VLLMHighGPUCacheUsage`.
+
+### RHOAI Version Auto-Detection (from openshift-ai-observability-summarizer)
+
+The Makefile auto-detects the RHOAI version from the cluster CSV and uses it to determine whether the LlamaStack operator deployment mode is available. This affects how llm-service's InferenceService resources are consumed:
+
+```makefile
+# From Makefile
+_RHOAI_CSV := $(shell oc get csv -n redhat-ods-operator -l operators.coreos.com/rhods-operator.redhat-ods-operator \
+  -o jsonpath='{.items[0].spec.version}' 2>/dev/null)
+ifneq ($(findstring 3.,$(_RHOAI_CSV)),)
+  RHOAI_VERSION := 3
+else
+  RHOAI_VERSION := 2
+endif
+```
+
+### LlamaStack Operator Mode with Auto-Detection (from openshift-ai-observability-summarizer)
+
+On RHOAI 3.x, the Makefile auto-detects if the LlamaStack operator is enabled (`managementState: Managed` in DataScienceCluster) and automatically switches to operator-based deployment. This changes how llama-stack interacts with the llm-service InferenceService:
+
+```yaml
+# From deploy/helm/rag/values.yaml
+llama-stack:
+  # managedByOperator: when true, deploys via LlamaStackDistribution CRD (requires RHOAI 3.x)
+  managedByOperator: false
+```
+
+### LLM URL Auto-Normalization (from openshift-ai-observability-summarizer)
+
+The Makefile adds a `process_llm_url` function that auto-appends `:8080/v1` when the provided `LLM_URL` has no port, normalizing external model endpoint URLs:
+
+```makefile
+# From Makefile
+DEFAULT_LLM_PORT_AND_PATH := :8080/v1
+
+define process_llm_url
+$(if $(LLM_URL),$(shell \
+    if echo "$(LLM_URL)" | grep -q ":[0-9]"; then \
+        echo "$(LLM_URL)"; \
+    else \
+        echo "$(LLM_URL)$(DEFAULT_LLM_PORT_AND_PATH)"; \
+    fi \
+),)
+endef
+```
+
+### Umbrella Chart Nesting (from openshift-ai-observability-summarizer)
+
+The llm-service subchart is nested three levels deep: `aiobs-stack` (umbrella) > `rag` (application stack) > `llm-service` (model server). This means llm-service values are scoped under `rag.llm-service` when configured via the umbrella chart:
+
+```yaml
+# From deploy/helm/aiobs-stack/values.yaml
+rag:
+  enabled: true
+  llm-service:
+    device: gpu
+    secret:
+      hf_token: ""
+```
+
 ## Configuration
 
 - **Environment variables:**
@@ -485,6 +593,17 @@ def _get_model_type(model):
   - `LLM_TOLERATION` / `SAFETY_TOLERATION` - Per-model GPU toleration keys
   - `RAW_DEPLOYMENT` - Use raw Deployments instead of KServe InferenceServices (applied to both `llm-service` and `llama-stack`)
   - `EXTRA_HELM_ARGS` - Passthrough for additional Helm arguments
+
+- **Makefile variables (from openshift-ai-observability-summarizer):**
+  - `RHOAI_VERSION` - Auto-detected from cluster CSV (2 or 3); controls LlamaStack operator availability
+  - `USE_LLAMA_STACK_OPERATOR` - Auto-detected from DataScienceCluster on RHOAI 3.x; when `true`, deploys LlamaStack via LlamaStackDistribution CRD
+  - `DEFAULT_LLM_PORT_AND_PATH` - Default port and path appended to `LLM_URL` when no port is specified (`:8080/v1`)
+
+- **OLM operator CR paths (from openshift-ai-observability-summarizer):**
+  - `rag.llm-service.secret.hf_token` - HuggingFace token (password field in OLM form)
+  - `rag.llm-service.device` - Device type selector (gpu/hpu/gpu-amd/cpu in OLM form)
+  - `rag.global.models.<name>.enabled` - Per-model toggle (boolean switch in OLM form)
+  - `rag.llama-stack.managedByOperator` - Toggle between Helm chart and LlamaStack operator deployment
 
 - **Additional Helm values (from f5-ai-guardrails):**
   - `llm-service.secret.enabled` - Enable secret creation for HF token (default `true`)
@@ -534,6 +653,14 @@ def _get_model_type(model):
 
 - **Interactive vs non-interactive Makefile mode (from RAG):** The Makefile `INTERACTIVE ?= true` variable controls whether the install process pauses for user input (HF token, TAVILY key, values file review). Set `INTERACTIVE=false` for CI/unattended deployments. Non-interactive mode skips prompts and logs warnings for missing values instead.
 
+- **LLM_URL auto-port normalization may surprise (from openshift-ai-observability-summarizer):** The Makefile `process_llm_url` function auto-appends `:8080/v1` when no port is detected in the `LLM_URL` value. This means an endpoint like `https://my-model.example.com` becomes `https://my-model.example.com:8080/v1` automatically. If the remote endpoint uses a different port or path (e.g., standard HTTPS on port 443), explicitly include the port in the URL.
+
+- **USE_LLAMA_STACK_OPERATOR=true requires RHOAI 3.x (from openshift-ai-observability-summarizer):** Setting `USE_LLAMA_STACK_OPERATOR=true` fails with a hard error at Makefile parse time if `RHOAI_VERSION` is not 3. From Makefile: `$(error USE_LLAMA_STACK_OPERATOR=true requires RHOAI_VERSION=3. The LlamaStack operator on RHOAI 2.x (v0.3.0) is not supported.)`.
+
+- **Umbrella chart nesting scopes llm-service values under `rag.` prefix (from openshift-ai-observability-summarizer):** When llm-service is deployed via the aiobs-stack umbrella chart (including the OLM operator path), its Helm values must be scoped under `rag.llm-service` rather than `llm-service` directly. The operator CSV form descriptors use this full path (e.g., `rag.llm-service.secret.hf_token`).
+
+- **Makefile auto-detects LlamaStack operator and switches mode silently (from openshift-ai-observability-summarizer):** On RHOAI 3.x, the Makefile queries the DataScienceCluster CR for `llamastackoperator.managementState`. If it finds `Managed`, it automatically sets `USE_LLAMA_STACK_OPERATOR=true` and prints an info message. This can be overridden by explicitly passing `USE_LLAMA_STACK_OPERATOR=false` on the command line.
+
 ## Testing Notes
 
 - Use `make list-models` to verify available model definitions before installation
@@ -551,8 +678,14 @@ def _get_model_type(model):
 - RAG e2e tests on Kind disable llm-service entirely and use MaaS models injected via GitHub Actions `helm --set`, with stub KServe CRDs installed to satisfy Helm template rendering
 - Use `make validate-config` to check HF token and TAVILY key configuration without installing; `make configure-keys` prompts interactively for both keys
 
+- In openshift-ai-observability-summarizer, `make list-models` uses the same `_debugListModels` pattern: `helm template dummy-release rag --set llm-service._debugListModels=true | grep ^model:`
+- The `validate-llm` target checks that the `LLM` variable is set and non-empty before proceeding with install, preventing deployment failures from missing model selection
+- vLLM PrometheusRules can be verified by checking `oc get prometheusrule vllm-metric-alerts` after installing the alerting chart; alerts require the `openshift.io/user-monitoring: "true"` label to be scraped by user workload monitoring
+- When deploying via the OLM operator, the llm-service HF token and device settings are configured through the CR spec (path `rag.llm-service.*`) rather than Makefile variables
+
 ## Related Patterns
 
 - LlamaStack orchestration layer (architecture pattern)
 - Helm subchart wiring via `global.models` (deployment pattern)
 - Multi-runner inference routing: LlamaStack vs LangGraph vs CrewAI (architecture pattern)
+- vLLM metrics observability and alerting (deployment pattern)

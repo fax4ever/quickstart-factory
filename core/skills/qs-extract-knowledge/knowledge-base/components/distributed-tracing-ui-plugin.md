@@ -1,7 +1,7 @@
 ---
 name: distributed-tracing-ui-plugin
 description: "Helm chart deploying an OpenShift UIPlugin CR that adds distributed tracing views to the console"
-summary: "Adds distributed tracing views to the OpenShift web console by deploying a single UIPlugin CR (observability.openshift.io/v1alpha1, spec.type: DistributedTracing) -- a standalone Helm chart with no running workload, no container image, and no subchart dependency on ai-architecture-charts. Use when the Distributed Tracing Platform Operator is already installed on OpenShift 4.10+ with cluster-admin privileges; in lls-observability this deploys as Phase 2 alongside Tempo, OTel Collector, Grafana, and User Workload Monitoring. Key values are uiPlugin.name (default \"distributed-tracing\" via a dedicated helper separate from fullname), uiPlugin.type (default \"DistributedTracing\"), monitoring.enabled for app.kubernetes.io/component labels, and advanced.enabled/advanced.spec for injecting arbitrary spec fields as the UIPlugin API evolves. The UIPlugin name must remain \"distributed-tracing\" per OpenShift documentation requirements, the v1alpha1 API version may break on cluster upgrades, and this chart only creates the CR -- tracing infrastructure (Tempo, OTel Collector) must be deployed separately before the console plugin becomes functional."
+summary: "Adds distributed tracing views to the OpenShift web console by deploying a single UIPlugin CR (observability.openshift.io/v1alpha1, spec.type: DistributedTracing) -- a standalone Helm chart with no running workload, no container image, and no subchart dependency on ai-architecture-charts. Use when the Distributed Tracing Platform Operator is already installed on OpenShift 4.10+ with cluster-admin privileges; in lls-observability this deploys as Phase 2 alongside Tempo, OTel Collector, Grafana, and User Workload Monitoring. Key values are uiPlugin.name (default \"distributed-tracing\" via a dedicated helper separate from fullname), uiPlugin.type (default \"DistributedTracing\"), monitoring.enabled adding app.kubernetes.io/component and app.kubernetes.io/part-of labels, and advanced.enabled/advanced.spec for injecting arbitrary spec fields as the UIPlugin API evolves. The UIPlugin name must remain \"distributed-tracing\" per OpenShift documentation requirements, the v1alpha1 API version may break on cluster upgrades, and this chart only creates the CR -- tracing infrastructure (Tempo, OTel Collector) must be deployed separately before the console plugin becomes functional."
 metadata:
   type: component
 tags:
@@ -13,6 +13,10 @@ source_examples:
   - quickstart: "lls-observability"
     repo: "https://github.com/rh-ai-quickstart/lls-observability"
     notes: "OpenShift UIPlugin CR for distributed tracing console integration in the observability stack"
+    approach: "A"
+  - quickstart: "openshift-ai-observability-summarizer"
+    repo: "https://github.com/rh-ai-quickstart/openshift-ai-observability-summarizer"
+    notes: "UIPlugin CR embedded within the tempo-stack chart rather than standalone, includes distributedTracing.timeout config"
     approach: "A"
 ---
 

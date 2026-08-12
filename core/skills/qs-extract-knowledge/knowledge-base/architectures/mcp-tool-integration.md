@@ -1,11 +1,11 @@
 ---
 name: mcp-tool-integration
 description: MCP tool integration from multi-framework registration to transport layer to persistent validated sessions
-summary: "Integrates MCP tool servers into agent systems via six approaches: A (ai-virtual-agent) provides multi-framework registration via LlamaStack toolgroups API (`POST /api/v1/mcp_servers/`, provider `model-context-protocol`), Kubernetes-native discovery from ToolHive MCPServer CRDs and Services labeled `app.kubernetes.io/component=mcp-server` with transport from `mcp.transport` label (default streamable-http), and four runtime paths (LlamaStack resolves `mcp::` prefixed toolgroup IDs, LangGraph ReAct uses `langchain-mcp-adapters` MultiServerMCPClient, GraphEngine calls MCP directly via JSON-RPC with `_MCP_SESSIONS`/`_TOOL_SCHEMAS` module-level caches refreshing on 400/404 containing \"session\" and `_filter_args_to_schema` preventing -32602 errors, CrewAI maps server names to hardcoded classes via `_TOOL_CLASS_BY_NAME`/`_SERVER_TOOL_NAME_HINTS`); B (ansible-log-analysis) hides MCP inside LangChain `@tool` functions as transport for a single Loki server configured via `LOKI_MCP_SERVER_URL` with per-query httpx `MCPClient` using `Mcp-Session-Id` headers, tool result caching via `_store_tool_result` returning `result_id` references, `MAX_LOGS_PER_QUERY` (5000) cap, and closure-bound tool creation via `create_log_lines_above_tool`; C (data-governance-co-pilot) maintains a persistent MCP session with pg-airman-mcp using MCP SDK `streamablehttp_client`+`ClientSession` with exponential backoff (5 retries, 1-10s), converts discovered tools to OpenAI format via `_convert_mcp_tools_to_openai`, validates calls via hard-coded `ALLOWED_TOOLS` set with Pydantic `TOOL_SCHEMAS`, auto-reconnects via `_reconnect_mcp()` on 404/\"Session terminated\"/ClosedResourceError, and supports dual consumption via MCP-Direct (custom agentic loop) or Llama Stack (toolgroup `mcp::pg_airman`); D (it-self-service-agent) uses LlamaStack Responses API native MCP tool type with per-request `AUTHORITATIVE_USER_ID`/`traceparent`/`tracestate`/`SERVICE_NOW_TOKEN` headers injected at runtime, per-agent YAML config listing MCP server name+uri with `require_approval: \"never\"`, per-state tool toggling via `uses_mcp_tools` flag in the YAML state machine, FastMCP servers extracting auth via `mcp_common.headers.header_first` with `@trace_mcp_tool()` decorator for OpenTelemetry spans, and Zammad MCP delegating to a basher MCP client with `assert_ticket_customer_matches_basher` ticket ownership verification; E (multi-agent-loan-origination) co-deploys a FastMCP server with stateless pure-computation risk assessment tools (DTI, LTV, credit risk, income stability, asset sufficiency, recommendation), caches tools at startup via `init_mcp_client()` using `langchain-mcp-adapters` MultiServerMCPClient in FastAPI lifespan as LangChain StructuredTool instances, supports optional predictive model MCP server with graceful degradation via `is_predictive_model_available()`, and exposes `/health` via `@mcp.custom_route` because MCP's `/mcp` endpoint returns 406 on GET; F (multimodal-compliance-monitor) wraps crystaldba/postgres-mcp `execute_sql` tool with contextvars-based `current_app_config_id` scoping guard that inspects SQL against `_SCOPED_TABLES` set (`detection_classes`, `detection_tracks`, `detection_observations`) and rejects unscoped queries with an error string (not exception) for ReAct retry, uses SSE transport via `langchain-mcp-adapters` MultiServerMCPClient initialized at module level, selectively loads only `execute_sql` filtering out all other postgres-mcp tools, and uses `wait-for-postgres-mcp` init container for startup ordering. Choose A for extensible multi-server platforms needing dynamic Kubernetes discovery, UI management, and multi-framework support; B for single fixed-server integrations where MCP is invisible to the LLM with per-query session lifecycle; C for security-first single-server scenarios needing persistent sessions with auto-reconnection, tool validation allowlist, and dual-mode consumption (MCP-Direct appends `/mcp` to URL, Llama Stack appends `/sse`); D for multi-agent IT service automation needing per-user authorization headers, OpenTelemetry tracing propagation across MCP calls, per-agent YAML MCP server configuration, and LlamaStack-delegated MCP session lifecycle; E for pure-computation MCP servers co-deployed with the agent where tools are cached at startup as LangChain StructuredTool instances with no per-request session overhead and optional secondary servers with graceful fallback; F for per-tenant SQL scoping of read-only database queries where the MCP server has full read access but application-level contextvars guard enforces row filtering. MCP servers are registered with `mcp_endpoint={\"uri\": url}` and built with FastMCP using `transport=\"streamable-http\"` (except F uses SSE matching postgres-mcp's `--transport=sse`); Kubernetes discovery is namespace-scoped with transport type set by `mcp.transport` label (default streamable-http); Approach B wraps all MCP calls inside `execute_loki_query()` creating a new `MCPClient` per invocation with JSON-RPC initialize handshake; Approach C's `check_mcp_server_tools()` logs warnings at startup for unrecognized tools without blocking; Approach D injects per-request headers into LlamaStack Responses API MCP tool definitions and supports `/health` endpoints via FastMCP `custom_route` for Kubernetes probes; Approach E initializes via `init_mcp_client()` in FastAPI lifespan with `MultiServerMCPClient` connecting to `MCP_RISK_SERVER_URL` and optionally `PREDICTIVE_MODEL_MCP_URL`, caching tools as module-level `_tools` list consumed by the underwriter agent's `get_mcp_tools()`; Approach F sets `current_app_config_id` via contextvar token in Flask route handler with `finally`-block reset and loads tools at graph init via `asyncio.run(load_execute_sql_tool())`. CrewAI MCP is not native, requiring entries in both `_TOOL_CLASS_BY_NAME` and `_SERVER_TOOL_NAME_HINTS` mapping tables; Approach B creates new `MCPClient` and `httpx.AsyncClient` per query with no connection pooling; Approach C's Pydantic tool validation is only active in MCP-Direct mode -- Llama Stack bypasses it, creating a prompt injection risk; pg-airman-mcp uses `mcp_readonly` user in `restricted` access mode with `allowCommentInRestricted: false` and supports multiple replicas requiring Service-level session affinity; Approach D's `AUTHORITATIVE_USER_ID` format varies -- ServiceNow strips `-{digits}` suffix via `re.sub(r\"-\\d+$\", \"\", raw)` while Zammad parses full `email-ticketid` format via `parse_email_and_ticket_id`, `dummy_parameter` exists in Zammad tools because MCP validation fails without at least one parameter, and LlamaStack manages the MCP session lifecycle internally so the agent has no control over session reuse, timeouts, or reconnection behavior; Approach E's cached tools become stale if the MCP server restarts post-initialization with no reconnection or health-check logic in `langchain-mcp-adapters`, and `get_predictive_tool()` searches by name `\"check_loan_approval\"` returning `None` silently if the tool name changes; Approach F's SQL guard uses string matching (`any(t in sql_lower for t in _SCOPED_TABLES)`) which can false-positive on table names in string literals, the `DATABASE_URI` gives postgres-mcp full read access so scoping is purely application-level, and tools loaded at graph init via `asyncio.run()` will fail if postgres-mcp is not ready (mitigated by `wait-for-postgres-mcp` init container)."
+summary: "Integrates MCP tool servers into agent systems via seven approaches: A (ai-virtual-agent) provides multi-framework registration via LlamaStack toolgroups API with Kubernetes discovery from ToolHive MCPServer CRDs and labeled Services, four runtime paths (LlamaStack Responses API, LangGraph ReAct via `langchain-mcp-adapters`, GraphEngine direct JSON-RPC with `_MCP_SESSIONS` cache and `_filter_args_to_schema`, CrewAI local wrappers via `_TOOL_CLASS_BY_NAME`); B (ansible-log-analysis) hides MCP inside LangChain `@tool` functions as transport for a single Loki server with per-query `MCPClient` lifecycle, tool result caching, and closure-bound tool creation; C (data-governance-co-pilot) maintains a persistent MCP session with pg-airman-mcp via MCP SDK `streamablehttp_client`+`ClientSession` with exponential backoff, `ALLOWED_TOOLS` Pydantic validation, auto-reconnection, and dual consumption (MCP-Direct vs Llama Stack); D (it-self-service-agent) uses LlamaStack Responses API native MCP with per-request `AUTHORITATIVE_USER_ID`/`traceparent`/`SERVICE_NOW_TOKEN` headers, per-agent YAML config, and `@trace_mcp_tool()` OpenTelemetry tracing; E (multi-agent-loan-origination) co-deploys FastMCP with pure-computation risk tools cached at startup as LangChain StructuredTool instances with optional secondary server graceful degradation; F (multimodal-compliance-monitor) wraps crystaldba/postgres-mcp `execute_sql` with contextvars-based `current_app_config_id` SQL scoping guard; G (openshift-ai-observability-summarizer) makes the MCP server the entire application with tools registered via `self.mcp.tool()`, dual consumption by frontend JSON-RPC (stateless HTTP) and internal chatbot via `MCPServerAdapter` ToolExecutor pattern. Choose A for extensible multi-server platforms needing dynamic Kubernetes discovery, UI management, and multi-framework support; B for single fixed-server integrations where MCP is invisible to the LLM with per-query session lifecycle; C for security-first single-server scenarios needing persistent sessions with auto-reconnection, tool validation allowlist, and dual-mode consumption (MCP-Direct appends `/mcp`, Llama Stack appends `/sse`); D for multi-agent IT automation needing per-user authorization headers, OpenTelemetry tracing propagation, per-agent YAML MCP config, and LlamaStack-delegated MCP session lifecycle; E for pure-computation MCP servers co-deployed with the agent where tools are cached at startup with no per-request session overhead and optional secondary servers with graceful fallback; F for per-tenant SQL scoping of read-only database queries where application-level contextvars guard enforces row filtering; G when the MCP server IS the application consumed both externally via stateless HTTP JSON-RPC and internally via ToolExecutor dependency injection with multi-provider chatbot support. MCP servers register with `mcp_endpoint={\"uri\": url}` and provider `model-context-protocol` (A); Kubernetes discovery uses `app.kubernetes.io/component=mcp-server` label with transport from `mcp.transport` label (default streamable-http appending `/mcp`); GraphEngine refreshes `_MCP_SESSIONS` on 400/404 containing \"session\" and `_filter_args_to_schema` drops extra arguments to prevent -32602; B wraps calls in `execute_loki_query()` creating new `MCPClient` per invocation with `Mcp-Session-Id` headers and `MAX_LOGS_PER_QUERY` (5000) cap; C uses 5-retry exponential backoff (1-10s) with `_reconnect_mcp()` on 404/\"Session terminated\"/ClosedResourceError and `check_mcp_server_tools()` warning-only at startup; D injects headers into Responses API tool definitions with per-state `uses_mcp_tools` toggling and FastMCP servers use `mcp_common.headers.header_first` for auth extraction; E initializes `MultiServerMCPClient` in FastAPI lifespan caching as module-level `_tools` with `/health` via `@mcp.custom_route`; F sets `current_app_config_id` contextvar per Flask request checking SQL against `_SCOPED_TABLES` set returning error strings for ReAct retry; G mounts MCP app last via `app.mount(\"/\", mcp_app)` with `_enforce_no_routes_after_mount()` and `MCPServerAdapter` runs async tools in separate threads with `asyncio.new_event_loop()`. CrewAI MCP is not native, requiring entries in both `_TOOL_CLASS_BY_NAME` and `_SERVER_TOOL_NAME_HINTS`; B creates new `MCPClient`/`httpx.AsyncClient` per query with no connection pooling; C's Pydantic validation only runs in MCP-Direct mode (Llama Stack bypasses it, creating prompt injection risk) and pg-airman-mcp replicas require Service-level session affinity; D's LlamaStack manages MCP sessions internally giving agents no control over session reuse/timeouts/reconnection, `AUTHORITATIVE_USER_ID` format varies between ServiceNow (`re.sub(r\"-\\d+$\")`) and Zammad (`parse_email_and_ticket_id`), and `dummy_parameter` exists because MCP validation requires at least one parameter; E's cached tools become stale on MCP server restart with no reconnection logic and `get_predictive_tool()` searches by hardcoded name \"check_loan_approval\"; F's SQL guard uses string matching (`any(t in sql_lower for t in _SCOPED_TABLES)`) that can false-positive on table names in string literals and `DATABASE_URI` gives postgres-mcp full read access (scoping is application-level only); G's global `_server_instance` creates module-level coupling and tools loaded at graph init via `asyncio.run()` will fail if MCP server is not ready."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, flask, llamastack, langchain, langgraph, python, httpx, openai-sdk, pydantic, zammad, servicenow, langchain-mcp-adapters]
+  tech_stack: [fastapi, flask, llamastack, langchain, langgraph, python, httpx, openai-sdk, pydantic, zammad, servicenow, langchain-mcp-adapters, react, patternfly, typescript]
   ai_pattern: [agents, model-serving, data-governance, multimodal]
   platform: [llamastack, vllm, rhoai, openshift, kubernetes, kserve]
   data_layer: [postgresql, pgvector]
@@ -34,6 +34,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multimodal-compliance-monitor"
     notes: "postgres-mcp (crystaldba) for read-only SQL via SSE transport, wrapped with contextvars-based app_config_id scoping guard that rejects queries touching detection tables without proper filtering"
     approach: "F"
+  - quickstart: "openshift-ai-observability-summarizer"
+    repo: "https://github.com/rh-ai-quickstart/openshift-ai-observability-summarizer"
+    notes: "FastMCP server as the primary application, tools consumed both externally by React/OpenShift Console frontend via JSON-RPC HTTP and internally by a multi-provider chatbot layer via MCPServerAdapter ToolExecutor pattern"
+    approach: "G"
 ---
 
 # MCP Tool Integration
@@ -972,17 +976,198 @@ initContainers:
 
 ---
 
+## Approach G: MCP-Native Application with Dual Consumption (from openshift-ai-observability-summarizer)
+
+### When to Use
+
+When the MCP server IS the main application rather than a tool consumed by an external agent. Tools represent the core business logic (querying Prometheus, Tempo, Korrel8r, etc.) and are consumed both by external clients (browser UI via JSON-RPC HTTP) and by an internal chatbot layer that uses the same tools via tool-calling LLMs. No LlamaStack, LangChain, or external agent framework is involved -- the MCP server owns the full lifecycle.
+
+### Differences from Other Approaches
+
+Unlike Approaches A-F where MCP is consumed BY an agent framework (LlamaStack, LangGraph, etc.), Approach G makes the MCP server the entire application. The FastMCP instance is the top-level construct: tools are registered directly at init, the FastAPI app mounts the MCP app at root, and the chatbot layer runs inside the same process via dependency injection rather than connecting to MCP over the network.
+
+### MCP Server as Application Foundation
+
+The `ObservabilityMCPServer` class initializes FastMCP and registers all tools at construction time. The FastAPI app mounts the MCP app at root as a catch-all, with REST endpoints (health, config, report generation) added before the mount.
+
+```python
+# src/mcp_server/observability_mcp.py (lines 10-25)
+class ObservabilityMCPServer:
+    def __init__(self) -> None:
+        from fastmcp import FastMCP
+        self.mcp = FastMCP("metrics-observability")
+        global _server_instance
+        _server_instance = self
+        self._register_mcp_tools()
+```
+
+```python
+# src/mcp_server/api.py (lines 30-48, 152-168)
+server = ObservabilityMCPServer()
+
+# Select transport protocol (http/sse/streamable-http)
+if settings.MCP_TRANSPORT_PROTOCOL == "sse":
+    mcp_app = create_sse_app(server.mcp, ...)
+else:
+    mcp_app = server.mcp.http_app(path="/mcp", stateless_http=True, json_response=True)
+
+app = FastAPI(lifespan=mcp_app.lifespan)
+
+# REST endpoints added BEFORE mount
+@app.get("/health")
+async def health_check(): ...
+
+# MCP app mounted LAST as catch-all
+app.mount("/", mcp_app)
+_enforce_no_routes_after_mount()  # Prevents accidental route additions
+```
+
+### Tool Registration via self.mcp.tool() Decorator
+
+All tools are registered by importing plain functions from tool modules and wrapping them with `self.mcp.tool()`. Tools are organized by observability domain: vLLM metrics, OpenShift metrics, Prometheus, Tempo traces, Korrel8r correlation, credentials, and model config.
+
+```python
+# src/mcp_server/observability_mcp.py (lines 77-137)
+# Register vLLM tools
+self.mcp.tool()(list_models)
+self.mcp.tool()(analyze_vllm)
+self.mcp.tool()(chat_vllm)
+
+# Register Prometheus tools
+self.mcp.tool()(search_metrics)
+self.mcp.tool()(execute_promql)
+self.mcp.tool()(get_metrics_categories)
+
+# Register Korrel8r tools
+self.mcp.tool()(korrel8r_query_objects)
+self.mcp.tool()(korrel8r_get_correlated)
+self.mcp.tool()(get_correlated_logs)
+
+# The `chat` tool is special: it creates a chatbot internally
+self.mcp.tool()(chat)
+```
+
+### Dual Consumption via ToolExecutor Adapter
+
+The `ToolExecutor` abstract interface decouples chatbots from MCP server internals. `MCPServerAdapter` implements `ToolExecutor` by wrapping the `ObservabilityMCPServer` instance and calling `self.mcp_server.mcp.get_tool(tool_name)` / `tool.run(arguments)` in a separate thread (to handle async-in-sync execution).
+
+```python
+# src/chatbots/tool_executor.py (lines 24-64)
+class ToolExecutor(ABC):
+    @abstractmethod
+    def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str: ...
+    @abstractmethod
+    def list_tools(self) -> List[MCPTool]: ...
+
+# src/mcp_server/mcp_tools_adapter.py (lines 22-37, 51-92)
+class MCPServerAdapter(ToolExecutor):
+    def __init__(self, mcp_server):
+        self.mcp_server = mcp_server
+
+    def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+        # Handle async context by running in a separate thread
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
+            # Run in new thread with its own event loop
+            result_future = concurrent.futures.Future()
+            def run_in_thread():
+                new_loop = asyncio.new_event_loop()
+                tool = new_loop.run_until_complete(self.mcp_server.mcp.get_tool(tool_name))
+                result = new_loop.run_until_complete(tool.run(arguments))
+                result_future.set_result(result)
+            thread = threading.Thread(target=run_in_thread)
+            thread.start()
+            thread.join()
+            result = result_future.result()
+```
+
+### Frontend Direct MCP Consumption via JSON-RPC
+
+The React/OpenShift Console frontend calls MCP tools directly via stateless HTTP JSON-RPC. No session management is needed -- each request includes `'mcp-session-id': 'browser-session'` as a static header. The frontend parses both `structuredContent.result` and `content[].text` response formats.
+
+```typescript
+// openshift-plugin/src/core/services/mcpClient.ts (lines 232-257)
+export async function callMcpTool<T = unknown>(
+  toolName: string,
+  args: Record<string, unknown> = {},
+  signal?: AbortSignal
+): Promise<T> {
+  const response = await fetch(MCP_SERVER_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+      'mcp-session-id': 'browser-session',
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { name: toolName, arguments: enhancedArgs },
+      id: ++requestId,
+    }),
+    signal,
+  });
+  const data = await response.json();
+  // Extract from structuredContent.result or content[].text
+```
+
+### The `chat` MCP Tool: Bridging External and Internal
+
+The `chat` tool is the key bridge: it is an MCP tool callable by the frontend, but internally it creates a chatbot with `MCPServerAdapter` that itself calls other MCP tools via tool-calling LLM loops. The chatbot accesses the global `_server_instance` to create its tool executor.
+
+```python
+# src/mcp_server/tools/chat_tool.py (lines 86-114)
+from mcp_server.observability_mcp import _server_instance
+
+# Create MCP tools adapter for this server
+tool_executor = MCPServerAdapter(_server_instance)
+
+# Resolve API key with fallback (UI-provided -> Kubernetes secret)
+resolved_api_key = resolve_api_key(api_key=api_key, model_id=model_name)
+
+# Create chatbot with tool executor
+chatbot = create_chatbot(
+    model_name=model_name,
+    api_key=resolved_api_key,
+    api_url=api_url,
+    tool_executor=tool_executor
+)
+response = chatbot.chat(
+    user_question=message,
+    namespace=namespace,
+    progress_callback=capture_progress,
+    conversation_history=conversation_history
+)
+```
+
+### Gotchas
+
+- The MCP app must be mounted LAST on the FastAPI instance (`app.mount("/", mcp_app)`) because it acts as a catch-all for unmatched routes. The codebase enforces this by replacing `app.add_route` and `app.add_api_route` with a function that raises `RuntimeError` after mounting.
+- `MCPServerAdapter.call_tool()` must handle async-in-sync execution because FastMCP tools are async but chatbot tool calls happen in synchronous context. It creates a new `asyncio.new_event_loop()` in a separate `threading.Thread` for each call, which has overhead but avoids blocking the main event loop.
+- The global `_server_instance` reference in `observability_mcp.py` creates a module-level coupling. The `chat` tool imports it at call time to create `MCPServerAdapter`, which means the module must be imported after `ObservabilityMCPServer.__init__()` sets the global.
+- FastMCP's `stateless_http=True` mode with `json_response=True` avoids SSE session management for the HTTP transport, but the frontend still sends `'mcp-session-id': 'browser-session'` as a static header for protocol compliance.
+- Tool result extraction handles three formats: `result.content` as a list of blocks with `.text`, `result.content` as a string, and raw string results. The frontend similarly handles `structuredContent.result` (string, array, or object) and `content[0].text` formats.
+
+### Related Architectures
+
+- [observability-summarization](observability-summarization.md) -- The observability analysis pipeline that uses these MCP tools via the chatbot's tool-calling loop
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Multi-Framework MCP) | Approach B (MCP as Transport Layer) | Approach C (Persistent Session + Validation) | Approach D (LlamaStack Native MCP) | Approach E (Co-Deployed FastMCP + Startup Cache) | Approach F (SQL-Scoped MCP Wrapper) |
-|----------|----------------------------------|-------------------------------------|---------------------------------------------|-------------------------------------|--------------------------------------------------|-------------------------------------|
-| Number of MCP servers | Multiple, dynamically added | Single, known at deploy time | Single, known at deploy time | Multiple, per-agent YAML config | 1-2, known at deploy time (risk + optional prediction) | Single, known at deploy time (crystaldba/postgres-mcp) |
-| Registration/discovery | LlamaStack API + Kubernetes CRDs/Services | Environment variable only | Env var (MCP-Direct) or toolgroup registration (Llama Stack) | None (URLs in agent YAML config) | Environment variable only (MCP_RISK_SERVER_URL) | Environment variable only (POSTGRES_MCP_URL) |
-| Agent framework | Multiple (LlamaStack, LangGraph, CrewAI) | LangChain tools inside LangGraph | MCP-Direct (custom loop) or Llama Stack (delegated) | LlamaStack Responses API (delegated) | LangGraph only (tools as LangChain StructuredTool) | LangGraph only (wrapped StructuredTool shared by chat + alert graphs) |
-| MCP visibility to LLM | LLM sees MCP tools directly | MCP hidden behind LangChain tools | LLM sees MCP tools directly (converted to OpenAI format) | LLM sees MCP tools via LlamaStack Responses API | LLM sees MCP tools directly (as LangChain StructuredTool) | LLM sees wrapped execute_sql tool (all other MCP tools filtered out) |
-| Session management | Framework-managed or cached at module level | Per-query (create, use, dispose) | Persistent (startup to shutdown) with auto-reconnection | Delegated to LlamaStack (per-request) | Startup initialization, cached for app lifetime | Module-level client, tools loaded at graph init, SSE session managed by langchain-mcp-adapters |
-| Tool security | Framework-managed registration | None | Hard-coded allowlist + Pydantic schema validation | LlamaStack-managed + per-request auth headers | YAML-configured per-tool allowed_roles (RBAC via graph node) | SQL-level string inspection via contextvars-scoped wrapper rejecting queries without app_config_id filter |
-| Auth propagation | Not built in | Not applicable | None | Per-request: AUTHORITATIVE_USER_ID, tracing headers, service tokens | Not applicable (tools are pure computation, no user context needed) | Per-request: app_config_id set via contextvars in Flask route handler, read by async tool wrapper |
-| MCP client library | Various (LlamaStack native, langchain-mcp-adapters, httpx, CrewAI shims) | Custom MCPClient (httpx) | MCP SDK (streamablehttp_client + ClientSession) | None (LlamaStack handles MCP protocol) | langchain-mcp-adapters (MultiServerMCPClient) | langchain-mcp-adapters (MultiServerMCPClient) with SSE transport |
-| Use case | Extensible tool platform with UI management | Fixed integration with specific backend service | Data governance copilot with security-first tool access | Multi-agent IT service automation with per-user tool authorization | Risk assessment computation separated from agent logic with optional ML model | Read-only database queries scoped per-tenant for multimodal analytics |
-| Complexity | Higher (registration API, discovery, multi-framework) | Lower (single client, single server, no management layer) | Moderate (persistent session, validation layer, dual provider) | Lower (LlamaStack handles MCP, agent only provides URLs and headers) | Lower (startup init, cached tools, single consumer agent) | Lower (single server, single tool, string-based SQL guard with contextvars) |
+| Criteria | Approach A (Multi-Framework MCP) | Approach B (MCP as Transport Layer) | Approach C (Persistent Session + Validation) | Approach D (LlamaStack Native MCP) | Approach E (Co-Deployed FastMCP + Startup Cache) | Approach F (SQL-Scoped MCP Wrapper) | Approach G (MCP-Native App + Dual Consumption) |
+|----------|----------------------------------|-------------------------------------|---------------------------------------------|-------------------------------------|--------------------------------------------------|-------------------------------------|-------------------------------------------------|
+| Number of MCP servers | Multiple, dynamically added | Single, known at deploy time | Single, known at deploy time | Multiple, per-agent YAML config | 1-2, known at deploy time (risk + optional prediction) | Single, known at deploy time (crystaldba/postgres-mcp) | One (the MCP server IS the application) |
+| Registration/discovery | LlamaStack API + Kubernetes CRDs/Services | Environment variable only | Env var (MCP-Direct) or toolgroup registration (Llama Stack) | None (URLs in agent YAML config) | Environment variable only (MCP_RISK_SERVER_URL) | Environment variable only (POSTGRES_MCP_URL) | None (tools registered at init via self.mcp.tool()) |
+| Agent framework | Multiple (LlamaStack, LangGraph, CrewAI) | LangChain tools inside LangGraph | MCP-Direct (custom loop) or Llama Stack (delegated) | LlamaStack Responses API (delegated) | LangGraph only (tools as LangChain StructuredTool) | LangGraph only (wrapped StructuredTool shared by chat + alert graphs) | None (custom multi-provider chatbot with ToolExecutor DI) |
+| MCP visibility to LLM | LLM sees MCP tools directly | MCP hidden behind LangChain tools | LLM sees MCP tools directly (converted to OpenAI format) | LLM sees MCP tools via LlamaStack Responses API | LLM sees MCP tools directly (as LangChain StructuredTool) | LLM sees wrapped execute_sql tool (all other MCP tools filtered out) | LLM sees MCP tools directly (via MCPServerAdapter list_tools) |
+| Session management | Framework-managed or cached at module level | Per-query (create, use, dispose) | Persistent (startup to shutdown) with auto-reconnection | Delegated to LlamaStack (per-request) | Startup initialization, cached for app lifetime | Module-level client, tools loaded at graph init, SSE session managed by langchain-mcp-adapters | Stateless HTTP (no session), MCPServerAdapter is in-process |
+| Tool security | Framework-managed registration | None | Hard-coded allowlist + Pydantic schema validation | LlamaStack-managed + per-request auth headers | YAML-configured per-tool allowed_roles (RBAC via graph node) | SQL-level string inspection via contextvars-scoped wrapper rejecting queries without app_config_id filter | Optional per-model tool allowlist via _get_tool_allowlist() |
+| Auth propagation | Not built in | Not applicable | None | Per-request: AUTHORITATIVE_USER_ID, tracing headers, service tokens | Not applicable (tools are pure computation, no user context needed) | Per-request: app_config_id set via contextvars in Flask route handler, read by async tool wrapper | API key resolved per-chat via resolve_api_key (UI-provided or Kubernetes Secret) |
+| MCP client library | Various (LlamaStack native, langchain-mcp-adapters, httpx, CrewAI shims) | Custom MCPClient (httpx) | MCP SDK (streamablehttp_client + ClientSession) | None (LlamaStack handles MCP protocol) | langchain-mcp-adapters (MultiServerMCPClient) | langchain-mcp-adapters (MultiServerMCPClient) with SSE transport | None (MCPServerAdapter calls FastMCP in-process) |
+| Use case | Extensible tool platform with UI management | Fixed integration with specific backend service | Data governance copilot with security-first tool access | Multi-agent IT service automation with per-user tool authorization | Risk assessment computation separated from agent logic with optional ML model | Read-only database queries scoped per-tenant for multimodal analytics | MCP server as the complete application with frontend + chatbot consumers |
+| Complexity | Higher (registration API, discovery, multi-framework) | Lower (single client, single server, no management layer) | Moderate (persistent session, validation layer, dual provider) | Lower (LlamaStack handles MCP, agent only provides URLs and headers) | Lower (startup init, cached tools, single consumer agent) | Lower (single server, single tool, string-based SQL guard with contextvars) | Moderate (multi-provider chatbot factory, ToolExecutor DI, dual consumption paths) |

@@ -1,13 +1,13 @@
 ---
 name: minio
-description: "S3-compatible object storage for attachments, models, RAG indexes, Langfuse, KServe, document/MLflow, and video/config storage"
-summary: "Provides S3-compatible object storage for chat attachments, RAG index and ML model persistence, Loki logging backend, Langfuse v3 observability, KServe guardrail detector model serving, document/MLflow artifact storage, and multimodal video/model/config storage across seven approaches (A-G) with different deployment kinds, Python SDK choices, and optionality patterns. Choose A (boto3, compose profiles, DISABLE_ATTACHMENTS feature flag, configure-pipeline subchart) for optional single-consumer attachment uploads with lazy _get_s3() and session-scoped keys; B (minio Python SDK, standalone StatefulSet subchart, 50Gi PVC) for multi-consumer RAG/ML/Loki with LATEST.json index tracking, joblib serialization, and centralized client factory; C (in-repo Helm Deployment, 100Gi PVC, post-install mc CLI bucket Job) for infrastructure-only with Makefile DEPLOY_MINIO gating, credential validation, and ODH dashboard labels; D (embedded StatefulSet 10Gi PVC, init container mc provisioning, MC_CONFIG_DIR=/tmp/.mc) for Langfuse-dedicated S3 gated by langfuse.enabled with full OpenShift restricted SCC and per-feature LANGFUSE_S3_*_FORCE_PATH_STYLE env vars; E (TrustyAI image, HuggingFace CLI init container, RHOAI data connection Secret with opendatahub.io/connection-type: s3) for KServe InferenceService detector models with helm.sh/weight ordering; F (async boto3 singleton via run_in_executor, embedded Deployment with minio.enabled toggle and external S3 override, 10Gi PVC with persistence toggle) for dual-consumer document uploads with presigned URLs and path traversal protection plus MLflow artifact storage with testcontainers integration tests; G (minio SDK v7.2.20 with retry-with-backoff, ai-architecture-charts subchart v0.5.4, volumeClaimTemplates:[] for ephemeral storage) for multi-bucket video/model/config with s3:// URI scheme, config bucket for horizontal scaling, server-side copy for demo seeding, and mc CLI init container video download. Env var naming differs per approach -- ATTACHMENTS_BUCKET_* (A), MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY with secure=False (B), minio.userId/password Helm values (C), LANGFUSE_S3_*_FORCE_PATH_STYLE: \"true\" required for path-style addressing (D), AWS_* keys in data connection Secret (E), S3_*/AWS_*/MLFLOW_S3_ENDPOINT_URL from centralized Secret with secretKeyRef (F), MINIO_ENDPOINT with http:// scheme auto-stripped by get_minio_client() plus CONFIG_BUCKET/MINIO_VIDEO_BUCKET for bucket-specific env vars (G) -- and Python SDK splits between boto3 lazy initialization for test compatibility (A), minio SDK centralized client factory with config priority params > env > defaults (B), boto3 async singleton with _ensure_bucket() at app lifespan startup (F), and minio SDK with URL parsing and retry-with-backoff download (G). Common gotchas: inverted DISABLE_ATTACHMENTS logic bridged by start script (A); Loki deploys its own separate MinIO instance requiring anyuid SCC via minio-sa ServiceAccount (B); post-install bucket Job lacks wait-for-ready with backoffLimit: 3 and mc:latest unpinned (C); MC_CONFIG_DIR=/tmp/.mc required because default ~/.mc is not writable under restricted SCC, and anonymous download policy exposes all three buckets namespace-wide (D); credentials hardcoded as plain-text THEACCESSKEY/THESECRETKEY and TrustyAI image has different update cadence than standard quay.io/minio/minio (E); Helm entrypoint only pre-creates documents bucket while compose creates both documents and mlflow, and _ensure_bucket() raises ClientError if MinIO not yet healthy at API startup (F); volumeClaimTemplates:[] means all data lost on pod restart including user-uploaded configs, _ping_minio() succeeds before bucketCreation Job completes, and inconsistent retry defaults across download_file() (5 retries/3s) vs _ensure_object_with_retry() (12 retries/2s) (G)."
+description: "S3-compatible object storage for attachments, models, RAG indexes, Langfuse, KServe, document/MLflow, video/config, and observability storage"
+summary: "Provides S3-compatible object storage across eight approaches (A-H) for chat attachments, RAG index/ML model persistence, infrastructure-only buckets, Langfuse v3 observability, KServe guardrail detector model serving, document uploads with MLflow artifacts, multimodal video/model/config pipeline storage, and cross-namespace Tempo/Loki observability backends. Choose A (boto3, compose profiles, DISABLE_ATTACHMENTS flag, configure-pipeline subchart) for optional single-consumer attachment uploads with lazy _get_s3() and session-scoped keys; B (minio SDK, StatefulSet/50Gi PVC, shared K8s Secret) for multi-consumer RAG/ML/Loki with LATEST.json status tracking and joblib serialization; C (in-repo Helm Deployment/100Gi PVC, post-install mc CLI Job, ODH dashboard labels) for infrastructure-only with Makefile DEPLOY_MINIO gating; D (embedded StatefulSet/10Gi PVC, init container mc with MC_CONFIG_DIR=/tmp/.mc, full restricted SCC) for Langfuse-dedicated S3 gated by langfuse.enabled with per-feature LANGFUSE_S3_*_FORCE_PATH_STYLE env vars; E (TrustyAI image, HuggingFace CLI init container, RHOAI data connection Secret with opendatahub.io/connection-type: s3) for KServe InferenceService detector models with helm.sh/weight ordering; F (async boto3 singleton via run_in_executor, embedded Deployment with minio.enabled toggle and external S3 override) for dual-consumer document uploads with presigned URLs and path traversal protection plus MLflow artifact storage with testcontainers integration tests; G (minio SDK v7.2.20 with retry-with-backoff, ai-architecture-charts subchart v0.5.4, ephemeral volumeClaimTemplates:[]) for multi-bucket video/model/config with s3:// URI scheme, config bucket for horizontal scaling, and server-side copy for demo seeding; H (in-repo chart with hardcoded fullname/namespace for cross-namespace CRD discovery, per-consumer credential Secrets, umbrella chart file:// dependency ordering, pinned mc CLI RELEASE.2024-11-21T17-21-54Z) for TempoStack/LokiStack operator CRD consumption with post-install/post-upgrade bucket-init Job. Env var naming differs per approach -- ATTACHMENTS_BUCKET_* (A), MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY with secure=False (B), minio.userId/password Helm values (C), LANGFUSE_S3_*_FORCE_PATH_STYLE: \"true\" required for path-style addressing (D), AWS_* keys in data connection Secret (E), S3_*/AWS_*/MLFLOW_S3_ENDPOINT_URL from centralized Secret with secretKeyRef (F), MINIO_ENDPOINT with http:// scheme auto-stripped by get_minio_client() plus CONFIG_BUCKET/MINIO_VIDEO_BUCKET for bucket-specific env vars (G), plain Helm values propagated via Makefile to both MinIO and consumer charts with per-consumer stringData Secrets using bucket (Tempo) vs bucketnames (Loki) field naming (H) -- and Python SDK splits between boto3 lazy initialization for test compatibility (A), minio SDK centralized client factory with config priority params > env > defaults (B), boto3 async singleton with _ensure_bucket() at app lifespan startup (F), and minio SDK with URL parsing and retry-with-backoff download (G). Common gotchas: inverted DISABLE_ATTACHMENTS logic bridged by start script (A); Loki deploys its own separate MinIO instance requiring anyuid SCC via minio-sa ServiceAccount (B); post-install bucket Job lacks wait-for-ready with backoffLimit: 3 and mc:latest unpinned (C); MC_CONFIG_DIR=/tmp/.mc required because default ~/.mc is not writable under restricted SCC, and anonymous download policy exposes all three buckets namespace-wide (D); credentials hardcoded as plain-text THEACCESSKEY/THESECRETKEY and TrustyAI image has different update cadence than standard quay.io/minio/minio (E); Helm entrypoint only pre-creates documents bucket while compose creates both documents and mlflow, and _ensure_bucket() raises ClientError if MinIO not yet healthy at API startup (F); volumeClaimTemplates:[] means all data lost on pod restart including user-uploaded configs, _ping_minio() succeeds before bucketCreation Job completes, and inconsistent retry defaults across download_file() (5 retries/3s) vs _ensure_object_with_retry() (12 retries/2s) (G); hardcoded fullname/namespace bypasses Helm naming causing conflicts on multi-release install, Makefile deletes routes post-install as \"broken upstream routes\" despite templates using correct fullname helper, and bucket-init Job runs asynchronously after helm install --wait returns so consumers may start before buckets exist (H)."
 metadata:
   type: component
 tags:
   tech_stack: [minio, python, boto3, fastapi, flask, joblib, faiss, helm, langfuse, kserve, huggingface, mlflow, langgraph, opencv, mediamtx]
-  ai_pattern: [rag, embeddings, vector-search, data-pipeline, evaluation, guardrails, model-serving, agents, multimodal]
-  platform: [openshift, rhoai, opendatahub, kserve]
+  ai_pattern: [rag, embeddings, vector-search, data-pipeline, evaluation, guardrails, model-serving, agents, multimodal, observability]
+  platform: [openshift, rhoai, opendatahub, kserve, tempo, loki]
   data_layer: [minio]
 source_examples:
   - quickstart: "ai-virtual-agent"
@@ -38,6 +38,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multimodal-compliance-monitor"
     notes: "Ephemeral MinIO StatefulSet for multi-bucket video/model/config storage with s3:// URI scheme, mc CLI init container video download, config bucket for horizontal scaling, retry-with-backoff Python client"
     approach: "G"
+  - quickstart: "openshift-ai-observability-summarizer"
+    repo: "https://github.com/rh-ai-quickstart/openshift-ai-observability-summarizer"
+    notes: "Cross-namespace MinIO Deployment for observability backends (Tempo traces, Loki logs), hardcoded fullname for CRD consumer service discovery, per-consumer credential Secrets, umbrella chart dependency ordering"
+    approach: "H"
 ---
 
 # MinIO
@@ -1581,20 +1585,276 @@ The KServe runtime deployer Job receives MinIO credentials to create a data conn
 
 ---
 
+## Approach H: Cross-Namespace Observability Backend Storage with CRD Consumer Secrets (from openshift-ai-observability-summarizer)
+
+### When to Use
+
+When MinIO serves as shared S3-compatible storage for observability operator CRDs (TempoStack, LokiStack) that run in different namespaces. This approach deploys MinIO to a hardcoded `observability-hub` namespace with a fixed service name so that operator-managed CRDs can reliably discover it. It is suited for quickstarts where MinIO is purely infrastructure backing observability stacks, with no application-level Python SDK interaction.
+
+### Differences from Approaches A through G
+
+- **Purpose:** Dedicated to observability backend storage (Tempo traces, Loki logs), not application data, ML models, or Langfuse
+- **Cross-namespace:** Hardcoded namespace (`observability-hub`) and fullname (`minio-observability-storage`) in `_helpers.tpl` -- critical because Tempo and Loki CRDs reference MinIO by its fully qualified service DNS name across namespaces
+- **Consumer pattern:** TempoStack and LokiStack operator CRDs consume MinIO via per-consumer credential Secrets (`minio-tempo-credentials`, `minio-loki-credentials`) deployed by separate Helm charts in their own namespaces -- not env vars, not Python SDK, not RHOAI data connections
+- **Umbrella chart architecture:** Part of `aiobs-stack` umbrella chart with `file://` dependencies and install ordering (MinIO first, then Tempo/Loki)
+- **Bucket creation Job:** Post-install/post-upgrade hook with `until mc alias set` wait-for-ready loop using full FQDN, iterates over configurable bucket array (unlike C's single hardcoded bucket and no wait logic)
+- **mc image versioning:** Pinned release `RELEASE.2024-11-21T17-21-54Z` (unlike C and D which use `latest`)
+- **Security context split:** Empty pod/container security contexts on the MinIO Deployment (let OpenShift assign), but full restricted SCC on the bucket-init Job (runAsNonRoot, drop ALL, seccomp RuntimeDefault)
+- **Route cleanup:** Makefile post-install step deletes the routes created by the chart itself (identified as "broken upstream routes" pointing to non-existent generic `minio` service)
+- **Deployment kind:** Kubernetes Deployment with separate PVC (like C), not StatefulSet
+- **Chart source:** In-repo standalone chart at `deploy/helm/minio/` (like C), not from ai-architecture-charts
+- **No Python SDK:** Infrastructure-only, no application code interaction
+- **No ODH labels:** Unlike C and E, no `opendatahub.io/dashboard` labels
+- **Always-on:** Required dependency with no toggle -- installed as first step of `install-observability-stack`
+
+### Tech Stack & Dependencies
+- **Runtime:** MinIO server (S3-compatible API)
+- **Container image:** `quay.io/minio/minio:latest`
+- **Bucket init image:** `quay.io/minio/mc:RELEASE.2024-11-21T17-21-54Z` (pinned)
+- **Key dependencies:** TempoStack and LokiStack CRDs consume MinIO storage; Tempo Operator and Loki Operator must be installed first
+- **Helm chart:** In-repo `deploy/helm/minio/` chart (v0.1.0, named `minio-observability-storage`)
+
+### Key Patterns
+
+#### Hardcoded Fullname and Namespace for CRD Consumer Discovery
+
+The `_helpers.tpl` hardcodes both the fullname and namespace, overriding the standard Helm naming conventions. This ensures a stable, predictable service DNS name that Tempo and Loki CRDs can reference across namespaces. The comment in the template explains why.
+
+```go
+{{/* deploy/helm/minio/templates/_helpers.tpl (lines 11-15) */}}
+{{/*
+Create a default fully qualified app name.
+Hardcoded to ensure consistent naming regardless of release name.
+This is critical because Tempo expects this exact service name.
+*/}}
+{{- define "minio.fullname" -}}
+{{- "minio-observability-storage" }}
+{{- end }}
+
+{{/* lines 57-61 */}}
+{{- define "minio.namespace" -}}
+{{- "observability-hub" }}
+{{- end }}
+```
+
+#### Per-Consumer Credential Secrets in Separate Charts
+
+Each observability consumer (Tempo, Loki) deploys its own Secret pointing to the shared MinIO instance using `stringData` (not base64-encoded). The Secrets are created by the consumer charts (not the MinIO chart), enabling independent lifecycle management.
+
+```yaml
+# deploy/helm/observability/tempo/templates/minio-secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-tempo-credentials
+  namespace: {{ include "tempo-stack.namespace" . }}
+type: Opaque
+stringData:
+  access_key_id: {{ .Values.minio.s3.accessKeyId }}
+  access_key_secret: {{ .Values.minio.s3.accessKeySecret }}
+  bucket: {{ .Values.minio.s3.bucket }}
+  endpoint: {{ .Values.minio.s3.endpoint }}
+```
+
+```yaml
+# deploy/helm/observability/loki/templates/minio-secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-loki-credentials
+  namespace: {{ include "loki-stack.namespace" . }}
+type: Opaque
+stringData:
+  access_key_id: {{ .Values.minio.s3.accessKeyId }}
+  access_key_secret: {{ .Values.minio.s3.accessKeySecret }}
+  bucketnames: {{ .Values.minio.s3.bucket }}
+  endpoint: {{ .Values.minio.s3.endpoint }}
+```
+
+Note the field name difference: Tempo uses `bucket` (singular) while Loki uses `bucketnames` -- this matches what each operator CRD expects.
+
+#### CRD Consumption via Secret Reference
+
+The TempoStack and LokiStack CRDs reference the credential Secrets by name with `type: s3`. The operators handle all S3 interaction internally -- no application code touches MinIO.
+
+```yaml
+# deploy/helm/observability/tempo/templates/tempostack.yaml (lines 17-19)
+spec:
+  storage:
+    secret:
+      name: minio-tempo-credentials
+      type: s3
+```
+
+```yaml
+# deploy/helm/observability/loki/templates/lokistack.yaml (lines 17-19)
+spec:
+  storage:
+    secret:
+      name: minio-loki-credentials
+      type: s3
+```
+
+#### Array-Based Bucket Creation Job with Wait-for-Ready
+
+The post-install/post-upgrade hook Job iterates over a configurable bucket array and includes a `until mc alias set` wait-for-ready loop using the full FQDN. The Job enforces full OpenShift-restricted SCC on both the pod and container level, and uses the `MC_CONFIG_DIR` pattern (like Approach D) since the default `~/.mc` is not writable.
+
+```yaml
+# deploy/helm/minio/templates/bucket-init-job.yaml (lines 1-59)
+{{- if .Values.minio.buckets }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-bucket-init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: bucket-init
+        image: quay.io/minio/mc:RELEASE.2024-11-21T17-21-54Z
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Waiting for MinIO to be ready..."
+          until mc alias set myminio http://{{ include "minio.fullname" . }}.{{ $namespace }}.svc.cluster.local:9000 {{ .Values.minio.secret.user }} {{ .Values.minio.secret.password }}; do
+            echo "Still waiting for MinIO..."
+            sleep 5
+          done
+          {{- range .Values.minio.buckets }}
+          mc mb myminio/{{ . }} || echo "Bucket {{ . }} may already exist"
+          {{- end }}
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault
+{{- end }}
+```
+
+#### Umbrella Chart with Dependency Ordering
+
+MinIO is listed as the first infrastructure dependency in the `aiobs-stack` umbrella chart (no condition gate), ensuring it is installed before Tempo and Loki. The dependency uses `file://` path and an alias for values override.
+
+```yaml
+# deploy/helm/aiobs-stack/Chart.yaml (lines 19-24)
+dependencies:
+  # MinIO - S3-compatible object storage (observability-hub)
+  # Must be first - Tempo and Loki depend on it for storage
+  - name: minio-observability-storage
+    version: ">=0.0.0"
+    repository: "file://../minio"
+    alias: minio
+```
+
+#### Makefile Credential Propagation Across Charts
+
+The Makefile defines shared MinIO credentials and propagates them to both the MinIO chart and each consumer chart (Tempo, Loki) via separate `helm_*_args` variables. The bucket names are converted from a comma-separated `MINIO_BUCKETS` variable to a JSON array for the `--set-json` flag.
+
+```makefile
+# Makefile (lines 57-62, 259-269)
+MINIO_USER ?= admin
+MINIO_PASSWORD ?= minio123
+MINIO_BUCKETS ?= tempo,loki
+
+helm_minio_args = \
+    --set minio.secret.user=$(MINIO_USER) \
+    --set minio.secret.password=$(MINIO_PASSWORD) \
+    --set minio.secret.host=$(MINIO_HOST) \
+    --set-string minio.secret.port=$(MINIO_PORT) \
+    --set-json minio.buckets='[$(shell echo "$(MINIO_BUCKETS)" | sed 's/,/","/g' | sed 's/^/"/' | sed 's/$$/"/')]'
+
+helm_tempo_args = \
+    --set minio.s3.accessKeyId=$(MINIO_USER) \
+    --set minio.s3.accessKeySecret=$(MINIO_PASSWORD) \
+    --set minio.s3.bucket=tempo
+```
+
+#### Post-Install Route Cleanup
+
+The Makefile `install-minio` target includes a cleanup step that deletes routes named `minio-api` and `minio-webui` immediately after installation. The comment identifies them as "broken upstream routes (pointing to non-existent 'minio' service)" -- the routes are created by the chart templates but reference the generic `minio` service name rather than the hardcoded `minio-observability-storage` fullname used in the actual Service.
+
+```makefile
+# Makefile (lines 1396-1398)
+	@echo "→ Cleaning up broken upstream routes (pointing to non-existent 'minio' service)"
+	- @oc delete route minio-api minio-webui -n $(MINIO_NAMESPACE) --ignore-not-found ||:
+```
+
+### Configuration
+- **Environment variables (MinIO container):**
+  - `MINIO_ROOT_USER` -- from `minio.secret.user` (default: `admin`)
+  - `MINIO_ROOT_PASSWORD` -- from `minio.secret.password` (default: `minio123`)
+- **Helm values (`minio.*`):**
+  - `secret.user` / `password` / `host` / `port` -- credentials and connection info stored in values and injected directly into the Deployment env vars
+  - `buckets` -- JSON array of bucket names to create (default: `["tempo", "loki"]`)
+  - `service.type` -- Service type (default: `ClusterIP`)
+  - `service.port` -- Console/WebUI port (default: `9090`)
+  - `service.apiPort` -- API port (default: `9000`)
+  - `storage.size` -- PVC size (default: `10Gi`)
+  - `storage.storageClassName` -- optional, uses cluster default if unset
+  - `podSecurityContext` / `containerSecurityContext` -- empty `{}` by default to let OpenShift assign
+- **Consumer chart values (`minio.s3.*` in tempo/loki charts):**
+  - `accessKeyId` / `accessKeySecret` -- S3 credentials (must match MinIO chart credentials)
+  - `bucket` -- bucket name per consumer (`tempo` or `loki`)
+  - `endpoint` -- full MinIO endpoint URL (`http://minio-observability-storage.observability-hub.svc.cluster.local:9000`)
+- **Makefile parameters:**
+  - `MINIO_USER` / `MINIO_PASSWORD` -- propagated to both MinIO and consumer charts
+  - `MINIO_HOST` / `MINIO_PORT` -- connection info (default: `minio` / `9000`)
+  - `MINIO_BUCKETS` -- comma-separated bucket list (default: `tempo,loki`)
+  - `MINIO_NAMESPACE` -- deployment namespace (default: `observability-hub`)
+
+### Known Gotchas
+- The route templates in `deploy/helm/minio/templates/route.yaml` create routes referencing the service by `{{ include "minio.fullname" . }}` (which resolves to `minio-observability-storage`), but the Makefile immediately deletes them after install as "broken upstream routes." The route template comment says they point to a non-existent `minio` service, though the template actually uses the fullname helper. This suggests the routes were once broken and the cleanup was added, but the templates were later fixed without removing the cleanup step.
+- The `_helpers.tpl` hardcodes both `minio.fullname` and `minio.namespace`, so Helm's standard release-name-based naming is completely bypassed. Installing the chart with different release names in the same cluster will cause resource name conflicts.
+- The MinIO Deployment injects credentials as plain-text `value:` fields directly from Helm values (lines 44-45 of `deployment.yaml`), not via a Kubernetes Secret or `secretKeyRef`. The consumer charts (Tempo, Loki) create their own credential Secrets using `stringData`, so there are two credential distribution patterns in the same stack.
+- The bucket-init Job's `mc alias set` command embeds credentials as CLI arguments (line 38 of `bucket-init-job.yaml`), which will appear in the Job's container args. The `MC_CONFIG_DIR` env var is not set in this Job (unlike Approach D), but the Job's container security context enforces `runAsNonRoot` which may cause `mc` to fail writing to `~/.mc` in some container images. The pinned `RELEASE.2024-11-21T17-21-54Z` mc image appears to handle this gracefully.
+- The Loki credential Secret uses `bucketnames` (plural) as the field name while the Tempo Secret uses `bucket` (singular). This is dictated by what each operator CRD expects, not a naming inconsistency in the quickstart.
+- The Service template exposes port 9090 as `webui` but the route template references it as `console` for `targetPort`. This mismatch relies on Kubernetes port name resolution -- if the Service port name does not match, the route will fail to route traffic to the console.
+- The `install-observability-stack` Makefile target installs MinIO first, then sets up tracing and observability. However, there is no explicit wait between MinIO install and Tempo/Loki install to ensure the bucket-init Job has completed. The `--atomic --wait` flags on the MinIO Helm install wait for the Deployment to be ready, but the post-install hook Job runs asynchronously after `helm install` returns.
+- The values.yaml comment says "Always deploys to observability-hub namespace" (line 2) while the `service.port` value of `9090` for the console differs from the `console: 9001` port referenced in the Loki and Tempo values' `shared.ports.console` field. The actual console address is set to `:9090` in the Deployment args.
+
+### Testing Notes
+- Verify MinIO health: `curl -f http://minio-observability-storage.observability-hub.svc.cluster.local:9000/minio/health/live`
+- Check bucket-init Job completed: `oc get jobs -n observability-hub -l app.kubernetes.io/component=bucket-init`
+- Verify both credential Secrets exist in their respective namespaces: `oc get secret minio-tempo-credentials -n observability-hub` and `oc get secret minio-loki-credentials -n openshift-logging`
+- Confirm TempoStack and LokiStack CRDs show healthy storage status: `oc get tempostack -n observability-hub` and `oc get lokistack -n openshift-logging`
+- MinIO console is available at port 9090 (not 9001 like most other approaches) -- access via port-forward since routes are deleted post-install
+
+### Related Patterns
+- Architecture: Observability stack (Tempo + Loki) with shared S3 backend
+- Deployment: Cross-namespace Helm chart with hardcoded naming for operator CRD consumption
+- Deployment: Umbrella chart (`aiobs-stack`) with `file://` dependency ordering
+- Deployment: Per-consumer credential Secrets created by consumer charts, not the storage chart
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (lemonade-stand-assistant) | Approach F (multi-agent-loan-origination) | Approach G (multimodal-compliance-monitor) |
-|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|---------------------------------------|-------------------------------------------|---------------------------------------------|
-| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) | Langfuse v3 S3 backend (events, exports, media) | Guardrail detector model storage for KServe | Document uploads + MLflow artifact storage | Video/model/config storage for multimodal video processing pipeline |
-| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client | None -- Langfuse handles S3 internally | None -- KServe handles S3 via data connection | boto3 / botocore with async thread-pool executor wrapper | minio (>=7.2.20) with retry-with-backoff and URL parsing |
-| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) | Embedded in parent chart templates (StatefulSet + VolumeClaimTemplate) | Embedded in parent chart templates (Deployment + separate PVC) | Embedded in parent chart templates (Deployment + optional PVC) | ai-architecture-charts minio subchart (StatefulSet, PVC disabled via override) |
-| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag | Conditional on `langfuse.enabled` | Always-on required dependency | Optional via Helm `minio.enabled` toggle with external S3 override | Always-on required dependency |
-| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart | Two (Langfuse web + worker) | Multiple KServe InferenceServices (HAP, prompt injection detectors) | Two (FastAPI document API + MLflow artifact store) | Multiple (backend, init-data Job, video-stream init container, runtime-deployer) |
-| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label | `<release>-minio-secret` with access-key/secret-key fields | RHOAI data connection Secret with AWS_* keys and `opendatahub.io/connection-type: s3` | Centralized `<release>-secret` with S3_* and MINIO_ROOT_* keys via secretKeyRef | Plain values in Helm values.yaml injected directly into env vars |
-| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination | Not created (internal-only) | Not created (internal-only) | Not created (internal-only) | API + WebUI routes with TLS edge termination (from subchart) |
-| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC via StatefulSet VolumeClaimTemplate | 50Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC or emptyDir (toggled via `persistence.enabled`) | Ephemeral -- VolumeClaimTemplate overridden to [] (compose uses named volume) |
-| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI | Init container with mc CLI + wait-for-ready loop | Init container downloads models directly to PVC | Entrypoint mkdir + Python SDK auto-create on startup | Subchart `bucketCreation` feature with bucket list |
-| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) | No | Yes (`opendatahub.io/dashboard: 'true'` + `opendatahub.io/managed: 'true'` labels, `opendatahub.io/connection-type: s3` annotation) | No | No |
-| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) | Embedded in parent chart templates | Embedded in parent chart templates | Embedded in parent chart templates | ai-architecture-charts (minio v0.5.4 subchart) |
-| Image version | latest | latest | latest | Pinned release tag | latest (TrustyAI image) | latest | latest (from subchart) |
-| Security context | Not specified | Not specified | Empty (`{}`) | Full OpenShift restricted SCC (runAsNonRoot, drop ALL, seccomp) | Partial (drop ALL, seccomp, no runAsNonRoot) | Inherited from shared podSecurityContext/securityContext values | Not specified (subchart defaults) |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (lemonade-stand-assistant) | Approach F (multi-agent-loan-origination) | Approach G (multimodal-compliance-monitor) | Approach H (openshift-ai-observability-summarizer) |
+|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|---------------------------------------|-------------------------------------------|---------------------------------------------|------------------------------------------------------|
+| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) | Langfuse v3 S3 backend (events, exports, media) | Guardrail detector model storage for KServe | Document uploads + MLflow artifact storage | Video/model/config storage for multimodal video processing pipeline | Observability backend storage (Tempo traces, Loki logs) |
+| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client | None -- Langfuse handles S3 internally | None -- KServe handles S3 via data connection | boto3 / botocore with async thread-pool executor wrapper | minio (>=7.2.20) with retry-with-backoff and URL parsing | None -- operator CRDs handle S3 internally |
+| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) | Embedded in parent chart templates (StatefulSet + VolumeClaimTemplate) | Embedded in parent chart templates (Deployment + separate PVC) | Embedded in parent chart templates (Deployment + optional PVC) | ai-architecture-charts minio subchart (StatefulSet, PVC disabled via override) | In-repo Helm chart (Deployment + separate PVC), cross-namespace to `observability-hub` |
+| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag | Conditional on `langfuse.enabled` | Always-on required dependency | Optional via Helm `minio.enabled` toggle with external S3 override | Always-on required dependency | Always-on required dependency (first in observability stack install order) |
+| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart | Two (Langfuse web + worker) | Multiple KServe InferenceServices (HAP, prompt injection detectors) | Two (FastAPI document API + MLflow artifact store) | Multiple (backend, init-data Job, video-stream init container, runtime-deployer) | Two operator CRDs (TempoStack, LokiStack) via per-consumer credential Secrets |
+| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label | `<release>-minio-secret` with access-key/secret-key fields | RHOAI data connection Secret with AWS_* keys and `opendatahub.io/connection-type: s3` | Centralized `<release>-secret` with S3_* and MINIO_ROOT_* keys via secretKeyRef | Plain values in Helm values.yaml injected directly into env vars | Per-consumer Secrets (`minio-tempo-credentials`, `minio-loki-credentials`) created by consumer charts with stringData |
+| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination | Not created (internal-only) | Not created (internal-only) | Not created (internal-only) | API + WebUI routes with TLS edge termination (from subchart) | Created by chart but deleted post-install by Makefile cleanup |
+| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC via StatefulSet VolumeClaimTemplate | 50Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC or emptyDir (toggled via `persistence.enabled`) | Ephemeral -- VolumeClaimTemplate overridden to [] (compose uses named volume) | 10Gi PVC (ReadWriteOnce, optional storageClassName) |
+| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI | Init container with mc CLI + wait-for-ready loop | Init container downloads models directly to PVC | Entrypoint mkdir + Python SDK auto-create on startup | Subchart `bucketCreation` feature with bucket list | Post-install/post-upgrade hook Job with mc CLI wait-for-ready loop, iterates configurable bucket array |
+| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) | No | Yes (`opendatahub.io/dashboard: 'true'` + `opendatahub.io/managed: 'true'` labels, `opendatahub.io/connection-type: s3` annotation) | No | No | No |
+| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) | Embedded in parent chart templates | Embedded in parent chart templates | Embedded in parent chart templates | ai-architecture-charts (minio v0.5.4 subchart) | In-repo (`deploy/helm/minio/`), listed as dependency in umbrella chart |
+| Image version | latest | latest | latest | Pinned release tag | latest (TrustyAI image) | latest | latest (from subchart) | latest (server), pinned RELEASE.2024-11-21T17-21-54Z (mc CLI) |
+| Security context | Not specified | Not specified | Empty (`{}`) | Full OpenShift restricted SCC (runAsNonRoot, drop ALL, seccomp) | Partial (drop ALL, seccomp, no runAsNonRoot) | Inherited from shared podSecurityContext/securityContext values | Not specified (subchart defaults) | Empty `{}` on Deployment (let OpenShift assign), full restricted SCC on bucket-init Job |

@@ -1,7 +1,7 @@
 ---
 name: observability-olm-operator-helm-install
 description: Individual Helm charts wrapping OLM Subscription and OperatorGroup for OpenShift operator installation
-summary: "Solves declarative, reproducible installation of four OpenShift observability operators (OpenTelemetry, Grafana, Tempo, Cluster Observability) by wrapping OLM Namespace, OperatorGroup, and Subscription resources in individual Helm charts with independent lifecycle management. Use when operators must be installed via `helm install` with configurable channels, catalog sources, and approval modes rather than manual `oc apply` or console-based Subscription creation -- single approach using a three-template-per-chart structure (namespace, operatorgroup, subscription). Critical config: `subscription.channel` (stable for most, v5 for Grafana), `subscription.source` (redhat-operators vs community-operators), `installPlanApproval: Automatic`, namespace label `openshift.io/cluster-monitoring: 'true'` for metrics scraping, and empty `targetNamespaces: []` for AllNamespaces install mode required by Tempo. Gotchas: Grafana Operator uses `community-operators` catalog (not `redhat-operators`) affecting support posture and update cadence; operator charts install only the operator itself -- instances like TempoStack require a separate chart; OLM and catalog sources in `openshift-marketplace` must already be present."
+summary: "Solves declarative, reproducible installation of OpenShift observability operators (OTel, Grafana, Tempo, Cluster Observability, Logging, Loki) by wrapping OLM Namespace, OperatorGroup, and Subscription resources in either individual Helm charts (Approach A) or a centralized operator-manager.sh bash script with Makefile targets (Approach B). Approach A (4 operators, static values.yaml channels, three-template-per-chart structure, `helm upgrade --install` idempotency) suits Helm-native workflows; Approach B (5 operators adding Logging/Loki dropping Grafana, auto-detected channels via `oc get packagemanifest -l catalog=redhat-operators`, `verify-operators-ready` target checking CSV phase) is preferred when a Helm Operator would conflict with inline OLM charts or when Logging/Loki operators are required. Critical config: `subscription.channel` (stable for most, v5 for Grafana), `subscription.source` (redhat-operators vs community-operators for Grafana), `installPlanApproval: Automatic`, namespace label `openshift.io/cluster-monitoring: 'true'` for metrics scraping, and empty `targetNamespaces: []` for AllNamespaces install mode required by Tempo. Gotchas: Grafana uses `community-operators` catalog affecting support posture; Loki channel must filter with `-l catalog=redhat-operators` to avoid community alpha; operator charts install only the operator not CR instances like TempoStack; `_require_operator_channel` guard runs at recipe time only so non-cluster targets work without connectivity; `openshift-operators-redhat` is a shared namespace requiring careful operatorgroup management."
 metadata:
   type: deployment-pattern
 tags:
@@ -17,6 +17,10 @@ source_examples:
     repo: "https://github.com/rh-ai-kickstart/llama-stack-observability"
     notes: "Same 4 OLM operators (OTel, Grafana, Tempo, Cluster Observability) with identical Namespace+OperatorGroup+Subscription structure, installed in parallel via bash script"
     approach: "A"
+  - quickstart: "openshift-ai-observability-summarizer"
+    repo: "https://github.com/rh-ai-quickstart/openshift-ai-observability-summarizer"
+    notes: "5 operators (Cluster Observability, OTel, Tempo, Logging, Loki) managed via centralized operator-manager.sh script with auto-detected channels/CSVs from cluster catalog"
+    approach: "B"
 ---
 
 # Observability OLM Operator Installation via Helm Charts
@@ -129,3 +133,107 @@ subscription:
 
 - `otel-sidecar-inject-vllm-model-metrics.md` -- the OTel Collector sidecars that depend on the OTel Operator installed by this pattern
 - `helm-uwm-podmonitor-vllm.md` -- the UWM configuration that works alongside these observability operators
+
+---
+
+## Approach B: Centralized Bash Script with Auto-Detected OLM Channels (from openshift-ai-observability-summarizer)
+
+### When to Use
+
+Use when operators need to be managed via `make` targets with auto-detected channels and CSVs from the cluster catalog, rather than pre-configured Helm chart values. Preferred when the project also uses a Helm Operator (where inline Helm charts for OLM resources would conflict with the operator's reconciliation) or when the operator set includes Logging and Loki operators alongside the standard observability operators.
+
+### Differences from Approach A
+
+- **No Helm charts for operators** -- uses a centralized `operator-manager.sh` bash script with YAML templates in `scripts/operators/` instead of Helm charts
+- **Auto-detected channels and CSVs** -- queries `oc get packagemanifest` at Makefile parse time to discover the correct channel and startingCSV for each operator
+- **5 operators instead of 4** -- adds Logging and Loki operators alongside Cluster Observability, OTel, and Tempo (no Grafana)
+- **Guard macro for operator channels** -- `_require_operator_channel` fails with actionable error when channel/CSV detection fails, but only at recipe time (non-cluster targets like test/build are unaffected)
+
+### Implementation
+
+#### Makefile Operator Targets
+
+Each operator has install, uninstall, and check targets that delegate to the script:
+
+```makefile
+# Makefile
+OPERATOR_MANAGER_SCRIPT := scripts/operator-manager.sh
+
+.PHONY: install-cluster-observability-operator
+install-cluster-observability-operator:
+	@$(OPERATOR_MANAGER_SCRIPT) -i observability -n openshift-cluster-observability-operator
+
+.PHONY: install-logging-operator
+install-logging-operator:
+	$(call _require_operator_channel)
+	@CHANNEL=$(LOGGING_CHANNEL) STARTING_CSV=$(LOGGING_STARTING_CSV) \
+	  $(OPERATOR_MANAGER_SCRIPT) -i logging -n openshift-logging
+
+.PHONY: install-operators
+install-operators: install-cluster-observability-operator \
+  install-opentelemetry-operator install-tempo-operator \
+  install-logging-operator install-loki-operator
+	@sleep 15  # Wait for operators to stabilize and CRDs to be ready
+```
+
+#### Auto-Detected Operator Channels
+
+```makefile
+# Makefile
+# Must query with -l catalog=redhat-operators because loki-operator
+# also exists in community-operators (with only an 'alpha' channel).
+LOGGING_CHANNEL := $(shell oc get packagemanifest -l catalog=redhat-operators \
+    -o jsonpath='{range .items[?(@.metadata.name=="cluster-logging")]}{.status.defaultChannel}{end}' \
+    2>/dev/null)
+LOGGING_STARTING_CSV := $(shell oc get packagemanifest -l catalog=redhat-operators \
+    -o jsonpath='{range .items[?(@.metadata.name=="cluster-logging")].status.channels[?(@.name=="$(LOGGING_CHANNEL)")]}{.currentCSV}{end}' \
+    2>/dev/null)
+```
+
+#### Verify Operators Ready Target
+
+Checks all 5 operators' subscription status and CSV phase:
+
+```makefile
+# Makefile
+verify-operators-ready:
+	@ERRORS=0; \
+	for sub in cluster-observability-operator opentelemetry-product tempo-product \
+	           cluster-logging loki-operator; do \
+		CSV=$$(oc get subscription $$sub -n $$NS -o jsonpath='{.status.installedCSV}'); \
+		PHASE=$$(oc get csv $$CSV -n $$NS -o jsonpath='{.status.phase}'); \
+		if [ "$$PHASE" != "Succeeded" ]; then ERRORS=$$((ERRORS + 1)); fi; \
+	done; \
+	if [ $$ERRORS -gt 0 ]; then exit 1; fi
+```
+
+### All Five Operators
+
+| Operator | Namespace | Script Alias | Channel Source |
+|----------|-----------|-------------|----------------|
+| Cluster Observability | `openshift-cluster-observability-operator` | `observability` | Hardcoded in script |
+| OpenTelemetry | `openshift-opentelemetry-operator` | `otel` | Hardcoded in script |
+| Tempo | `openshift-tempo-operator` | `tempo` | Hardcoded in script |
+| Logging | `openshift-logging` | `logging` | Auto-detected from packagemanifest |
+| Loki | `openshift-operators-redhat` | `loki` | Auto-detected from packagemanifest |
+
+### Gotchas
+
+- The Loki operator channel must be queried with `-l catalog=redhat-operators` because `loki-operator` also exists in `community-operators` with only an `alpha` channel that would be incorrect
+- The `_require_operator_channel` guard macro is called at recipe time only (not Makefile parse time) so that non-cluster targets like `test`, `build`, and `help` work without cluster connectivity
+- The `openshift-operators-redhat` namespace is a shared namespace where multiple unrelated Subscriptions coexist -- the operator-manager.sh script avoids running `operatorgroup --all` in this namespace to prevent breaking other operators
+- After `install-operators`, a `sleep 15` wait allows operators to stabilize and register their CRDs before downstream targets attempt to create CR instances
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A | Approach B |
+|----------|-----------|-----------|
+| Operator management tool | Helm charts | Bash script + Makefile targets |
+| Channel configuration | Static in values.yaml | Auto-detected from cluster catalog |
+| Number of operators | 4 (OTel, Grafana, Tempo, Cluster Observability) | 5 (OTel, Tempo, Cluster Observability, Logging, Loki) |
+| Grafana operator | Included (community-operators) | Not included |
+| Logging/Loki operators | Not included | Included with auto-detected channels |
+| Idempotency mechanism | `helm upgrade --install` | Script checks existing subscriptions |
+| Integration with Helm Operator | May conflict with operator reconciliation | No conflict (script runs independently) |

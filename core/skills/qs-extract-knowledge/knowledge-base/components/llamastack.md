@@ -1,7 +1,7 @@
 ---
 name: llamastack
 description: "LlamaStack distribution server providing inference, agents, safety, tool runtime, and vector I/O APIs"
-summary: "LlamaStack provides a unified AI orchestration server exposing inference, agents, safety, tool runtime, vector I/O, and files APIs between application backends and model providers (Ollama, vLLM, or any OpenAI-compatible endpoint), configured via llamastack-run.yaml (RUN_CONFIG_PATH) declaring providers per API. Six approaches: A (compose, Responses API with StreamAggregator SSE, pluggable LlamaStack/LangGraph/CrewAI runner, MCP toolgroup resolution, input shields via client.safety.run_shield()) for local dev; B (OpenShift AI operator LlamaStackDistribution CRD v0.3.5, alpha.agents API, remote::vllm, Makefile-driven model.name/url/apiKey) for operator-managed production; C (ai-architecture-charts subchart v0.8.6, dual-client LlamaStackClient + OpenAI SDK, global.models shared across subcharts, tool_runtime.rag_tool with 600s timeout, rawDeploymentMode) for RAG with optional F5 guardrails proxy; D (subchart v0.8.5, Responses API, PostgreSQL kv_postgres/sql_postgres, centralized client factory, post-init scaler Job, MCP + file_search tools) for multi-replica production; E (standalone chart, Red Hat ET image, OpenTelemetry sidecar with otel_trace/otel_metric sinks, inline::milvus, dual vLLM providers, network policies, ArgoCD sync-wave) for observability; F (remote::openai, app bypasses LlamaStack SDK using OpenAI SDK directly, disabled by default) for optional safety proxy with inline::llama-guard. Critical patterns: AsyncLlamaStackClient with K8s SA token + X-Forwarded-User/Email headers for RBAC (A), provider-prefixed model vllm-inference/<model> with VLLM_TLS_VERIFY=false (B), URL normalization stripping legacy /v1/openai/v1 and vector_dbs fallback to vector_stores on 404 (C), LLAMASTACK_SERVICE_HOST avoiding LLAMASTACK_PORT tcp:// format with db_path: null preventing SQLite fallback and pgvector max_connections=200 (D), TELEMETRY_SINKS='console, sqlite, otel_trace, otel_metric' with configmap checksum annotation for pod restart (E), and conditional safety API via llamastack.safety.enabled with InferenceService authTokenSecret override (F). Common gotchas: container runs as root (user 0:0) with 90s healthcheck start_period, SDK attribute names changed between 0.3.x and 0.6.1 (identifier to id, api_model_type to model_type) requiring _get_model_type/_get_model_id helpers, SQLite storage is dev-only, regex-based tool retry parsing (Tool '(\\w+)' not found) is fragile, Nemotron models incompatible with llama_stack mode (use mcp_direct), MILVUS_DB_PATH relative path resolves outside PVC mount at /.llama, VLLM_API_TOKEN hardcoded to 'fake', llama-stack-client version pinning differs between frontend (0.6.0) and tests (>=0.2.9,<0.2.13), and post-init scaler requires bitnami/kubectl mirroring in air-gapped environments."
+summary: "LlamaStack provides a unified AI orchestration server exposing inference, agents, safety, tool runtime, vector I/O, and files APIs between application backends and model providers (Ollama, vLLM, or any OpenAI-compatible endpoint), configured via llamastack-run.yaml (RUN_CONFIG_PATH) declaring providers per API. Six approaches: A (compose, Responses API with StreamAggregator SSE, pluggable LlamaStack/LangGraph/CrewAI runner, MCP toolgroup resolution, input shields via client.safety.run_shield()) for local dev; B (OpenShift AI operator LlamaStackDistribution CRD v0.3.5, alpha.agents API, remote::vllm, Makefile-driven model.name/url/apiKey) for operator-managed production; C (ai-architecture-charts subchart v0.8.6, dual-client LlamaStackClient + OpenAI SDK, global.models shared across subcharts, tool_runtime.rag_tool with 600s timeout, rawDeploymentMode, managedByOperator toggle for Helm-vs-operator dual deployment, model ID candidate resolution for 0.6.0+ provider-prefixed format, fileProcessors pypdf, _TOOL_ALLOWLIST for Llama context window management) for RAG with optional F5 guardrails proxy; D (subchart v0.8.5, Responses API, PostgreSQL kv_postgres/sql_postgres, centralized client factory, post-init scaler Job, MCP + file_search tools) for multi-replica production; E (standalone chart, Red Hat ET image, OpenTelemetry sidecar with otel_trace/otel_metric sinks, inline::milvus, dual vLLM providers, network policies, ArgoCD sync-wave) for observability; F (remote::openai, app bypasses LlamaStack SDK using OpenAI SDK directly, disabled by default) for optional safety proxy with inline::llama-guard. Critical patterns: AsyncLlamaStackClient with K8s SA token + X-Forwarded-User/Email headers for RBAC (A), provider-prefixed model vllm-inference/<model> with VLLM_TLS_VERIFY=false (B), URL normalization stripping legacy /v1/openai/v1 and vector_dbs fallback to vector_stores on 404 with nudge-then-direct-tool-execution fallback for unreliable tool calling (C), LLAMASTACK_SERVICE_HOST avoiding LLAMASTACK_PORT tcp:// format with db_path: null preventing SQLite fallback and pgvector max_connections=200 (D), TELEMETRY_SINKS='console, sqlite, otel_trace, otel_metric' with configmap checksum annotation for pod restart and OTEL_PYTHON_DISABLED_INSTRUMENTATIONS=sqlite3 suppressing trace noise (E), and conditional safety API via llamastack.safety.enabled with InferenceService authTokenSecret override (F). Common gotchas: container runs as root (user 0:0) with 90s healthcheck start_period, SDK attribute names changed between 0.3.x and 0.6.1 (identifier to id, api_model_type to model_type) requiring _get_model_type/_get_model_id helpers, SQLite storage is dev-only, regex-based tool retry parsing (Tool '(\\w+)' not found) is fragile, Nemotron models incompatible with llama_stack mode (use mcp_direct), MILVUS_DB_PATH relative path resolves outside PVC mount at /.llama, VLLM_API_TOKEN hardcoded to 'fake', llama-stack-client version pinning differs between frontend (0.6.0) and tests (>=0.2.9,<0.2.13), OTEL_PYTHON_DISABLED_INSTRUMENTATIONS=sqlite3 needed for LlamaStack internal SQLite, and post-init scaler requires bitnami/kubectl mirroring in air-gapped environments."
 metadata:
   type: component
 tags:
@@ -42,6 +42,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
     notes: "LlamaStack as optional safety proxy with remote::openai provider, embedded in application Helm chart with conditional safety API, InferenceService auth token support, app bypasses LlamaStack using OpenAI SDK directly"
     approach: "F"
+  - quickstart: "openshift-ai-observability-summarizer"
+    repo: "https://github.com/rh-ai-quickstart/openshift-ai-observability-summarizer"
+    notes: "LlamaStack as ai-architecture-charts Helm subchart v0.8.6 with dual deployment mode (Helm chart default + operator via managedByOperator toggle), OpenAI SDK for agentic tool-calling chat with model ID candidate resolution for 0.6.0+ compatibility, LlamaStackClient SDK for alert summarization, MCP server registration via values, and OTEL tracing env var"
+    approach: "C"
 ---
 
 # LlamaStack
@@ -769,6 +773,180 @@ $(if $(LLAMA_STACK_ENV),--set-json llama-stack.secrets='$(LLAMA_STACK_ENV)',)
 - The LlamaStack server does not require an API key for in-cluster communication. The OpenAI client uses `api_key="not-needed"` or `api_key="no-key"` as a placeholder (see `conftest.py` and `api.py`).
 - Deploying on Kind for e2e tests requires installing the OpenShift Route CRD (`route.openshift.io`) as a stub since the Helm chart templates reference it, even though Routes are not functional in Kind (see `.github/workflows/e2e-tests.yaml`).
 - The `rawDeploymentMode` toggle is passed to both `llm-service` and `llama-stack` subcharts via the Makefile to bypass KServe when deploying in non-OpenShift environments (see `deploy/helm/Makefile` lines 629-630).
+
+### Additional Patterns from openshift-ai-observability-summarizer
+
+#### Dual Deployment Mode: Helm Chart vs Operator Toggle
+
+The umbrella chart supports two LlamaStack deployment modes controlled by a single `managedByOperator` flag. The default deploys via the llama-stack subchart Helm Deployment; setting `managedByOperator=true` switches to a `LlamaStackDistribution` CRD managed by the RHOAI LlamaStack operator. The Makefile auto-detects the LlamaStack operator state in the `DataScienceCluster` and switches mode automatically.
+
+```yaml
+# deploy/helm/rag/values.yaml
+llama-stack:
+  enabled: true
+  # managedByOperator: when true, deploys via LlamaStackDistribution CRD (requires RHOAI 3.x)
+  # Set via Makefile: USE_LLAMA_STACK_OPERATOR=true
+  managedByOperator: false
+```
+
+The parent chart's ConfigMap template dynamically selects the service name based on mode:
+
+```yaml
+# deploy/helm/aiobs-stack/templates/llamastack-config.yaml
+{{- $managedByOp := $llamaStackValues.managedByOperator | default false -}}
+data:
+  LLAMA_STACK_URL: "http://{{ ternary "llamastack-service" "llamastack" $managedByOp }}.{{ .Release.Namespace }}.svc.cluster.local:8321/v1"
+```
+
+The Makefile auto-detection logic:
+
+```makefile
+# Makefile
+ifeq ($(RHOAI_VERSION),3)
+ifeq ($(origin USE_LLAMA_STACK_OPERATOR),file)
+ifneq ($(USE_LLAMA_STACK_OPERATOR),true)
+    # Auto-detect LlamaStack operator in DataScienceCluster
+    $(info Auto-detected LlamaStack operator — switching to operator mode)
+    USE_LLAMA_STACK_OPERATOR := true
+endif
+endif
+endif
+```
+
+#### Model ID Candidate Resolution for LlamaStack 0.6.0+
+
+LlamaStack 0.6.0+ returns model IDs in provider-prefixed format (`{provider_id}/{model_id}`). The `get_llamastack_model_id_candidates()` function returns a prioritized list of candidates to try in order, with fallback from provider-prefixed to serviceName to modelName to original model_id.
+
+```python
+# src/core/llm_client.py
+def get_llamastack_model_id_candidates(model_id: str) -> List[str]:
+    runtime_config = get_model_config()
+    model_info = runtime_config.get(model_id, {})
+    candidate_ids = []
+    service_name = model_info.get("serviceName")
+    if service_name and model_id:
+        provider_prefixed_id = f"{service_name}/{model_id}"
+        candidate_ids.append(provider_prefixed_id)
+    for candidate in [service_name, model_info.get("modelName"), model_id]:
+        if candidate and candidate not in candidate_ids:
+            candidate_ids.append(candidate)
+    return candidate_ids
+```
+
+The chat bot tries each candidate in sequence until one succeeds:
+
+```python
+# src/chatbots/llama_bot.py
+for candidate_id in model_candidates:
+    try:
+        response = self.client.chat.completions.create(
+            model=candidate_id, messages=messages, tools=openai_tools,
+            tool_choice=tool_choice, temperature=0, timeout=LLM_TIMEOUT_SECONDS,
+        )
+        working_model_id = candidate_id
+        break
+    except Exception as e:
+        if "not found" in str(e).lower() or "404" in str(e).lower():
+            continue
+        else:
+            raise
+```
+
+#### Tool Allowlisting for Llama Context Window Management
+
+The `LlamaChatBot` maintains a static `_TOOL_ALLOWLIST` restricting which MCP tools are available to Llama, preventing context window exhaustion. The allowlist lives in the chat bot (not the MCP server) because the constraint is specific to Llama's limited context.
+
+```python
+# src/chatbots/llama_bot.py
+_TOOL_ALLOWLIST = {
+    "execute_promql", "search_metrics", "get_metric_metadata",
+    "get_label_values", "suggest_queries", "explain_results",
+    "chat_tempo_tool", "query_tempo_tool", "get_trace_details_tool",
+    "korrel8r_get_correlated", "korrel8r_query_objects", "get_correlated_logs",
+    "get_gpu_info", "get_deployment_info", "list_openshift_namespaces",
+}
+```
+
+#### Nudge and Direct Tool Execution Fallback
+
+When Llama returns text without calling tools (possible fabrication) or outputs tool calls as text instead of using the function calling API, a nudge mechanism retries with `tool_choice="required"` and a category-specific hint. If the nudge also fails, a direct tool execution fallback (`_try_direct_tool_call`) bypasses the model for korrel8r queries.
+
+```python
+# src/chatbots/llama_bot.py
+if not has_called_tools:
+    nudge_text, matched_tool = self._get_nudge_for_query(user_question, namespace)
+    nudge_retried = True
+    tool_choice = "required"
+    messages.append({"role": "user", "content": nudge_text})
+    continue
+```
+
+#### RAG Availability Probe via /models Endpoint
+
+The application checks LlamaStack availability by probing the `/models` endpoint (since LlamaStack does not have a `/health` endpoint at the used version). A sticky-true cache caches positive results permanently while retrying negative results on every call to handle startup ordering.
+
+```python
+# src/core/config.py
+def _check_rag_available() -> bool:
+    llama_stack_url = os.getenv("LLAMA_STACK_URL", "http://localhost:8321/v1")
+    try:
+        models_url = f"{llama_stack_url.rstrip('/')}/models"
+        response = requests.get(models_url, timeout=3)
+        return response.status_code == 200
+    except Exception:
+        return False
+```
+
+#### LlamaStackClient SDK for Alert Summarization
+
+The alert receiver uses the native `LlamaStackClient` SDK (not the OpenAI SDK) to generate LLM-powered descriptions for OpenShift vLLM alerts, selecting the first available LLM model at runtime.
+
+```python
+# src/alerting/alert_receiver.py
+client = LlamaStackClient(base_url=LLAMA_STACK_URL)
+llm = next(m for m in client.models.list() if m.model_type == "llm")
+response = client.inference.chat_completion(
+    model_id=llm.identifier,
+    messages=[{"role": "system", "content": prompt}, {"role": "user", "content": labels}],
+    stream=False
+)
+```
+
+#### MCP Server Registration via Subchart Values
+
+MCP servers are registered directly in the llama-stack subchart values using the `mcp-servers` key, with Helm template expressions for service discovery:
+
+```yaml
+# deploy/helm/rag/values.yaml
+llama-stack:
+  mcp-servers:
+    observability-mcp:
+      uri: http://aiobs-mcp-server-svc.{{ .Release.Namespace }}.svc.cluster.local:8085/mcp
+```
+
+#### OTEL Tracing via Environment Variable
+
+OpenTelemetry tracing is configured via a single `OTEL_ENDPOINT` environment variable in the llama-stack subchart values, pointing to the central OTEL collector:
+
+```yaml
+# deploy/helm/rag/values.yaml
+llama-stack:
+  env:
+    - name: OTEL_ENDPOINT
+      value: http://otel-collector-collector.observability-hub.svc.cluster.local:4318/v1/traces
+    - name: OTEL_PYTHON_DISABLED_INSTRUMENTATIONS
+      value: sqlite3
+```
+
+### Additional Gotchas from openshift-ai-observability-summarizer
+
+- The `USE_LLAMA_STACK_OPERATOR=true` requires `RHOAI_VERSION=3`. The Makefile enforces this and exits with an error if `USE_LLAMA_STACK_OPERATOR=true` is set with `RHOAI_VERSION=2` (see `Makefile` line 217).
+- The `VLLM_API_TOKEN` is hardcoded to `fake` in the llama-stack env values (`deploy/helm/rag/values.yaml` line 51), consistent with other quickstarts using the subchart for cluster-internal communication.
+- The `LLAMA_STACK_URL` env var includes a `/v1` suffix by default (`http://localhost:8321/v1`), unlike other quickstarts that use the bare `http://localhost:8321`. The `LlamaChatBot.__init__` strips `/chat/completions` from the URL when creating the OpenAI client: `base_url=LLAMA_STACK_URL.removesuffix("/chat/completions")` (see `src/chatbots/llama_bot.py` line 118).
+- The `llama-stack-client` pinned version is `0.2.12` (`pyproject.toml`), much older than the 0.6.0 used by f5-ai-guardrails and RAG quickstarts. This older SDK is used only in the alert receiver; the main chat path uses the OpenAI Python SDK exclusively.
+- The operator prerequisite check (`check-llamastack-operator`) verifies that the `llamastackdistributions.llamastack.io` CRD is registered before attempting install, and provides remediation steps including `make enable-llamastack-operator` or manual `oc patch datasciencecluster` (see `Makefile` lines 660-668).
+- The `llama-stack.network.allowedFrom.namespaces` list is overridden by the Makefile at install time (`--set 'llama-stack.network.allowedFrom.namespaces[0]=$(NAMESPACE)'`) for non-operator installs, allowing pods in the deployment namespace to reach LlamaStack (see `Makefile` line 252).
+- The `OTEL_PYTHON_DISABLED_INSTRUMENTATIONS=sqlite3` env var disables SQLite auto-instrumentation to prevent excessive trace noise from LlamaStack's internal SQLite usage (see `deploy/helm/rag/values.yaml` line 55).
 
 ---
 
