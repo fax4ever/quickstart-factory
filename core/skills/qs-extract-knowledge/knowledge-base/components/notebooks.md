@@ -1,14 +1,14 @@
 ---
 name: notebooks
 description: "Jupyter notebooks for data ingestion, model download-to-S3, and Llama Stack testing in RHOAI workbenches"
-summary: "Jupyter notebooks in RHOAI workbenches handle AI quickstart data preparation, validation, and interactive demos via three approaches: Approach A (data-governance-co-pilot) runs manually for CSV-to-PostgreSQL star-schema ingestion with SQL governance artifacts (COMMENT ON for certified/deprecated views), HuggingFace model download via snapshot_download with boto3 S3 upload using AWS_* workbench env vars, and Llama Stack 0.3.5 MCP/agent testing via client.alpha.agents; Approach B (RAG) automates repeatable PDF ingestion through KFP pipelines using docling DocumentConverter + HybridChunker (TEXT/PARAGRAPH filtering), storing into pgvector via Llama Stack vector_dbs.register with all-MiniLM-L6-v2 (384 dims) and rag_tool.insert, backed by ingestion-pipeline Helm subchart v0.7.5 and DSPA; Approach C (lls-observability) provides interactive demos for RAG with Milvus, full LlamaStack evaluation (subset_of, llm_as_judge with ABCDE grading, HuggingFace dataset benchmarks, regex_parser multiple choice), and LangGraph StateGraph agents via ChatOpenAI on LlamaStack's OpenAI-compatible endpoint (/v1/openai/v1) with MCP tools bound via bind_tools. Use Approach A for one-time data prep, model staging to MinIO, and Llama Stack validation in workbenches (no Helm); Approach B when repeatable production RAG document ingestion is needed with DSPA + MinIO + pgvector infrastructure -- notebooks/ directory serves dual purpose holding .ipynb files and source PDF subdirectories; Approach C for guided capability exploration including evaluation framework and agentic integration with Milvus vector search, requiring openai_api_key=\"fake\" and use_responses_api=True on ChatOpenAI. Critical: Llama Stack requires SSE transport (/sse not /mcp) for MCP, Agents API for tool calling (chat.completions lacks tool_groups), model IDs with provider prefix vllm-inference/<model-name>, dynamically extracted provider_id (mcp-tools not model-context-protocol), Approach B compiles KFP pipelines to YAML submitted to ds-pipeline-dspa:8888 with env vars captured at compilation time not pod runtime, and Approach C uses conditional sampling (greedy at temp 0.0, else top_p) with timeout=600.0 for evaluation operations. Gotchas: MCP service names require -service suffix (pg-airman-mcp-service), data ingestion uses hardcoded localhost:5432 requiring port-forwarding, gated models need notebook_login(), workbench PVC must hold 14-16 GB per model, Approach B has vector_db_id mismatch between register (\"rag-db\") and insert (\"test\") with hardcoded pgvector credentials (postgres/rag_password) and SSL verification disabled, Approach C has model alias inconsistency across notebooks (llama32 vs llama3-2-3b) and self-judging limitation using same model as evaluator and judge, and vector table naming follows vector_store_<db_id>_v<version> convention."
+summary: "Jupyter notebooks in RHOAI workbenches handle AI quickstart data preparation, validation, interactive demos, and progressive tutorials via four approaches: Approach A (data-governance-co-pilot) runs manually for CSV-to-PostgreSQL star-schema ingestion with SQL governance artifacts (COMMENT ON for certified/deprecated views), HuggingFace model download via snapshot_download with boto3 S3 upload using AWS_* workbench env vars, and Llama Stack 0.3.5 MCP/agent testing via client.alpha.agents; Approach B (RAG) automates repeatable PDF ingestion through KFP pipelines using docling DocumentConverter + HybridChunker (TEXT/PARAGRAPH filtering), storing into pgvector via Llama Stack vector_dbs.register with all-MiniLM-L6-v2 (384 dims) and rag_tool.insert, backed by ingestion-pipeline Helm subchart v0.7.5 and DSPA; Approach C (lls-observability) provides interactive demos for RAG with Milvus, full LlamaStack evaluation (subset_of, llm_as_judge with ABCDE grading, HuggingFace dataset benchmarks, regex_parser multiple choice), and LangGraph StateGraph agents via ChatOpenAI on LlamaStack's OpenAI-compatible endpoint (/v1/openai/v1) with MCP tools bound via bind_tools; Approach D (rh-research) offers a progressive tutorial series for the NVIDIA AI-Q Blueprint deep research agent using NeMo Agent Toolkit with ChatNVIDIA on hosted NIM endpoints (integrate.api.nvidia.com/v1), per-role LLM customization (orchestrator/planner/researcher via LLMProvider/LLMRole), NAT CLI execution (nat run/nat eval), Docker Compose deployment (aiq-agent + aiq-blueprint-ui + aiq-postgres), Deep Research Bench evaluation (RACE/FACT metrics), %%writefile inline YAML workflow configs with enable_thinking (NIM-specific), and optional ChromaDB/LlamaIndex knowledge layer via knowledge_retrieval function type. Use Approach A for one-time data prep, model staging to MinIO, and Llama Stack validation in workbenches (no Helm); Approach B when repeatable production RAG document ingestion is needed with DSPA + MinIO + pgvector infrastructure -- notebooks/ directory serves dual purpose holding .ipynb files and source PDF subdirectories; Approach C for guided capability exploration including evaluation framework and agentic integration with Milvus vector search, requiring openai_api_key=\"fake\" and use_responses_api=True on ChatOpenAI; Approach D for deep research agent tutorials with hosted NVIDIA NIM endpoints (no GPU required, needs NVIDIA_API_KEY starting with nvapi-), configurable per-role LLMs, optional Tavily/Serper search tools, and LangSmith/Phoenix observability integration. Critical: Llama Stack requires SSE transport (/sse not /mcp) for MCP, Agents API for tool calling (chat.completions lacks tool_groups), model IDs with provider prefix vllm-inference/<model-name>, dynamically extracted provider_id (mcp-tools not model-context-protocol), Approach B compiles KFP pipelines to YAML submitted to ds-pipeline-dspa:8888 with env vars captured at compilation time not pod runtime, Approach C uses conditional sampling (greedy at temp 0.0, else top_p) with timeout=600.0 for evaluation operations, and Approach D uses DeepResearcherAgent.run() with report completeness retry (min 1500 chars, at least two ## headers, Sources/References section, up to 5 retries) plus ToolNameSanitizationMiddleware that silently rewrites malformed tool names. Gotchas: MCP service names require -service suffix (pg-airman-mcp-service), data ingestion uses hardcoded localhost:5432 requiring port-forwarding, gated models need notebook_login(), workbench PVC must hold 14-16 GB per model, Approach B has vector_db_id mismatch between register (\"rag-db\") and insert (\"test\") with hardcoded pgvector credentials (postgres/rag_password) and SSL verification disabled, Approach C has model alias inconsistency across notebooks (llama32 vs llama3-2-3b) and self-judging limitation using same model as evaluator and judge, Approach D writes API keys in plaintext to deploy/.env (not gitignored by default), enable_thinking must be removed when switching from NIM to non-NIM providers, paper_search requires separate uv pip install, and UV_VENV_CLEAR=1 forces clean venv recreation on each run."
 metadata:
   type: component
 tags:
-  tech_stack: [jupyter, python, pandas, psycopg2, boto3, huggingface-hub, llama-stack-client, kfp, docling, docling-core, langgraph, langchain-openai, langchain-core]
-  ai_pattern: [data-pipeline, model-serving, agents, rag, embeddings, evaluation, vector-search]
-  platform: [rhoai, openshift, vllm, kserve]
-  data_layer: [postgresql, minio, pgvector, milvus]
+  tech_stack: [jupyter, python, pandas, psycopg2, boto3, huggingface-hub, llama-stack-client, kfp, docling, docling-core, langgraph, langchain-openai, langchain-core, langchain-nvidia-ai-endpoints, langchain-tavily, nemo-agent-toolkit, uv, docker-compose]
+  ai_pattern: [data-pipeline, model-serving, agents, rag, embeddings, evaluation, vector-search, prompt-chaining]
+  platform: [rhoai, openshift, vllm, kserve, nvidia-nim]
+  data_layer: [postgresql, minio, pgvector, milvus, chromadb]
 source_examples:
   - quickstart: "data-governance-co-pilot"
     repo: "https://github.com/rh-ai-quickstart/data-governance-co-pilot"
@@ -22,6 +22,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/lls-observability"
     notes: "Interactive demo notebooks for RAG with Milvus, LlamaStack evaluation framework, and LangGraph agent integration via OpenAI-compatible endpoint"
     approach: "C"
+  - quickstart: "rh-research"
+    repo: "https://github.com/rh-ai-quickstart/rh-research"
+    notes: "Three-part tutorial notebook series for the NVIDIA AI-Q Blueprint deep research agent using NeMo Agent Toolkit, covering setup, Python API, NAT CLI, evaluation, and customization"
+    approach: "D"
 ---
 
 # Notebooks
@@ -578,19 +582,241 @@ llm_with_tools = llm.bind_tools([
 
 ---
 
+## Approach D: NVIDIA AI-Q Blueprint Tutorial Notebooks -- NAT Workflow, Deep Research Agent, and Customization (from rh-research)
+
+### When to Use
+
+Use this approach when the quickstart provides a progressive tutorial notebook series for the NVIDIA AI-Q Blueprint deep research agent. These notebooks guide users from environment setup through Python API usage, NAT CLI execution, Docker Compose deployment, evaluation benchmarking, and full agent customization (adding tools, swapping LLMs per role, editing Jinja2 prompts, enabling a knowledge layer). The notebooks operate against hosted NVIDIA NIM endpoints (no local GPU required) and use the NeMo Agent Toolkit (NAT) as the configuration and execution framework.
+
+### Differences from Approaches A, B, and C
+
+- **Purpose:** Progressive tutorial series for a deep research agent blueprint vs data preparation (A), automated ingestion (B), or capability demos (C)
+- **Agent framework:** NVIDIA NeMo Agent Toolkit (NAT) with LangChain Deep Agents vs LlamaStack native (A), KFP (B), or LangGraph via OpenAI endpoint (C)
+- **LLM provider:** NVIDIA NIM endpoints (`integrate.api.nvidia.com/v1`) with models like `nemotron-3-super-120b-a12b` and `openai/gpt-oss-120b` vs self-hosted vLLM (A, B, C)
+- **Configuration model:** YAML workflow configs (`%%writefile` inline in notebooks) defining LLMs, functions, and workflow type vs inline Python config (A, C) or Helm values (B)
+- **Execution methods:** Both Python API (`DeepResearcherAgent.run()`) and NAT CLI (`nat run`, `nat eval`) demonstrated in notebooks vs only Python API (A, B, C)
+- **Evaluation:** `nat eval` with Deep Research Bench (RACE/FACT metrics) and dataset filtering vs LlamaStack scoring functions (C) or none (A, B)
+- **Docker Compose deployment:** Notebooks include cells for building and deploying the full stack (backend + UI + PostgreSQL) via Docker Compose, then verifying with `docker ps`
+- **Knowledge layer:** Optional ChromaDB/LlamaIndex-backed document retrieval via NAT `knowledge_retrieval` function type vs pgvector (B) or Milvus (C)
+- **Observability:** LangSmith tracing and Phoenix profiling configured via YAML telemetry blocks vs none (A, B, C)
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Python 3.11-3.13 (uv-managed virtual environment via `scripts/setup.sh`)
+- **Container image:** Custom Docker Compose images (`deploy/compose/docker-compose.yaml`) for aiq-agent, aiq-blueprint-ui, aiq-postgres
+- **Key dependencies:**
+  - `langchain-nvidia-ai-endpoints` (`ChatNVIDIA`) -- NVIDIA NIM LLM client
+  - `langchain-tavily` (`TavilySearch`) -- web search tool
+  - `aiq_agent` (local package) -- deep research agent, LLMProvider, LLMRole, VerboseTraceCallback
+  - `uv` -- Python package manager used by `setup.sh`
+  - `docker compose` -- full stack deployment from notebooks
+- **Helm subchart:** None (deployment via Docker Compose, not Helm)
+
+### Key Patterns
+
+#### Inline YAML Workflow Configuration via %%writefile
+
+The notebooks define NAT workflow configs as inline YAML using Jupyter's `%%writefile` magic. Each config specifies LLMs (with role-specific temperature/token settings), functions (search tools and agent types), and the workflow type. This lets users see and modify the config in the same notebook flow.
+
+```yaml
+llms:
+  nemotron_llm_intent:
+    _type: nim
+    model_name: nvidia/nemotron-3-super-120b-a12b
+    base_url: "https://integrate.api.nvidia.com/v1"
+    temperature: 0.5
+    max_tokens: 4096
+    chat_template_kwargs:
+      enable_thinking: true
+
+functions:
+  intent_classifier:
+    _type: intent_classifier
+    llm: nemotron_llm_intent
+    tools:
+      - web_search_tool
+
+workflow:
+  _type: chat_deepresearcher_agent
+```
+
+#### Deep Research Agent via Python API (Direct Invocation)
+
+Notebook 1 demonstrates running the deep research agent directly in Python without a config file. The pattern creates a `ChatNVIDIA` LLM, configures a `LLMProvider` with orchestrator/planner/researcher roles, wraps a Tavily search tool, and calls `agent.run(state)`.
+
+```python
+from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+from aiq_agent.agents.deep_researcher.models import DeepResearchAgentState
+from aiq_agent.common import LLMProvider, LLMRole
+
+llm = ChatNVIDIA(
+    model="nvidia/nemotron-3-super-120b-a12b",
+    base_url="https://integrate.api.nvidia.com/v1",
+    temperature=1.0,
+    max_completion_tokens=128000,
+)
+provider = LLMProvider()
+provider.set_default(llm)
+provider.configure(LLMRole.ORCHESTRATOR, llm)
+provider.configure(LLMRole.RESEARCHER, llm)
+provider.configure(LLMRole.PLANNER, llm)
+
+agent = DeepResearcherAgent(
+    llm_provider=provider,
+    tools=[tavily_search],
+    verbose=True,
+)
+state = DeepResearchAgentState(
+    messages=[HumanMessage(content="...")]
+)
+result = await agent.run(state)
+```
+
+#### NAT CLI Execution from Notebook Cells
+
+The notebooks run the NAT CLI (`nat run` and `nat eval`) directly from notebook cells using shell escapes. This demonstrates the config-driven execution path.
+
+```bash
+!.venv/bin/nat run \
+    --config_file config_simple_researcher.yml \
+    --input "What is NVIDIA Spectrum-X?"
+```
+
+#### Docker Compose Deployment from Notebook
+
+Notebook 0 deploys the full application stack (backend agent, web UI, PostgreSQL) from within the notebook using Docker Compose, including environment variable injection and container health verification.
+
+```python
+os.environ["BACKEND_URL"] = "http://aiq-agent:8000"
+os.environ["BACKEND_CONFIG"] = "/app/configs/config_web_default_llamaindex.yml"
+```
+
+```bash
+!docker compose -f deploy/compose/docker-compose.yaml build --quiet
+!docker compose -f deploy/compose/docker-compose.yaml up -d
+```
+
+Container verification uses `docker ps` with formatted output to confirm `aiq-blueprint-ui`, `aiq-agent`, and `aiq-postgres` are running.
+
+#### LangSmith Tracing Integration
+
+Notebook 0 optionally injects LangSmith tracing into the YAML config by programmatically appending a `tracing` block under `general.telemetry`. The tracing config uses environment variable references for API key and project name.
+
+```python
+content = content.replace(
+    "        level: INFO\n",
+    "        level: INFO\n\n"
+    "    tracing:\n"
+    "      langsmith:\n"
+    "        _type: langsmith\n"
+    "        project: ${LANGSMITH_PROJECT}\n"
+    "        api_key: ${LANGSMITH_API_KEY}\n",
+    1,
+)
+```
+
+#### Evaluation with Deep Research Bench via nat eval
+
+Notebook 1 runs the `nat eval` command against a benchmark dataset (Deep Research Bench) with RACE (report quality) and FACT (citation accuracy) metrics. The eval config extends the workflow config with dataset and output settings.
+
+```yaml
+eval:
+  general:
+    workflow_alias: "aiq-deepresearcher"
+    output_dir: docs/notebooks/results
+    max_concurrency: 1
+    dataset:
+      _type: json
+      file_path: frontends/benchmarks/deepresearch_bench/data/drb_full_dataset.json
+      structure:
+        question_key: question
+        answer_key: expected_output
+        generated_answer_key: generated_answer
+```
+
+#### Per-Role LLM Customization
+
+Notebook 2 demonstrates assigning different LLMs to different agent roles (orchestrator, planner, researcher) via YAML config. The `deep_research_agent` function accepts separate `orchestrator_llm`, `planner_llm`, and `researcher_llm` references.
+
+```yaml
+functions:
+  deep_research_agent:
+    _type: deep_research_agent
+    orchestrator_llm: frontier_llm
+    planner_llm: frontier_llm
+    researcher_llm: nemotron_super_llm
+    tools:
+      - advanced_web_search_tool
+```
+
+If `planner_llm` or `researcher_llm` is omitted, the agent falls back to `orchestrator_llm` for that role.
+
+#### Knowledge Layer via ChromaDB/LlamaIndex
+
+Notebook 2 adds document retrieval by installing the LlamaIndex backend plugin and defining a `knowledge_retrieval` function in the YAML config. The deep researcher prompts already include conditional branches for `knowledge_search` tool presence.
+
+```yaml
+functions:
+  knowledge_search:
+    _type: knowledge_retrieval
+    backend: llamaindex
+    collection_name: ${COLLECTION_NAME:-test_collection}
+    top_k: 5
+    chroma_dir: ${AIQ_CHROMA_DIR:-/tmp/chroma_data}
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `NVIDIA_API_KEY` -- NVIDIA NIM API key for model inference (required, starts with `nvapi-`)
+  - `TAVILY_API_KEY` -- Tavily web search API key (recommended)
+  - `SERPER_API_KEY` -- Serper API key for Google Scholar paper search (optional)
+  - `OPENAI_API_KEY` -- OpenAI key for frontier model orchestrator (optional)
+  - `LANGSMITH_API_KEY` -- LangSmith tracing API key (optional)
+  - `LANGSMITH_PROJECT` -- LangSmith project name (optional)
+  - `BACKEND_URL` -- Backend agent URL for Docker Compose deployment (set to `http://aiq-agent:8000`)
+  - `BACKEND_CONFIG` -- NAT config path inside Docker container
+  - `COLLECTION_NAME` -- ChromaDB collection name for knowledge layer (default: `test_collection`)
+  - `AIQ_CHROMA_DIR` -- ChromaDB storage directory (default: `/tmp/chroma_data`)
+- **Config files:** YAML workflow configs created inline via `%%writefile` (e.g., `config_simple_researcher.yml`, `config_simple_deep_researcher.yml`, `config_deep_researcher_with_paper_search.yml`, `config_deep_researcher_with_knowledge_layer.yml`)
+- **Helm values:** Not applicable (deployment via Docker Compose)
+
+### Known Gotchas
+
+- **Repo root detection uses heuristic search:** The notebooks locate the project root by walking up directory parents looking for both `pyproject.toml` and `scripts/setup.sh`. On brev.dev launchables, the repo is cloned to `/home/ubuntu/aiq` and `repo_root` must be set before the search runs; outside brev, the notebook expects to already be inside the cloned repo.
+- **`UV_VENV_CLEAR=1` set before setup:** The notebooks set `os.environ["UV_VENV_CLEAR"] = "1"` which causes `uv venv` to delete and recreate the virtual environment on each run. This ensures a clean environment but adds setup time on repeated runs.
+- **Environment file written with secrets in plaintext:** The Docker Compose deployment cell writes API keys directly into `deploy/.env` using `%%bash` with shell variable expansion (`${NVIDIA_API_KEY}`). This file is not gitignored by default in the notebook flow.
+- **Deep research can take several minutes:** The notebooks warn that deep research involves multiple sequential LLM calls and web searches. Notebook 1's evaluation against the full Deep Research Bench dataset can take several hours.
+- **`enable_thinking: true` is NIM-specific:** The `chat_template_kwargs.enable_thinking` setting in the Nemotron LLM config is specific to NVIDIA NIM endpoints. When swapping to a partner LLM endpoint (e.g., Together.ai), this setting must be removed along with changing `_type: nim` to `_type: openai`.
+- **Paper search plugin requires separate install:** The `paper_search` tool type is not included in the base install. Users must run `uv pip install -e sources/google_scholar_paper_search` before using it in a config.
+- **Report completeness retry logic:** The `DeepResearcherAgent.run()` method checks report completeness after each invocation (minimum 1500 chars, at least two `##` headers, a Sources/References section, no "please confirm" phrases). If incomplete, it appends feedback and retries up to 5 times.
+- **Middleware silently fixes malformed tool calls:** The `ToolNameSanitizationMiddleware` rewrites hallucinated or malformed tool names in LLM responses (e.g., `<|channel|>` suffixes) to match the valid tool list. This is transparent to the user but may mask prompt quality issues.
+
+### Testing Notes
+
+- Run notebooks in order: 0 (setup + overview) -> 1 (deep researcher + evaluation) -> 2 (customization)
+- Notebook 0 can run with just `NVIDIA_API_KEY`; `TAVILY_API_KEY` is optional but recommended for web search
+- Docker Compose deployment (notebook 0) requires Docker installed and accessible from the notebook environment
+- `nat eval` (notebook 1) requires downloading the Deep Research Bench dataset first: `python frontends/benchmarks/deepresearch_bench/scripts/download_drb_dataset.py`
+- Paper search (notebook 2) requires a Serper API key from [serper.dev](https://serper.dev/)
+- Knowledge layer (notebook 2) requires installing the LlamaIndex backend: `uv pip install -e "sources/knowledge_layer[llamaindex]"`
+- No GPU required when using hosted NVIDIA NIM endpoints; self-hosting NIMs requires GPUs per model card specifications
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Manual Workbench) | Approach B (KFP Pipeline) | Approach C (Interactive Demos) |
-|----------|-------------------------------|---------------------------|-------------------------------|
-| Execution model | Manual notebook run in RHOAI workbench | Automated KFP pipeline compiled from notebook | Interactive tutorial notebooks run on cluster |
-| Data source | Local CSV files | PDFs from MinIO/S3 buckets | PDFs from URLs (fetched by LlamaStack) |
-| Document processing | pandas DataFrame loading | docling PDF conversion + hybrid chunking | LlamaStack RAG Tool handles parsing and chunking |
-| Vector DB backend | PostgreSQL (psycopg2) | pgvector via LlamaStack | Milvus via LlamaStack |
-| Storage method | Direct psycopg2 `execute_batch` inserts | LlamaStack `vector_dbs.register` + `rag_tool.insert` | LlamaStack `vector_dbs.register` + `rag_tool.insert` |
-| Agentic framework | LlamaStack native Agents API | None | LangGraph via OpenAI-compatible endpoint |
-| Evaluation coverage | None | None | subset_of, llm_as_judge, dataset benchmarks, multiple choice |
-| MCP tools | `toolgroups.register` (native API) | None | `ChatOpenAI.bind_tools` (OpenAI-compatible) |
-| Repeatability | One-time manual execution | Repeatable pipeline runs via KFP | Repeatable interactive demos |
-| Helm integration | None | `ingestion-pipeline` subchart v0.7.5 | None |
-| Infrastructure required | RHOAI workbench only | DSPA + MinIO + Llama Stack + pgvector | LlamaStack + vLLM + Milvus + MCP servers |
-| Best for | Data preparation and integration testing | Production RAG document ingestion | Guided learning and capability demonstration |
+| Criteria | Approach A (Manual Workbench) | Approach B (KFP Pipeline) | Approach C (Interactive Demos) | Approach D (AI-Q Blueprint Tutorials) |
+|----------|-------------------------------|---------------------------|-------------------------------|---------------------------------------|
+| Execution model | Manual notebook run in RHOAI workbench | Automated KFP pipeline compiled from notebook | Interactive tutorial notebooks run on cluster | Progressive tutorial series run locally or on brev.dev |
+| Data source | Local CSV files | PDFs from MinIO/S3 buckets | PDFs from URLs (fetched by LlamaStack) | Web search results (Tavily), academic papers (Serper), user documents (ChromaDB) |
+| Document processing | pandas DataFrame loading | docling PDF conversion + hybrid chunking | LlamaStack RAG Tool handles parsing and chunking | NAT functions handle search and retrieval; LlamaIndex for document ingestion |
+| Vector DB backend | PostgreSQL (psycopg2) | pgvector via LlamaStack | Milvus via LlamaStack | ChromaDB via LlamaIndex (optional knowledge layer) |
+| Storage method | Direct psycopg2 `execute_batch` inserts | LlamaStack `vector_dbs.register` + `rag_tool.insert` | LlamaStack `vector_dbs.register` + `rag_tool.insert` | NAT `knowledge_retrieval` function with configurable backend |
+| Agentic framework | LlamaStack native Agents API | None | LangGraph via OpenAI-compatible endpoint | NeMo Agent Toolkit (NAT) with LangChain Deep Agents |
+| Evaluation coverage | None | None | subset_of, llm_as_judge, dataset benchmarks, multiple choice | Deep Research Bench (RACE report quality + FACT citation accuracy) via `nat eval` |
+| MCP tools | `toolgroups.register` (native API) | None | `ChatOpenAI.bind_tools` (OpenAI-compatible) | None (tools are NAT functions: web search, paper search, knowledge retrieval) |
+| Repeatability | One-time manual execution | Repeatable pipeline runs via KFP | Repeatable interactive demos | Repeatable via NAT CLI or Python API |
+| Helm integration | None | `ingestion-pipeline` subchart v0.7.5 | None | None (Docker Compose deployment) |
+| Infrastructure required | RHOAI workbench only | DSPA + MinIO + Llama Stack + pgvector | LlamaStack + vLLM + Milvus + MCP servers | Docker + NVIDIA API key (no GPU required for hosted NIMs) |
+| Best for | Data preparation and integration testing | Production RAG document ingestion | Guided learning and capability demonstration | Deep research agent tutorial, agent customization, and evaluation-driven development |

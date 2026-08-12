@@ -1,12 +1,12 @@
 ---
 name: postgresql
 description: "PostgreSQL database deployed as a Kubernetes Deployment with PVC, psycopg2 access, and batched async writes"
-summary: "PostgreSQL 16-alpine deployed as a single-replica Kubernetes Deployment (not StatefulSet) with PVC via inline Helm templates gated by `postgresql.enabled`, using GCR mirror image (`mirror.gcr.io/library/postgres`) to avoid Docker Hub rate limiting, with `pg_isready` readiness/liveness probes. Use for structured relational storage needing batched async writes and optional LLM agent SQL access via a postgres-mcp sidecar — supports JSONB columns with GIN indexes for flexible attributes and idempotent schema migrations (CREATE/ADD IF NOT EXISTS with FK cascade upgrade path); see pgvector.md if vector search is needed. Critical pattern: application connects via psycopg2-binary with `init_database()` retry loop (10 attempts, 3s delay); `DbWriterThread` batches writes from a queue (maxsize=5000) using `executemany` in dependency order within single transactions, with persistent connection reconnected on `OperationalError`; postgres-mcp sidecar (crystaldba/postgres-mcp, SSE transport, `--access-mode=restricted`) loads tools via `langchain-mcp-adapters` and wraps `execute_sql` with `app_config_id` scoping plus SELECT-only SQL injection guards. Common gotchas: `PGDATA` must be set to subdirectory (`/var/lib/postgresql/data/pgdata`) within PVC mount to avoid `lost+found` conflicts; DbWriterThread silently drops writes when queue is full (throughput over completeness trade-off); initContainer dependency chain PostgreSQL -> postgres-mcp -> backend must be maintained; CI uses `docker.io` image directly while Helm uses GCR mirror."
+summary: "PostgreSQL 16-alpine deployed as a single-replica Kubernetes Deployment (not StatefulSet) with PVC and pg_isready probes, providing structured relational storage with JSONB/GIN indexes and idempotent schema migrations (CREATE/ADD IF NOT EXISTS with FK cascade upgrade path); see pgvector.md if vector search is needed. Choose Approach A (psycopg2-binary, sync, single database) for detection tracking with batched async writes via DbWriterThread and postgres-mcp sidecar for LLM agent SQL access, or Approach B (psycopg v3 + asyncpg + SQLAlchemy async, multi-database) for agentic platforms needing LISTEN/NOTIFY real-time SSE, SQLite/PostgreSQL dual-backend auto-detection, and Bitnami Helm chart with Secrets-based credentials. Approach A uses inline Helm templates gated by `postgresql.enabled` with GCR mirror image, `init_database()` retry loop (10 attempts, 3s delay), `DbWriterThread` queue (maxsize=5000, `executemany` in dependency order, persistent connection reconnected on `OperationalError`), and postgres-mcp sidecar (`--access-mode=restricted`) with `app_config_id` scoping plus SELECT-only injection guards; Approach B uses multi-database init script via `docker-entrypoint-initdb.d`, URL normalization across three simultaneous drivers, TTL-based engine caching (`pool_size=5`, `max_overflow=10`), and healthcheck validating both databases. Common gotchas: `PGDATA` must be set to subdirectory (`/var/lib/postgresql/data/pgdata`) to avoid `lost+found` conflicts; DbWriterThread silently drops writes when queue is full (throughput over completeness trade-off); LISTEN/NOTIFY incompatible with PgBouncer transaction pooling (use `AIQ_LISTEN_DB_URL` for direct connection); checkpoint tables must be pre-created in init-db.sql or backends crash on PostgreSQL restart; CI uses `docker.io` image while Helm uses GCR mirror (Approach A) or Bitnami (Approach B)."
 metadata:
   type: component
 tags:
-  tech_stack: [postgresql, psycopg2, python, helm]
-  ai_pattern: [multimodal]
+  tech_stack: [postgresql, psycopg2, psycopg3, asyncpg, sqlalchemy, python, helm, docker-compose]
+  ai_pattern: [multimodal, agents, rag]
   platform: [openshift, kubernetes]
   data_layer: [postgresql]
 source_examples:
@@ -14,6 +14,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multimodal-compliance-monitor"
     notes: "PostgreSQL 16-alpine as Deployment with PVC, psycopg2-binary for app access, DbWriterThread for batched async writes, postgres-mcp sidecar for LLM agent SQL access"
     approach: "A"
+  - quickstart: "rh-research"
+    repo: "https://github.com/rh-ai-quickstart/rh-research"
+    notes: "PostgreSQL 16-alpine via Docker Compose and Bitnami Helm chart, multi-database init script, psycopg3 + asyncpg + SQLAlchemy async engines, LISTEN/NOTIFY for real-time SSE, SQLite/PostgreSQL dual-backend support"
+    approach: "B"
 ---
 
 # PostgreSQL
@@ -245,3 +249,229 @@ The postgres-mcp deployment itself uses an initContainer to wait for PostgreSQL 
 
 - See `pgvector.md` for PostgreSQL with pgvector extension for vector search
 - The postgres-mcp sidecar pattern could apply to any quickstart needing LLM-driven SQL queries
+
+---
+
+## Approach B: Multi-Database with SQLAlchemy Async and LISTEN/NOTIFY (from rh-research)
+
+### When to Use
+
+When PostgreSQL serves as the persistence layer for an agentic research platform that requires multiple databases (job store, LangGraph checkpoints, document summaries), real-time SSE streaming via LISTEN/NOTIFY, and a SQLite/PostgreSQL dual-backend design for local dev vs production.
+
+### Differences from Approach A
+
+- **Drivers:** psycopg (v3) + asyncpg + SQLAlchemy async engines instead of psycopg2-binary with direct connections
+- **Deployment:** Docker Compose service with `init-db.sql` entrypoint script; Kubernetes uses `bitnami/postgresql` with ConfigMap-mounted init script and Secrets-based credentials (not inline Helm templates)
+- **Multiple databases:** Two PostgreSQL databases (`aiq_jobs`, `aiq_checkpoints`) created by init script, not a single application database
+- **Dual-backend:** Application auto-detects SQLite vs PostgreSQL from URL scheme, enabling local dev without PostgreSQL
+- **Real-time events:** Uses PostgreSQL LISTEN/NOTIFY via asyncpg for sub-10ms SSE event delivery, falling back to polling for SQLite
+- **Connection pooling:** psycopg_pool `AsyncConnectionPool` for LangGraph checkpoints; SQLAlchemy engines with TTL-based cache management
+
+### Docker Compose Service
+
+PostgreSQL is deployed as a standalone Compose service with an init script mounted into the entrypoint directory:
+
+```yaml
+# deploy/compose/docker-compose.yaml
+postgres:
+  image: postgres:16-alpine
+  container_name: aiq-postgres
+  environment:
+    POSTGRES_USER: aiq
+    POSTGRES_PASSWORD: aiq_dev
+    POSTGRES_DB: aiq_jobs
+  volumes:
+    - postgres-data:/var/lib/postgresql/data
+    - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U aiq -d aiq_jobs && pg_isready -U aiq -d aiq_checkpoints"]
+    interval: 5s
+    timeout: 5s
+    retries: 5
+```
+
+The healthcheck validates both databases are ready, not just the default one. Resource limits are set to 2 CPUs / 4G memory with 1 CPU / 2G reservations.
+
+### Multi-Database Init Script
+
+The init script creates a second database and all tables across both databases using `\gexec` for conditional creation and `\connect` for cross-database DDL:
+
+```sql
+-- deploy/compose/init-db.sql
+SELECT 'CREATE DATABASE aiq_checkpoints' WHERE NOT EXISTS
+  (SELECT FROM pg_database WHERE datname = 'aiq_checkpoints')\gexec
+
+GRANT ALL PRIVILEGES ON DATABASE aiq_jobs TO aiq;
+GRANT ALL PRIVILEGES ON DATABASE aiq_checkpoints TO aiq;
+
+\connect aiq_jobs
+CREATE TABLE IF NOT EXISTS job_info (
+    job_id VARCHAR PRIMARY KEY,
+    status VARCHAR NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE,
+    expiry_seconds INTEGER,
+    is_expired BOOLEAN DEFAULT FALSE
+);
+```
+
+The comment in `init-db.sql` explains the checkpoint tables are pre-created: "Previously left to the app, but if postgres restarts without a backend restart, the tables are lost and running backends crash with 'relation checkpoints does not exist'."
+
+### Dual-Backend Auto-Detection
+
+The application detects the database backend from the URL scheme and provisions the appropriate checkpointer:
+
+```python
+# src/aiq_agent/common/__init__.py
+def is_postgres_dsn(value: str) -> bool:
+    """Return True when the checkpoint DSN is a Postgres URL."""
+    parsed = urlparse(value)
+    return parsed.scheme in ("postgresql", "postgres")
+
+async def get_checkpointer(checkpoint_db: str) -> BaseCheckpointSaver:
+    if is_postgres_dsn(checkpoint_db):
+        pool = AsyncConnectionPool(
+            conninfo=checkpoint_db,
+            min_size=1, max_size=3,
+            kwargs={"autocommit": True, "row_factory": dict_row},
+        )
+        checkpointer = AsyncPostgresSaver(pool)
+    else:
+        conn = await aiosqlite.connect(checkpoint_db)
+        checkpointer = AsyncSqliteSaver(conn)
+    await checkpointer.setup()
+    return checkpointer
+```
+
+Checkpointers and pools are cached by DSN to avoid multiple connections to the same database.
+
+### URL Normalization for Multiple Drivers
+
+Both EventStore and SummaryStore normalize incoming URLs to use consistent SQLAlchemy drivers, stripping existing driver suffixes before applying the correct one:
+
+```python
+# frontends/aiq_api/src/aiq_api/jobs/event_store.py
+def _normalize_db_url(db_url: str, async_mode: bool = True) -> str:
+    if db_url.startswith("postgresql") or db_url.startswith("postgres"):
+        base_url = db_url.replace("+asyncpg", "").replace("+psycopg2", "").replace("+psycopg", "")
+        return f"{base_url.replace('postgresql://', 'postgresql+psycopg://')}"
+    elif db_url.startswith("sqlite"):
+        base_url = db_url.replace("+aiosqlite", "")
+        return base_url.replace("sqlite:///", "sqlite+aiosqlite:///") if async_mode else base_url
+    return db_url
+```
+
+### PostgreSQL LISTEN/NOTIFY for Real-Time SSE
+
+The EventStore uses `pg_notify` when storing events for real-time push to SSE clients. The SSE generator uses asyncpg `LISTEN` on a per-job channel:
+
+```python
+# frontends/aiq_api/src/aiq_api/jobs/event_store.py
+channel = f"job_events_{self.job_id.replace('-', '_')}"
+payload = json.dumps({"id": event_id, "type": event_type})
+conn.execute(text("SELECT pg_notify(:channel, :payload)"),
+             {"channel": channel, "payload": payload})
+```
+
+The SSE route falls back to polling if pub-sub fails. The code also notes a PgBouncer incompatibility: "LISTEN/NOTIFY needs a persistent session -- incompatible with PgBouncer transaction pooling. Use AIQ_LISTEN_DB_URL to point directly at PostgreSQL."
+
+### SQLAlchemy Engine Caching with TTL
+
+Both EventStore and SummaryStore maintain class-level engine caches with TTL-based cleanup (1 hour default, max 10 engines) to reuse connections across requests:
+
+```python
+# frontends/aiq_api/src/aiq_api/jobs/event_store.py
+ENGINE_CACHE_TTL_SECONDS = 3600
+ENGINE_CACHE_MAX_SIZE = 10
+
+class EventStore:
+    _async_engine_cache: dict[str, tuple[Any, float]] = {}
+    _sync_engine_cache: dict[str, tuple[Any, float]] = {}
+```
+
+PostgreSQL engine creation uses `pool_size=5`, `max_overflow=10`, and `pool_recycle=1800`.
+
+### Kubernetes Deployment with Bitnami Image
+
+On Kubernetes, PostgreSQL uses `bitnami/postgresql` (not the upstream Alpine image) with Secrets-based credentials and a ConfigMap for the init script:
+
+```yaml
+# deploy/helm/deployment-k8s/values.yaml
+postgres:
+  enabled: true
+  image:
+    repository: bitnami/postgresql
+    tag: latest
+  secretEnv:
+    POSTGRES_USER: DB_USER_NAME
+    POSTGRES_PASSWORD: DB_USER_PASSWORD
+  env:
+    POSTGRES_DB: aiq_jobs
+    POSTGRESQL_MAX_CONNECTIONS: '200'
+  persistence:
+  - name: aiq-postgres-data
+    accessModes: [ReadWriteOnce]
+    size: 10Gi
+```
+
+The backend uses an initContainer to wait for PostgreSQL and run the init script:
+
+```yaml
+# deploy/helm/deployment-k8s/values.yaml
+initContainers:
+- name: db-init
+  image: bitnami/postgresql:latest
+  command: [sh, -c]
+  args:
+  - |
+    until pg_isready -h aiq-postgres -U $(DB_USER_NAME) -d aiq_jobs; do
+      sleep 2
+    done
+    psql -h aiq-postgres -U $(DB_USER_NAME) -d aiq_jobs -f /db-init/init.sql
+```
+
+### Configuration (Approach B)
+
+- **Environment variables (Docker Compose defaults):**
+  - `NAT_JOB_STORE_DB_URL` -- job store connection (`postgresql+asyncpg://aiq:aiq_dev@postgres:5432/aiq_jobs`)
+  - `AIQ_CHECKPOINT_DB` -- LangGraph checkpoints (`postgresql://aiq:aiq_dev@postgres:5432/aiq_checkpoints`)
+  - `AIQ_SUMMARY_DB` -- document summaries (`postgresql+psycopg://aiq:aiq_dev@postgres:5432/aiq_jobs`)
+  - `AIQ_LISTEN_DB_URL` -- optional direct PostgreSQL URL for LISTEN/NOTIFY (bypasses PgBouncer)
+- **Environment variables (Kubernetes):**
+  - `DB_USER_NAME` / `DB_USER_PASSWORD` -- from Kubernetes Secret `aiq-credentials`
+  - `POSTGRESQL_MAX_CONNECTIONS` -- Bitnami-specific, set to `200`
+- **Python dependencies:**
+  - `langgraph-checkpoint-postgres>=3.0.0` -- LangGraph async PostgreSQL checkpointer
+  - `psycopg[binary]>=3.0.0` -- psycopg v3 for SQLAlchemy async
+  - `asyncpg>=0.29.0` -- for LISTEN/NOTIFY and async job store
+
+### Known Gotchas (Approach B)
+
+- **Checkpoint tables must be pre-created:** The init-db.sql comment explains: "Previously left to the app, but if postgres restarts without a backend restart, the tables are lost and running backends crash with 'relation checkpoints does not exist'." The init script creates all LangGraph checkpoint tables (checkpoints, checkpoint_blobs, checkpoint_writes, checkpoint_migrations) upfront.
+- **Three different PostgreSQL drivers used simultaneously:** `asyncpg` for LISTEN/NOTIFY SSE and job store, `psycopg` (v3) for SQLAlchemy async engines (EventStore, SummaryStore), and `langgraph-checkpoint-postgres` which internally uses psycopg_pool. URL normalization strips and re-adds driver suffixes to route correctly.
+- **PgBouncer incompatibility with LISTEN/NOTIFY:** The code at `frontends/aiq_api/src/aiq_api/routes/jobs.py:1186` notes: "LISTEN/NOTIFY needs a persistent session -- incompatible with PgBouncer transaction pooling. Use AIQ_LISTEN_DB_URL to point directly at PostgreSQL."
+- **Healthcheck validates both databases:** The Compose healthcheck runs `pg_isready -U aiq -d aiq_jobs && pg_isready -U aiq -d aiq_checkpoints`, ensuring both databases are ready before the backend starts (via `depends_on: postgres: condition: service_healthy`).
+- **Bitnami vs upstream image divergence:** Docker Compose uses `postgres:16-alpine` (upstream) while Kubernetes uses `bitnami/postgresql:latest`. Bitnami has different env var conventions (`POSTGRESQL_MAX_CONNECTIONS` vs upstream `max_connections` in postgresql.conf).
+- **Upsert pattern differs per backend:** The SummaryStore in `src/aiq_agent/knowledge/summary_store.py` uses `ON CONFLICT ... DO UPDATE` for PostgreSQL and `INSERT OR REPLACE` for SQLite, handled via an `is_postgres` branch.
+
+### Testing Notes (Approach B)
+
+- CI workflow (`.github/workflows/skills-eval.yml`) starts both `aiq-agent` and `postgres` services via `docker compose up -d --build aiq-agent postgres` with a 5-minute timeout to cover postgres init and first build
+- SQLite fallback enables local testing without a PostgreSQL instance by leaving `NAT_JOB_STORE_DB_URL`, `AIQ_CHECKPOINT_DB`, and `AIQ_SUMMARY_DB` unset (configs default to SQLite paths)
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A | Approach B |
+|----------|-----------|-----------|
+| **Use case** | Detection tracking, structured relational data | Job store, LangGraph checkpoints, document summaries |
+| **Python driver** | psycopg2-binary (sync) | psycopg v3 + asyncpg + SQLAlchemy async |
+| **Database count** | Single database | Multiple databases (aiq_jobs, aiq_checkpoints) |
+| **Init pattern** | Application-side retry loop (`init_database()`) | Init SQL script via `/docker-entrypoint-initdb.d/` |
+| **Real-time events** | N/A | PostgreSQL LISTEN/NOTIFY via asyncpg |
+| **SQLite fallback** | No | Yes, auto-detected from URL scheme |
+| **Helm deployment** | Inline templates, `mirror.gcr.io/library/postgres` | Bitnami chart image, ConfigMap init script, Secrets |
+| **Connection model** | Persistent single connection, reconnect on error | Connection pools with TTL-based engine caching |
+| **Write pattern** | Batched queue (DbWriterThread, maxsize=5000) | SQLAlchemy transactions with upsert |
+| **LLM SQL access** | postgres-mcp sidecar with SELECT-only guards | N/A |

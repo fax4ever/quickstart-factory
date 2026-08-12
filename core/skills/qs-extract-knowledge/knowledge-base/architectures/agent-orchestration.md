@@ -1,14 +1,14 @@
 ---
 name: agent-orchestration
-description: Agent orchestration patterns from multi-runner dispatch to LangGraph DAGs to dual-provider factory
-summary: "Covers seven agent orchestration patterns for RHOAI quickstarts spanning multi-runner dispatch with LlamaStack/LangGraph/CrewAI behind a unified ChatService (A), hierarchical LangGraph DAG for batch log analysis with clustering deduplication (B), dual-provider factory with MCP-Direct vs Llama Stack (C), YAML-driven conversational state machines with CloudEvent microservices via Knative broker (D), multi-persona LangGraph agents with per-tool RBAC authorization nodes (E), vision-context-aware structured-output router for CV+SQL queries (F), and custom OpenAI SDK loop with HTTP tool discovery and two-phase pipeline-then-chat (G). Choose A for runtime-selectable frameworks with normalized SSE streaming (BaseRunner.stream()); B for event-driven batch processing with no user interaction and Command(goto=...) conditional routing; C for deployment-time provider selection via COPILOT_PROVIDER_MODE env var (backend agentic loop with Nemotron TOOLCALL tag parsing vs delegated Llama Stack); D for YAML-defined typed states (waiting/llm_processor/intent_classifier/llm_validator/terminal) with LlamaStack Responses API and multi-agent routing; E for regulated-industry per-tool allowed_roles enforced by a tool_auth graph node with AsyncPostgresSaver checkpointing and A2A protocol via Kagenti; F for multimodal apps routing between live CV context and SQL agent queries via RouteDecision structured output; G for deterministic pipeline before agentic chat with REST tool protocol (GET /tools, POST /tools/<name>) and PHASE2_TOOLS subset filtering. Critical patterns: ChatService._get_runner() dispatches by runner_type with lazy imports for optional packages (A); create_provider() factory selects MCPDirectProvider or LlamaStackProvider with hard-coded tool allowlist+Pydantic validation in MCP-Direct only (C); build_agent_graph() embeds NeMo Guardrails as input_shield/output_shield StateGraph nodes with tool_auth RBAC node using conditional edges (E); NeMo integration varies across approaches -- runner-level shields (A), graph nodes (E), Colang flows with jailbreak detection (D), HTTP client with fail-open degradation (G); session persistence ranges from in-memory InMemorySaver/dict (A/C/F) to PostgreSQL AsyncPostgresSaver (D/E). Common gotchas: dual LLM endpoints may be needed when the default model lacks tool-calling support (B); Nemotron streaming requires an 11-character buffer window to avoid splitting TOOLCALL/think tags and tool validation is absent in the Llama Stack provider path (C); the _consumed_this_invoke flag prevents multiple waiting states from consuming the same HumanMessage in a single graph invocation (D); output_shield re-sends full response for NeMo evaluation triggering a ~32s LLM call that can exceed the httpx 30s timeout (E); asyncio.run() inside synchronous Flask handlers creates a new event loop per request (F); tool schemas are rediscovered on every HTTP request with no cross-request caching (G)."
+description: Agent orchestration patterns from multi-runner dispatch to LangGraph DAGs to NAT+DeepAgents multi-tier research
+summary: "Defines eight pluggable agent orchestration patterns (A-H) for RHOAI quickstarts: A (multi-runner ChatService dispatch normalizing SSE via BaseRunner.stream() across LlamaStack/LangGraph/CrewAI with graph_config declarative DAG mode), B (hierarchical LangGraph DAG with Command-based routing and structured-output schemas for event-driven batch log analysis with embedding+clustering deduplication), C (dual-provider factory via COPILOT_PROVIDER_MODE selecting MCP-Direct backend loop with hard-coded allowlist+Pydantic tool validation and Nemotron TOOLCALL tag parsing vs delegated Llama Stack), D (YAML state machines with 5 generic state types generating LangGraph StateGraphs, multi-agent routing via CloudEvent/Knative, LlamaStack Responses API with native MCP), E (multi-persona LangGraph agents with YAML per-tool RBAC via tool_auth graph node, NeMo Guardrails as input/output shield nodes, mtime-based hot-reloading, A2A via Kagenti), F (structured-output RouteDecision router classifying context vs SQL path with nested ReAct SQL agent for multimodal CV+database analytics), G (HTTP tool discovery via GET /tools + POST /tools/<name>, two-phase deterministic pipeline then agentic chat with PHASE2_TOOLS filtering and mutable context auto-VaR recalculation), H (NAT+DeepAgents multi-tier research with LangGraph orchestrator for intent-driven shallow/deep depth routing, role-based LLMProvider mapping 11 semantic roles to different models, concurrent researcher workers, SourceRegistryMiddleware citation verification, optional Dask async offloading). Select by user interaction model (chat vs batch vs event-driven), framework flexibility needs (single vs pluggable), tool security requirements (none to hard-coded allowlist to RBAC graph nodes), and multi-agent routing complexity (none to CloudEvent microservices to depth-routed subagents). Critical integration patterns include BaseRunner.stream() SSE contract for framework-agnostic streaming, YAML state type definitions (waiting/llm_processor/intent_classifier/llm_validator/terminal) driving dynamic LangGraph construction, tool_auth node checking per-tool allowed_roles before execution, and deterministic thread IDs (user:{user_id}:agent:{agent_name}) enabling cross-session conversation resumption with AsyncPostgresSaver checkpointing. Common gotchas: LangGraph/CrewAI runners require lazy imports inside _get_runner() to avoid missing-package errors; in-memory MemorySaver and conversation_store dict lose all state on pod restart -- use AsyncPostgresSaver for production; Llama Stack agent instructions are immutable so policy updates require full agent recreation invalidating all sessions; tool validation (allowlist+Pydantic) applies only in MCP-Direct mode in Approach C leaving the Llama Stack path without equivalent security; and CrewAI's _StreamDeduplicator is necessary because CrewAI streams raw ReAct tokens (Thought/Action/Action Input) that are noise to end users."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, flask, langchain, langgraph, crewai, llamastack, python, gradio, sentence-transformers, scikit-learn, sveltekit, openai-sdk, vega-lite, cloudevents, nemo-guardrails, zammad, react, tailwindcss, tanstack-router, keycloak, a2a-protocol, kagenti, opencv, yfinance, scipy, mlserver]
-  ai_pattern: [agents, prompt-chaining, model-serving, embeddings, data-governance, guardrails, rag, multimodal]
-  platform: [llamastack, vllm, rhoai, openshift, kserve, knative, openvino, triton, mlserver]
-  data_layer: [postgresql, pgvector, minio]
+  tech_stack: [fastapi, flask, langchain, langgraph, crewai, llamastack, python, gradio, sentence-transformers, scikit-learn, sveltekit, openai-sdk, vega-lite, cloudevents, nemo-guardrails, zammad, react, tailwindcss, tanstack-router, keycloak, a2a-protocol, kagenti, opencv, yfinance, scipy, mlserver, nemo-agent-toolkit, deepagents, nextjs, nvidia-nim, chromadb, llama-index, dask]
+  ai_pattern: [agents, prompt-chaining, model-serving, embeddings, data-governance, guardrails, rag, multimodal, deep-research, evaluation]
+  platform: [llamastack, vllm, rhoai, openshift, kserve, knative, openvino, triton, mlserver, nvidia-api]
+  data_layer: [postgresql, pgvector, minio, chromadb]
 source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
@@ -38,6 +38,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/portfolio-manager-agent"
     notes: "Custom OpenAI function-calling loop with HTTP tool discovery protocol, two-phase architecture (deterministic pipeline then agentic chat with tool filtering), context injection via system prompt, and NeMo Guardrails input/output checks"
     approach: "G"
+  - quickstart: "rh-research"
+    repo: "https://github.com/rh-ai-quickstart/rh-research"
+    notes: "NAT+DeepAgents multi-tier agent research with LangGraph orchestrator, intent classification and depth routing (shallow/deep), YAML-driven data source registry with tool auto-inheritance, role-based LLM provider, concurrent researcher workers, citation verification, and async job offloading via Dask"
+    approach: "H"
 ---
 
 # Agent Orchestration
@@ -1386,21 +1390,221 @@ The system uses two distinct prompt patterns:
 
 ---
 
+## Approach H: NAT+DeepAgents Multi-Tier Research with LangGraph Orchestration (from rh-research)
+
+### When to Use
+
+When building a multi-agent research system that requires intent-driven depth routing (shallow vs deep research), YAML-driven workflow configuration, multiple specialized LLMs per role, concurrent researcher workers with structured output contracts, citation verification against a source registry, and optional async job offloading for long-running deep research.
+
+### Differences from Other Approaches
+
+Approach H introduces three distinct layers of agent orchestration not present in A-G: (1) the NVIDIA NeMo Agent Toolkit (NAT) framework manages the entire lifecycle via `@register_function` decorators and YAML config files, replacing custom FastAPI routing code; (2) a LangGraph `StateGraph` (ChatResearcherAgent) serves as the master orchestrator that routes between intent classification, shallow research, clarification, and deep research via conditional edges; (3) the LangChain DeepAgents library (`create_deep_agent`) manages the deep researcher's subagents (source-router, planner, writer) with filesystem middleware, summarization middleware, and skills support. Unlike Approach A's runtime runner dispatch or Approach D's YAML state machine, Approach H uses a config-driven data source registry that auto-inherits tools into agents and a role-based `LLMProvider` that maps different LLM configurations (orchestrator, router, researcher, planner, writer) to different model endpoints for cost optimization.
+
+### Data Flow
+
+1. User submits query via Next.js frontend or CLI
+2. NAT framework deserializes the request and invokes the `chat_deepresearcher_agent` workflow function
+3. `ChatResearcherAgent` (LangGraph StateGraph) enters `intent_classifier` node
+4. `IntentClassifier` calls LLM with Jinja2-rendered system prompt, returns structured JSON `{intent, research_depth}`
+5. `route_after_orchestration` conditional edge routes: meta queries end immediately with a response; shallow queries go to `shallow_research`; deep queries go to `clarifier` then `deep_research`
+6. For shallow research: `ShallowResearcherAgent` runs a LangGraph tool-calling loop with max iterations, captures sources from tool results into a `SourceRegistry`, verifies citations against the registry, and sanitizes the final report
+7. For deep research: `DeepResearcherAgent` builds a `create_deep_agent` graph with subagents (source-router-agent, planner-agent, writer-agent), dispatches concurrent researcher workers via `run_research_batch`, collects structured `ResearchNotes`, and has the writer-agent synthesize a cited Markdown report
+8. Post-processing verifies all citations against the `SourceRegistryMiddleware`, removes unverifiable citations, sanitizes URLs, and returns the final report
+9. Optionally, deep research is submitted as an async Dask job via `submit_agent_job`, streaming SSE events to the frontend
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| Next.js frontend | NAT FastAPI server | WebSocket + REST/SSE | Chat messages in, streaming events out; REST for async job polling and knowledge API |
+| NAT framework | ChatResearcherAgent | Python method call | Deserializes YAML config, resolves functions, invokes orchestrator |
+| ChatResearcherAgent | IntentClassifier | Python method call | Intent classification + depth routing via LLM |
+| ChatResearcherAgent | ShallowResearcherAgent | Python method call via NAT FunctionInfo | Shallow research with tool-calling LangGraph |
+| ChatResearcherAgent | ClarifierAgent | Python method call via NAT FunctionInfo | Interactive clarification dialog before deep research |
+| ChatResearcherAgent | DeepResearcherAgent | Python method call via NAT FunctionInfo | Deep multi-phase research via DeepAgents |
+| DeepResearcherAgent | source-router-agent | DeepAgents subagent | Advisory domain routing before planning |
+| DeepResearcherAgent | planner-agent | DeepAgents subagent | Evidence-grounded research planning with structured ResearchPlan output |
+| DeepResearcherAgent | researcher workers | run_research_batch tool (concurrent) | Parallel query execution with structured ResearchNotes output |
+| DeepResearcherAgent | writer-agent | DeepAgents subagent | Final Markdown report synthesis from research notes |
+| All agents | NVIDIA NIM API | REST (OpenAI-compatible) | LLM inference via ChatNVIDIA / NIM endpoints |
+| ShallowResearcherAgent | Tavily/Exa/knowledge_search | LangChain tool calls | Data source queries |
+| aiq_api async jobs | Dask scheduler | Distributed task submission | Offload deep research to background workers |
+
+### Key Integration Points
+
+#### NAT Register Function Pattern
+
+All agents and tools are registered as NAT functions with YAML-driven config. The `@register_function` decorator binds a Pydantic config class to an async generator that yields a `FunctionInfo`. The YAML config controls which LLMs, tools, and settings each function uses.
+
+```python
+# src/aiq_agent/agents/deep_researcher/register.py (lines 51-58, 98-99)
+class DeepResearchAgentConfig(FunctionBaseConfig, name="deep_research_agent"):
+    orchestrator_llm: LLMRef = Field(..., description="LLM for orchestrator")
+    source_router_llm: LLMRef | None = Field(default=None)
+    researcher_llm: LLMRef | None = Field(default=None)
+    planner_llm: LLMRef | None = Field(default=None)
+    writer_llm: LLMRef | None = Field(default=None)
+
+@register_function(config_type=DeepResearchAgentConfig, framework_wrappers=[LLMFrameworkEnum.LANGCHAIN])
+async def deep_research_agent(config: DeepResearchAgentConfig, builder: Builder):
+```
+
+#### Data Source Registry with Tool Auto-Inheritance
+
+A central `data_source_registry` function in the YAML config declares all data sources and their tools. Agents with an empty `tools` list auto-inherit all tools from the registry; `exclude_tools` allows per-agent specialization. The registry also provides UI toggles and per-message source filtering.
+
+```yaml
+# configs/config_web_default_llamaindex.yml (lines 118-138)
+functions:
+  data_sources:
+    _type: data_source_registry
+    sources:
+      - id: web_search
+        name: "Web Search"
+        tools:
+          - web_search_tool
+          - advanced_web_search_tool
+      - id: knowledge_layer
+        name: "Knowledge Base"
+        tools:
+          - knowledge_search
+
+  shallow_research_agent:
+    _type: shallow_research_agent
+    llm: nemotron_super_llm
+    exclude_tools:
+      - advanced_web_search_tool  # shallow uses basic search only
+```
+
+#### LangGraph Orchestrator with Conditional Depth Routing
+
+The `ChatResearcherAgent` builds a LangGraph `StateGraph` with four nodes (intent_classifier, shallow_research, clarifier, deep_research) connected by conditional edges. The `route_after_orchestration` function examines the LLM's structured intent and depth decision to route to the appropriate path.
+
+```python
+# src/aiq_agent/agents/chat_researcher/agent.py (lines 326-399)
+def route_after_orchestration(state: ChatResearcherState) -> str:
+    if state.user_intent and state.user_intent.intent == "meta":
+        return "END"
+    if state.depth_decision and state.depth_decision.decision == "deep":
+        return "clarifier"
+    return "shallow_research"
+
+graph = StateGraph(ChatResearcherState)
+graph.add_node("intent_classifier", intent_classifier_node)
+graph.add_node("shallow_research", shallow_research_node)
+graph.add_node("clarifier", clarifier_node)
+graph.add_node("deep_research", deep_research_node)
+graph.set_entry_point("intent_classifier")
+graph.add_conditional_edges("intent_classifier", route_after_orchestration,
+    {"END": END, "clarifier": "clarifier", "shallow_research": "shallow_research"})
+graph.add_conditional_edges("shallow_research", should_escalate,
+    {"deep_research": "clarifier", END: END})
+```
+
+#### DeepAgents Subagent Graph with Structured Contracts
+
+The deep researcher uses `create_deep_agent` from the DeepAgents library to build an orchestrator with managed subagents. Each subagent has a specific role (source routing, planning, research, writing), its own LLM via `LLMProvider`, and middleware stacks. Researcher workers execute concurrently via `run_research_batch` and return Pydantic-validated `ResearchNotes`.
+
+```python
+# src/aiq_agent/agents/deep_researcher/factory.py (lines 354-384)
+agent = create_deep_agent(
+    model=llm_provider.get(LLMRole.ORCHESTRATOR),
+    tools=[*tool_set.helper_tools, research_batch_tool],
+    system_prompt=render_prompt_template(prompts["orchestrator"], ...),
+    subagents=build_deep_research_subagents(
+        llm_provider=llm_provider, state=state, prompts=prompts,
+        tools=tools, runtime=runtime, tool_set=tool_set,
+        middleware_set=middleware_set, ...
+    ),
+    store=InMemoryStore(),
+    middleware=middleware_set.orchestrator,
+    backend=backend,
+)
+return agent.with_config({"recursion_limit": 2000})
+```
+
+#### Role-Based LLM Provider
+
+The `LLMProvider` class maps semantic roles (orchestrator, router, researcher, planner, writer, clarifier) to specific LLM instances, allowing different models for different tasks. Roles without explicit configuration fall back to a default LLM.
+
+```python
+# src/aiq_agent/common/llm_provider.py (lines 23-40, 44-66)
+class LLMRole(StrEnum):
+    ROUTER = "router"
+    PLANNER = "planner"
+    RESEARCHER = "researcher"
+    ORCHESTRATOR = "orchestrator"
+    REPORT_WRITER = "report_writer"
+    # ... 6 more roles
+
+class LLMProvider:
+    def configure(self, role: LLMRole, llm: BaseChatModel) -> None:
+        self._llms[role] = llm
+
+    def get(self, role: LLMRole) -> BaseChatModel:
+        if role in self._llms:
+            return self._llms[role]
+        if self._default is not None:
+            return self._default
+        raise ValueError(f"No LLM configured for role '{role}'")
+```
+
+#### Citation Verification and Source Registry Middleware
+
+Both shallow and deep researchers maintain a `SourceRegistry` that captures URLs and citation keys from tool results. After the agent completes, `verify_citations` cross-references every citation in the generated report against the registry, removing unverifiable ones. `sanitize_report` strips body URLs, shortened URLs, and unsafe URLs from the final output.
+
+```python
+# src/aiq_agent/agents/deep_researcher/agent.py (lines 226-267)
+if self.source_registry_middleware.has_sources():
+    registry = self.source_registry_middleware.active_registry()
+    verification = verify_citations(
+        final_message, registry,
+        reference_sources=self.source_registry_middleware.get_source_entries(mode="compact"),
+    )
+    final_message = verification.verified_report
+
+sanitization = sanitize_report(final_message)
+final_message = sanitization.sanitized_report
+```
+
+### Prompt / Chain Patterns
+
+The system uses Jinja2 templates loaded from per-agent `prompts/` directories via `load_prompt()` and rendered with `render_prompt_template()`. Each agent type has its own prompt file: `intent_classification.j2` for the orchestrator, `researcher.j2` for researcher workers, `planner.j2` for the planner subagent, `writer.j2` for the writer subagent, and `source_router.j2` for source routing. Templates receive runtime context including `current_datetime`, `user_info`, `tools` (tool name/description list), `available_documents`, `clarifier_result`, and `enable_source_router`.
+
+The deep researcher uses structured output contracts (Pydantic models) for inter-subagent communication: `ResearchPlan` (planner output), `ResearchNotes` (researcher output), `SourceRoutingPlan` (router output). The planner produces `ResearchQuery` items with `preferred_tools`, `fallback_tools`, and `target_components` that the `run_research_batch` tool dispatches to concurrent researcher workers.
+
+### Gotchas
+
+- The YAML config file path is discovered at startup via `NAT_CONFIG_FILE` env var or `sys.argv` parsing; if neither is set, API key validation is silently skipped (`src/aiq_agent/agents/chat_researcher/register.py`, lines 157-200)
+- Shallow research escalation to deep research routes through the clarifier node, not directly to deep_research. The conditional edge from `shallow_research` goes to `"clarifier"`, which then chains to `deep_research` (`agent.py`, line 393)
+- The `should_escalate` function uses keyword matching on the last 800 characters of the AI response (`"i don't have enough information"`, `"unable to find"`, `"need more research"`) as a fallback escalation heuristic when `shallow_result` is None (`agent.py`, lines 334-367)
+- When citation verification removes all citations from a deep research report, the system logs a warning but still returns the report without failing -- this can produce reports with no references (`agent.py`, lines 246-250)
+- The `SourceRegistryMiddleware` captures sources from tool results during deep research via middleware, while shallow research captures sources directly in `tool_node_with_source_capture` -- two different capture mechanisms for the same purpose (`shallow_researcher/agent.py`, lines 276-318 vs `deep_researcher/custom_middleware.py`)
+- Async deep research via Dask requires `NAT_DASK_SCHEDULER_ADDRESS` env var; without it, the system silently falls back to synchronous execution even when `use_async_deep_research: true` is set in config (`register.py`, lines 252-295)
+- The `recursion_limit: 2000` on the DeepAgents graph (`factory.py`, line 384) is much higher than typical LangGraph limits, reflecting the multi-loop nature of deep research; it can lead to long-running requests if the agent fails to converge
+
+### Related Architectures
+
+- [rag-pipeline](rag-pipeline.md) -- The knowledge layer provides RAG via ChromaDB/LlamaIndex as a tool within the agent system
+- [evaluation-pipeline](evaluation-pipeline.md) -- NAT eval harness benchmarks for deep research quality assessment
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Multi-Runner Dispatch) | Approach B (Hierarchical LangGraph DAG) | Approach C (Dual-Provider Factory) | Approach D (YAML State Machine) | Approach E (Multi-Persona RBAC Agents) | Approach F (Vision-Context-Aware Router) | Approach G (HTTP Tool Discovery + Two-Phase) |
-|----------|-----------------------------------|----------------------------------------|-----------------------------------|---------------------------------|----------------------------------------|------------------------------------------|----------------------------------------------|
-| Use case | Interactive chat with configurable AI agents | Automated event-driven data processing pipeline | Interactive copilot with deployment-mode flexibility | Multi-agent IT service automation with structured conversational workflows | Multi-persona regulated-industry application with per-tool RBAC | Real-time multimodal analytics combining CV detections with conversational database queries | Deterministic domain pipeline followed by interactive agentic chat with tool filtering |
-| User interaction | Real-time chat with SSE streaming | No user interaction during processing; results viewed after | Real-time chat with SSE streaming | Real-time chat via web, CLI, Slack, or ticketing system | Real-time chat via WebSocket with buffered response | Synchronous REST chat + MJPEG video feed; separate alert rule creation endpoint | Synchronous REST; pipeline results displayed then user enters agentic chat |
-| Agent framework | Pluggable (LlamaStack, LangGraph, CrewAI) | LangGraph only, with LangChain tool-calling agent | MCP-Direct (custom loop) or Llama Stack (delegated) | LangGraph (execution engine) + LlamaStack Responses API (inference + tools) | LangGraph only via shared build_agent_graph factory | LangGraph only, two independent graphs (chat + alert) | None -- custom Orchestrator class with direct OpenAI SDK |
-| Graph definition | Configurable via database (runner_type, graph_config) | Fixed Python code, compiled at module load | Not applicable (simple tool-calling loop, no graph) | YAML configuration files with typed states and declarative transitions | Shared graph structure per-agent, tools and RBAC from YAML config | Fixed Python code, two graphs compiled at startup with hardcoded node topology | Not applicable (while loop with max 20 iterations) |
-| Framework selection | Runtime (per-agent, stored in database) | Hardcoded | Deployment-time (environment variable) | Startup (per-agent YAML config files, overridable via env vars) | Startup (per-agent YAML config, mtime-based hot-reload) | Hardcoded (chat graph selected by /api/chat, alert graph by /api/alerts) | Not applicable (single custom orchestrator) |
-| Context retrieval | RAG via file_search tool (transparent to prompt) | RAG as explicit graph node + Loki log retrieval subgraph | Not applicable (tools query database directly) | RAG via file_search tool (transparent to prompt, knowledge bases in YAML) | RAG via pgvector compliance KB search tool (direct SQL, no LlamaStack) | Live CV detection context injected as state field; historical data via SQL through MCP | Deterministic pipeline produces domain context; injected as JSON into system prompt |
-| Processing model | One request at a time per chat session | Batch processing with log clustering for deduplication | One request at a time per chat session | One request at a time per session, with session lock preventing concurrent processing | One request at a time per WebSocket, with asyncio.wait disconnect cancellation | One request at a time per Flask worker thread; asyncio.run() per request | Two phases: batch pipeline then one-at-a-time agentic chat per session |
-| LLM routing | Not used (dispatch is by runner_type config) | LLM structured output drives conditional graph edges | Not applicable (single sequential loop) | LLM intent classification drives `routing_decision` field, session manager dispatches to specialist | Not used (single agent per persona, WebSocket path selects agent) | LLM structured output (RouteDecision) classifies "context" vs "sql" path within the chat graph | Not used (single orchestrator, tool filtering is programmatic) |
-| Tool security | Framework-managed tool registration | No explicit validation | Hard-coded allowlist + Pydantic schema validation (MCP-Direct only) | LlamaStack-managed MCP tool execution with per-request AUTHORITATIVE_USER_ID header | YAML-configured per-tool allowed_roles checked by tool_auth graph node | SQL-level scoping wrapper using contextvars to enforce app_config_id filtering | Programmatic tool subset filtering (`PHASE2_TOOLS`) and duplicate name detection |
-| Model format support | Standard OpenAI tool calling | Standard OpenAI tool calling | Auto-detects Nemotron TOOLCALL tags vs OpenAI format | Standard OpenAI tool calling via LlamaStack Responses API | Standard OpenAI tool calling via ChatOpenAI | Standard OpenAI tool calling via ChatOpenAI with structured output for routing/planning | Standard OpenAI tool calling via direct OpenAI SDK |
-| Policy management | Per-agent shields via LlamaStack safety API | Not applicable | Runtime policy injection into system prompt | NeMo Guardrails service with custom Colang flows and jailbreak detection NIM | NeMo Guardrails as LangGraph graph nodes (input_shield, output_shield) | Not applicable (no guardrails; SQL scoping is the only security layer) | Application-level NeMo Guardrails client with fail-open degradation |
-| Multi-agent support | Not built in (single agent per session) | Not applicable | Not applicable | Built-in routing agent + specialist agent dispatch with session state handoff | Five independent agents, each on its own WebSocket path; A2A protocol for cross-agent invocation | Two independent graphs (chat + alert) instantiated at startup, no inter-graph communication | Three independent HTTP tool agents behind single orchestrator |
-| Communication model | Direct REST/SSE | Direct Python method calls | Direct REST/SSE | CloudEvent-driven microservices via Knative broker | Direct WebSocket with optional A2A (JSON-RPC) | Direct REST (synchronous Flask); MJPEG streaming for video feed | Direct REST with HTTP tool discovery protocol (GET /tools, POST /tools/<name>) |
-| Complexity | Higher (multi-framework, SSE normalization) | Moderate (single framework, hierarchical subgraphs) | Moderate (two providers, shared interface) | Higher (multi-service, CloudEvents, YAML state machines, multi-agent routing) | Moderate (single framework, shared graph factory, YAML-driven config) | Lower (single framework, fixed graph topology, synchronous Flask, no streaming for chat) | Lower (no framework, simple while loop, HTTP-based tool protocol) |
+| Criteria | Approach A (Multi-Runner Dispatch) | Approach B (Hierarchical LangGraph DAG) | Approach C (Dual-Provider Factory) | Approach D (YAML State Machine) | Approach E (Multi-Persona RBAC Agents) | Approach F (Vision-Context-Aware Router) | Approach G (HTTP Tool Discovery + Two-Phase) | Approach H (NAT+DeepAgents Multi-Tier Research) |
+|----------|-----------------------------------|----------------------------------------|-----------------------------------|---------------------------------|----------------------------------------|------------------------------------------|----------------------------------------------|------------------------------------------------|
+| Use case | Interactive chat with configurable AI agents | Automated event-driven data processing pipeline | Interactive copilot with deployment-mode flexibility | Multi-agent IT service automation with structured conversational workflows | Multi-persona regulated-industry application with per-tool RBAC | Real-time multimodal analytics combining CV detections with conversational database queries | Deterministic domain pipeline followed by interactive agentic chat with tool filtering | Multi-tier research agent with intent-driven depth routing, concurrent researcher workers, and structured citation verification |
+| User interaction | Real-time chat with SSE streaming | No user interaction during processing; results viewed after | Real-time chat with SSE streaming | Real-time chat via web, CLI, Slack, or ticketing system | Real-time chat via WebSocket with buffered response | Synchronous REST chat + MJPEG video feed; separate alert rule creation endpoint | Synchronous REST; pipeline results displayed then user enters agentic chat | Real-time chat via WebSocket/SSE with optional HITL clarification dialog and plan approval; async deep research returns job ID |
+| Agent framework | Pluggable (LlamaStack, LangGraph, CrewAI) | LangGraph only, with LangChain tool-calling agent | MCP-Direct (custom loop) or Llama Stack (delegated) | LangGraph (execution engine) + LlamaStack Responses API (inference + tools) | LangGraph only via shared build_agent_graph factory | LangGraph only, two independent graphs (chat + alert) | None -- custom Orchestrator class with direct OpenAI SDK | NAT (NeMo Agent Toolkit) + LangGraph (orchestrator) + DeepAgents (deep researcher subagents) |
+| Graph definition | Configurable via database (runner_type, graph_config) | Fixed Python code, compiled at module load | Not applicable (simple tool-calling loop, no graph) | YAML configuration files with typed states and declarative transitions | Shared graph structure per-agent, tools and RBAC from YAML config | Fixed Python code, two graphs compiled at startup with hardcoded node topology | Not applicable (while loop with max 20 iterations) | YAML workflow config drives NAT function resolution; LangGraph StateGraph for orchestrator; DeepAgents `create_deep_agent` for deep researcher |
+| Framework selection | Runtime (per-agent, stored in database) | Hardcoded | Deployment-time (environment variable) | Startup (per-agent YAML config files, overridable via env vars) | Startup (per-agent YAML config, mtime-based hot-reload) | Hardcoded (chat graph selected by /api/chat, alert graph by /api/alerts) | Not applicable (single custom orchestrator) | Startup (YAML config file, all functions resolved via NAT builder) |
+| Context retrieval | RAG via file_search tool (transparent to prompt) | RAG as explicit graph node + Loki log retrieval subgraph | Not applicable (tools query database directly) | RAG via file_search tool (transparent to prompt, knowledge bases in YAML) | RAG via pgvector compliance KB search tool (direct SQL, no LlamaStack) | Live CV detection context injected as state field; historical data via SQL through MCP | Deterministic pipeline produces domain context; injected as JSON into system prompt | RAG via knowledge_search tool (LlamaIndex+ChromaDB or Foundational RAG) auto-inherited from data_source_registry; document summaries from SQLite |
+| Processing model | One request at a time per chat session | Batch processing with log clustering for deduplication | One request at a time per chat session | One request at a time per session, with session lock preventing concurrent processing | One request at a time per WebSocket, with asyncio.wait disconnect cancellation | One request at a time per Flask worker thread; asyncio.run() per request | Two phases: batch pipeline then one-at-a-time agentic chat per session | Shallow: single-turn tool-calling loop; Deep: concurrent researcher workers (up to 6) via asyncio.gather with semaphore, optionally offloaded to Dask |
+| LLM routing | Not used (dispatch is by runner_type config) | LLM structured output drives conditional graph edges | Not applicable (single sequential loop) | LLM intent classification drives `routing_decision` field, session manager dispatches to specialist | Not used (single agent per persona, WebSocket path selects agent) | LLM structured output (RouteDecision) classifies "context" vs "sql" path within the chat graph | Not used (single orchestrator, tool filtering is programmatic) | LLM intent classification (meta/research) + depth routing (shallow/deep) + source-router-agent domain routing; LLMProvider maps 11 semantic roles to different models |
+| Tool security | Framework-managed tool registration | No explicit validation | Hard-coded allowlist + Pydantic schema validation (MCP-Direct only) | LlamaStack-managed MCP tool execution with per-request AUTHORITATIVE_USER_ID header | YAML-configured per-tool allowed_roles checked by tool_auth graph node | SQL-level scoping wrapper using contextvars to enforce app_config_id filtering | Programmatic tool subset filtering (`PHASE2_TOOLS`) and duplicate name detection | Data source registry with tool auto-inheritance + per-agent exclude_tools; ToolNameSanitizationMiddleware validates tool names; per-request data_sources filtering |
+| Model format support | Standard OpenAI tool calling | Standard OpenAI tool calling | Auto-detects Nemotron TOOLCALL tags vs OpenAI format | Standard OpenAI tool calling via LlamaStack Responses API | Standard OpenAI tool calling via ChatOpenAI | Standard OpenAI tool calling via ChatOpenAI with structured output for routing/planning | Standard OpenAI tool calling via direct OpenAI SDK | Standard OpenAI tool calling via NVIDIA NIM endpoints; structured output via Pydantic response_format (ResearchPlan, ResearchNotes) |
+| Policy management | Per-agent shields via LlamaStack safety API | Not applicable | Runtime policy injection into system prompt | NeMo Guardrails service with custom Colang flows and jailbreak detection NIM | NeMo Guardrails as LangGraph graph nodes (input_shield, output_shield) | Not applicable (no guardrails; SQL scoping is the only security layer) | Application-level NeMo Guardrails client with fail-open degradation | Citation verification + report sanitization as post-processing; SourceRegistryMiddleware tracks verifiable sources; no NeMo Guardrails |
+| Multi-agent support | Not built in (single agent per session) | Not applicable | Not applicable | Built-in routing agent + specialist agent dispatch with session state handoff | Five independent agents, each on its own WebSocket path; A2A protocol for cross-agent invocation | Two independent graphs (chat + alert) instantiated at startup, no inter-graph communication | Three independent HTTP tool agents behind single orchestrator | Built-in: orchestrator dispatches to shallow or deep research; deep research has 4 managed subagents (source-router, planner, researchers, writer) |
+| Communication model | Direct REST/SSE | Direct Python method calls | Direct REST/SSE | CloudEvent-driven microservices via Knative broker | Direct WebSocket with optional A2A (JSON-RPC) | Direct REST (synchronous Flask); MJPEG streaming for video feed | Direct REST with HTTP tool discovery protocol (GET /tools, POST /tools/<name>) | WebSocket + REST/SSE via NAT; inter-agent via Python method calls and DeepAgents backend; async jobs via Dask |
+| Complexity | Higher (multi-framework, SSE normalization) | Moderate (single framework, hierarchical subgraphs) | Moderate (two providers, shared interface) | Higher (multi-service, CloudEvents, YAML state machines, multi-agent routing) | Moderate (single framework, shared graph factory, YAML-driven config) | Lower (single framework, fixed graph topology, synchronous Flask, no streaming for chat) | Lower (no framework, simple while loop, HTTP-based tool protocol) | Higher (three-layer framework stack: NAT + LangGraph + DeepAgents; multi-role LLM provider; concurrent workers; citation verification pipeline) |
