@@ -1,12 +1,12 @@
 ---
 name: phoenix
 description: Arize Phoenix LLM observability and tracing server deployed as a Helm subchart on OpenShift
-summary: "Arize Phoenix provides LLM observability by collecting OpenTelemetry traces from LangChain pipelines via OTLP HTTP on port 6006, deployed as a local Helm subchart (bundled under charts/phoenix/, not a Chart.yaml dependency) on OpenShift with Route exposure (ingress disabled) and busybox/wget Helm test for connectivity verification. Use when LangChain-based backends need trace visualization and debugging — the backend instruments via phoenix.otel.register with LangChainInstrumentor (from arize-phoenix-otel and openinference-instrumentation-langchain), registered at module-import time before FastAPI routes load, with COLLECTOR_ENDPOINT pointing to http://<release>-phoenix:6006/v1/traces and an init container using oc rollout status to block until Phoenix is ready. Trace storage uses PostgreSQL via PHOENIX_SQL_DATABASE_URL sourced from the pgvector Kubernetes Secret (requires postgresql+asyncpg:// async driver), PHOENIX_WORKING_DIR=/tmp/phoenix, and the arizephoenix/phoenix container image configured through Helm values image.repository/image.tag. Common gotchas: Phoenix shares the same PostgreSQL instance and pgvector Secret as the application, default resources: {} risks unbounded memory on busy clusters, and gRPC collection (port 4317) is only available in Docker Compose — the Helm chart exposes only HTTP port 6006."
+summary: "Arize Phoenix provides LLM observability by collecting OpenTelemetry traces from LangChain/LangGraph pipelines via the arizephoenix/phoenix container, using phoenix.otel.register with arize-phoenix-otel and openinference-instrumentation-langchain client libraries registered at module-import time before FastAPI/Flask routes load. Approach A (OpenShift) deploys as a local Helm subchart (bundled under charts/phoenix/, not a Chart.yaml dependency) with OTLP HTTP port 6006, PostgreSQL storage via PHOENIX_SQL_DATABASE_URL from shared pgvector Secret (postgresql+asyncpg:// required), Route exposure (ingress disabled), busybox/wget Helm test, oc rollout status init container, and always-on tracing; Approach B (local dev) uses podman-compose with gRPC OTLP port 4317, file-based storage via named volume (PHOENIX_WORKING_DIR=/mnt/data), auto_instrument=True for zero-config Flask/LangGraph instrumentation, and opt-in tracing via PHOENIX_COLLECTOR_ENDPOINT with conditional import guard for zero overhead. Critical config: COLLECTOR_ENDPOINT=http://<release>-phoenix:6006/v1/traces with explicit LangChainInstrumentor and version-pinned deps (A) vs PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:4317 with unpinned auto-discovery (B); Helm values image.repository/image.tag configure the container image and autoscaling.enabled controls HPA. Common gotchas: Phoenix shares the same PostgreSQL instance and pgvector Secret as the application (A), default resources: {} risks unbounded memory, gRPC port 4317 is only available in compose (Helm exposes only HTTP 6006), test stubbing needed for module-level init_tracing() (B), and SHA256 digest pin in compose requires manual updates for upgrades."
 metadata:
   type: component
 tags:
-  tech_stack: [phoenix, arize, opentelemetry, python, langchain]
-  ai_pattern: [evaluation, agents]
+  tech_stack: [phoenix, arize, opentelemetry, python, langchain, langgraph, flask]
+  ai_pattern: [evaluation, agents, multimodal]
   platform: [openshift, kubernetes]
   data_layer: [postgresql]
 source_examples:
@@ -14,6 +14,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
     notes: "Phoenix deployed as Helm subchart for LangChain tracing with PostgreSQL backend storage"
     approach: "A"
+  - quickstart: "multimodal-compliance-monitor"
+    repo: "https://github.com/rh-ai-quickstart/multimodal-compliance-monitor"
+    notes: "Phoenix as podman-compose service with gRPC OTLP collection and auto-instrumentation for LangChain/LangGraph tracing"
+    approach: "B"
 ---
 
 # Phoenix
@@ -146,3 +150,113 @@ The backend init job uses an init container with `oc rollout status` to block un
 - `pgvector.md` -- Database backing Phoenix trace storage
 - `fastapi-backend.md` -- Backend that registers the Phoenix tracer
 - `observability-stack.md` -- General observability patterns in quickstarts
+
+---
+
+## Approach B: Podman-Compose with gRPC OTLP and Auto-Instrumentation (from multimodal-compliance-monitor)
+
+### When to Use
+
+When Phoenix is needed for local development only (no OpenShift/Helm deployment), the application uses Flask (not FastAPI), and you want zero-config auto-instrumentation of LangChain/LangGraph calls via gRPC OTLP.
+
+### Differences from Approach A
+
+- **Deployment:** Podman-compose service only -- no Helm subchart, no OpenShift Route
+- **OTLP protocol:** gRPC on port 4317 (Approach A uses HTTP on port 6006)
+- **Instrumentation:** `auto_instrument=True` with auto-discovery (Approach A explicitly instantiates `LangChainInstrumentor`)
+- **Storage:** File-based via named volume (`phoenix_data:/mnt/data`) with `PHOENIX_WORKING_DIR` (Approach A uses PostgreSQL via Secret)
+- **Backend framework:** Flask (Approach A uses FastAPI)
+- **Env var naming:** `PHOENIX_COLLECTOR_ENDPOINT` (Approach A uses `COLLECTOR_ENDPOINT`)
+
+### Podman-Compose Service Definition
+
+Phoenix runs as a pre-built container with no custom Dockerfile, exposing both the UI (6006) and gRPC collector (4317).
+
+```yaml
+# deploy/local/podman-compose.yaml
+phoenix:
+  image: docker.io/arizephoenix/phoenix@sha256:21d06ca...
+  container_name: phoenix
+  ports:
+    - "6006:6006"
+    - "4317:4317"
+  environment:
+    PHOENIX_WORKING_DIR: /mnt/data
+  volumes:
+    - phoenix_data:/mnt/data
+  pull_policy: missing
+```
+
+### Auto-Instrumentation Pattern
+
+The `init_tracing()` function is a zero-overhead wrapper: when `PHOENIX_COLLECTOR_ENDPOINT` is not set, it returns immediately with no imports. When set, `phoenix.otel.register` auto-discovers the installed `openinference-instrumentation-langchain` package and instruments all LangChain/LangGraph calls without explicit instrumentor setup.
+
+```python
+# app/backend/tracing.py
+def init_tracing() -> None:
+    endpoint = os.getenv("PHOENIX_COLLECTOR_ENDPOINT")
+    if not endpoint:
+        return
+    from phoenix.otel import register
+
+    register(
+        project_name="ppe-compliance-monitor",
+        auto_instrument=True,
+    )
+    log.info("Phoenix tracing enabled -> %s", endpoint)
+```
+
+### Flask Entrypoint Registration
+
+Called at module level (before Flask routes), mirroring the same early-registration pattern as Approach A but in a Flask context.
+
+```python
+# app/backend/app.py
+from tracing import init_tracing
+init_tracing()
+
+app = Flask(__name__)
+```
+
+### Client-Side Dependencies
+
+The backend declares two Phoenix-related packages. Note `arize-phoenix-otel` (no version pin) and `openinference-instrumentation-langchain` (no version pin), compared to Approach A which pins minimum versions.
+
+```toml
+# app/backend/pyproject.toml
+dependencies = [
+    "arize-phoenix-otel",
+    "openinference-instrumentation-langchain",
+    # ...
+]
+```
+
+## Configuration (Approach B)
+
+- **Environment variables:**
+  - `PHOENIX_COLLECTOR_ENDPOINT` -- Set on the *backend* service, pointing to `http://phoenix:4317` (gRPC); when absent, tracing is completely disabled
+  - `PHOENIX_WORKING_DIR` -- Working directory inside the Phoenix container (`/mnt/data`)
+- **Config files:** None
+- **Helm values:** Not applicable (local-only deployment)
+
+## Known Gotchas (Approach B)
+
+- **Conditional import for zero overhead:** The `phoenix.otel` import is deferred inside the `if not endpoint: return` guard, so the `arize-phoenix-otel` package is never loaded when tracing is disabled. This is important because the package pulls in heavy OpenTelemetry dependencies.
+- **Test stubbing required:** Unit tests must stub out `tracing.init_tracing` because it is called at module import time. The test suite does this with `tracing_mod.init_tracing = lambda: None` inserted into `sys.modules` (see `tests/unit/test_alert_endpoints.py`).
+- **No Helm chart for OpenShift:** Unlike Approach A, Phoenix has no Helm chart in this quickstart. If deploying to OpenShift, a chart would need to be created or the Approach A pattern adopted.
+- **Pinned image digest:** The compose file uses a SHA256 digest pin (`@sha256:21d06ca...`) rather than a tag, ensuring reproducible builds but requiring manual updates for Phoenix upgrades.
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (Helm subchart) | Approach B (Podman-compose) |
+|----------|---------------------------|----------------------------|
+| Deployment target | OpenShift / Kubernetes | Local dev (Podman/Docker) |
+| OTLP protocol | HTTP (port 6006) | gRPC (port 4317) |
+| Trace storage | PostgreSQL (via Secret) | File-based (named volume) |
+| Instrumentation style | Explicit `LangChainInstrumentor` | `auto_instrument=True` |
+| Backend framework | FastAPI | Flask |
+| OpenShift Route | Yes | N/A |
+| Helm test | busybox/wget connectivity check | N/A |
+| Opt-in/opt-out | Always enabled in Helm deploy | Disabled when env var absent |

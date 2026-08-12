@@ -1,12 +1,12 @@
 ---
 name: minio
-description: "S3-compatible object storage for attachments, models, RAG indexes, Langfuse, KServe, and document/MLflow storage"
-summary: "Provides S3-compatible object storage for chat attachments, RAG index and ML model persistence, Loki logging backend, Langfuse v3 observability, KServe guardrail detector model serving, and document/MLflow artifact storage across six approaches (A-F) with different deployment kinds, Python SDK choices, and optionality patterns. Choose A (boto3, compose profiles, DISABLE_ATTACHMENTS feature flag, configure-pipeline subchart) for optional single-consumer attachment uploads with lazy _get_s3() and session-scoped keys; B (minio Python SDK, standalone StatefulSet subchart, 50Gi PVC) for multi-consumer RAG/ML/Loki with LATEST.json index tracking, joblib serialization, and centralized client factory; C (in-repo Helm Deployment, 100Gi PVC, post-install mc CLI bucket Job) for infrastructure-only with Makefile DEPLOY_MINIO gating, credential validation, and ODH dashboard labels; D (embedded StatefulSet 10Gi PVC, init container mc provisioning, MC_CONFIG_DIR=/tmp/.mc) for Langfuse-dedicated S3 gated by langfuse.enabled with full OpenShift restricted SCC and per-feature LANGFUSE_S3_*_FORCE_PATH_STYLE env vars; E (TrustyAI image, HuggingFace CLI init container, RHOAI data connection Secret with opendatahub.io/connection-type: s3) for KServe InferenceService detector models with helm.sh/weight ordering; F (async boto3 singleton via run_in_executor, embedded Deployment with minio.enabled toggle and external S3 override, 10Gi PVC with persistence toggle) for dual-consumer document uploads with presigned URLs and path traversal protection plus MLflow artifact storage with testcontainers integration tests. Env var naming differs per approach -- ATTACHMENTS_BUCKET_* (A), MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY with secure=False (B), minio.userId/password Helm values (C), LANGFUSE_S3_*_FORCE_PATH_STYLE: \"true\" required for path-style addressing (D), AWS_* keys in data connection Secret (E), S3_*/AWS_*/MLFLOW_S3_ENDPOINT_URL from centralized Secret with secretKeyRef (F) -- and Python SDK splits between boto3 lazy initialization for test compatibility (A), minio SDK centralized client factory with config priority params > env > defaults (B), and boto3 async singleton with _ensure_bucket() at app lifespan startup (F). Common gotchas: inverted DISABLE_ATTACHMENTS logic bridged by start script (A); Loki deploys its own separate MinIO instance requiring anyuid SCC via minio-sa ServiceAccount (B); post-install bucket Job lacks wait-for-ready with backoffLimit: 3 and mc:latest unpinned (C); MC_CONFIG_DIR=/tmp/.mc required because default ~/.mc is not writable under restricted SCC, and anonymous download policy exposes all three buckets namespace-wide (D); credentials hardcoded as plain-text THEACCESSKEY/THESECRETKEY and TrustyAI image has different update cadence than standard quay.io/minio/minio (E); Helm entrypoint only pre-creates documents bucket while compose creates both documents and mlflow, and _ensure_bucket() raises ClientError if MinIO not yet healthy at API startup (F)."
+description: "S3-compatible object storage for attachments, models, RAG indexes, Langfuse, KServe, document/MLflow, and video/config storage"
+summary: "Provides S3-compatible object storage for chat attachments, RAG index and ML model persistence, Loki logging backend, Langfuse v3 observability, KServe guardrail detector model serving, document/MLflow artifact storage, and multimodal video/model/config storage across seven approaches (A-G) with different deployment kinds, Python SDK choices, and optionality patterns. Choose A (boto3, compose profiles, DISABLE_ATTACHMENTS feature flag, configure-pipeline subchart) for optional single-consumer attachment uploads with lazy _get_s3() and session-scoped keys; B (minio Python SDK, standalone StatefulSet subchart, 50Gi PVC) for multi-consumer RAG/ML/Loki with LATEST.json index tracking, joblib serialization, and centralized client factory; C (in-repo Helm Deployment, 100Gi PVC, post-install mc CLI bucket Job) for infrastructure-only with Makefile DEPLOY_MINIO gating, credential validation, and ODH dashboard labels; D (embedded StatefulSet 10Gi PVC, init container mc provisioning, MC_CONFIG_DIR=/tmp/.mc) for Langfuse-dedicated S3 gated by langfuse.enabled with full OpenShift restricted SCC and per-feature LANGFUSE_S3_*_FORCE_PATH_STYLE env vars; E (TrustyAI image, HuggingFace CLI init container, RHOAI data connection Secret with opendatahub.io/connection-type: s3) for KServe InferenceService detector models with helm.sh/weight ordering; F (async boto3 singleton via run_in_executor, embedded Deployment with minio.enabled toggle and external S3 override, 10Gi PVC with persistence toggle) for dual-consumer document uploads with presigned URLs and path traversal protection plus MLflow artifact storage with testcontainers integration tests; G (minio SDK v7.2.20 with retry-with-backoff, ai-architecture-charts subchart v0.5.4, volumeClaimTemplates:[] for ephemeral storage) for multi-bucket video/model/config with s3:// URI scheme, config bucket for horizontal scaling, server-side copy for demo seeding, and mc CLI init container video download. Env var naming differs per approach -- ATTACHMENTS_BUCKET_* (A), MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY with secure=False (B), minio.userId/password Helm values (C), LANGFUSE_S3_*_FORCE_PATH_STYLE: \"true\" required for path-style addressing (D), AWS_* keys in data connection Secret (E), S3_*/AWS_*/MLFLOW_S3_ENDPOINT_URL from centralized Secret with secretKeyRef (F), MINIO_ENDPOINT with http:// scheme auto-stripped by get_minio_client() plus CONFIG_BUCKET/MINIO_VIDEO_BUCKET for bucket-specific env vars (G) -- and Python SDK splits between boto3 lazy initialization for test compatibility (A), minio SDK centralized client factory with config priority params > env > defaults (B), boto3 async singleton with _ensure_bucket() at app lifespan startup (F), and minio SDK with URL parsing and retry-with-backoff download (G). Common gotchas: inverted DISABLE_ATTACHMENTS logic bridged by start script (A); Loki deploys its own separate MinIO instance requiring anyuid SCC via minio-sa ServiceAccount (B); post-install bucket Job lacks wait-for-ready with backoffLimit: 3 and mc:latest unpinned (C); MC_CONFIG_DIR=/tmp/.mc required because default ~/.mc is not writable under restricted SCC, and anonymous download policy exposes all three buckets namespace-wide (D); credentials hardcoded as plain-text THEACCESSKEY/THESECRETKEY and TrustyAI image has different update cadence than standard quay.io/minio/minio (E); Helm entrypoint only pre-creates documents bucket while compose creates both documents and mlflow, and _ensure_bucket() raises ClientError if MinIO not yet healthy at API startup (F); volumeClaimTemplates:[] means all data lost on pod restart including user-uploaded configs, _ping_minio() succeeds before bucketCreation Job completes, and inconsistent retry defaults across download_file() (5 retries/3s) vs _ensure_object_with_retry() (12 retries/2s) (G)."
 metadata:
   type: component
 tags:
-  tech_stack: [minio, python, boto3, fastapi, joblib, faiss, helm, langfuse, kserve, huggingface, mlflow, langgraph]
-  ai_pattern: [rag, embeddings, vector-search, data-pipeline, evaluation, guardrails, model-serving, agents]
+  tech_stack: [minio, python, boto3, fastapi, flask, joblib, faiss, helm, langfuse, kserve, huggingface, mlflow, langgraph, opencv, mediamtx]
+  ai_pattern: [rag, embeddings, vector-search, data-pipeline, evaluation, guardrails, model-serving, agents, multimodal]
   platform: [openshift, rhoai, opendatahub, kserve]
   data_layer: [minio]
 source_examples:
@@ -34,6 +34,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
     notes: "Multi-consumer MinIO Deployment for document uploads and MLflow artifact storage, boto3 async singleton with thread-pool executor, embedded Helm chart with minio.enabled toggle and external S3 override pattern"
     approach: "F"
+  - quickstart: "multimodal-compliance-monitor"
+    repo: "https://github.com/rh-ai-quickstart/multimodal-compliance-monitor"
+    notes: "Ephemeral MinIO StatefulSet for multi-bucket video/model/config storage with s3:// URI scheme, mc CLI init container video download, config bucket for horizontal scaling, retry-with-backoff Python client"
+    approach: "G"
 ---
 
 # MinIO
@@ -1304,20 +1308,293 @@ def minio_container():
 
 ---
 
+## Approach G: Ephemeral Multi-Bucket Video/Model/Config Storage with s3:// URI Scheme (from multimodal-compliance-monitor)
+
+### When to Use
+
+When MinIO serves as shared ephemeral storage for a multimodal video processing pipeline -- storing ML models, video files, and user-uploaded configs across purpose-specific buckets. This approach uses the `minio` Python SDK with retry-with-backoff logic, deploys via the ai-architecture-charts `minio` subchart (v0.5.4) as a StatefulSet but overrides the VolumeClaimTemplate to empty (no PVC left after `helm uninstall`), and uses `s3://bucket/key` URIs as universal object references parsed by both Python code and shell scripts. A separate "config" bucket enables horizontal scaling by moving user uploads and thumbnails out of the local filesystem.
+
+### Differences from Approaches A through F
+
+- **Storage lifecycle:** Ephemeral -- `volumeClaimTemplates: []` overrides the subchart default 50Gi PVC, so no PVC is created or left behind after `helm uninstall` (unlike B which uses VolumeClaimTemplate and C/E which use separate PVCs)
+- **Multi-bucket strategy:** Three purpose-specific buckets (`models`, `data`, `config`) auto-created by the subchart's `bucketCreation` feature (not Python SDK like A/B, not post-install Job like C, not init container like D)
+- **Video pipeline consumer:** mc CLI init container downloads video from MinIO for FFmpeg/RTSP streaming via MediaMTX (unique to this approach)
+- **s3:// URI scheme:** Universal `s3://bucket/key` object references parsed by both Python (`_resolve_video_source_to_path()`) and Helm templates (`mc cp` commands) -- not used in other approaches
+- **Config bucket for horizontal scaling:** User uploads and thumbnails stored in MinIO (`config` bucket) instead of local filesystem, documented in values.yaml as enabling horizontal scaling
+- **Server-side copy:** Uses `copy_object()` (S3 server-side copy) for seeding demo configs between buckets -- not used in other approaches
+- **Retry logic:** Built-in retry-with-backoff in `download_file()` and `_ping_minio()` utility for startup readiness
+- **URL parsing:** `get_minio_client()` strips scheme from full URLs (handles both `host:port` and `http://host:port`)
+- **Python SDK:** Uses `minio>=7.2.20` (like B's minio SDK, not boto3 like A/F)
+- **Helm subchart:** ai-architecture-charts `minio` subchart v0.5.4 (B uses v0.1.0 of the same chart)
+- **Env var naming:** `MINIO_ENDPOINT` (full URL with `http://` prefix), `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_SECURE`, `CONFIG_BUCKET`, `MINIO_VIDEO_BUCKET` -- includes bucket-specific env vars not in other approaches
+- **Secret pattern:** Plain values in Helm `values.yaml` (`minio.secret.*`) injected directly into env vars (not secretKeyRef like B/F)
+- **Always-on:** Required dependency with no feature flag gating
+
+### Tech Stack & Dependencies
+- **Runtime:** MinIO server (S3-compatible API)
+- **Container image:** `quay.io/minio/minio:latest` (from subchart)
+- **Key dependencies:** `minio>=7.2.20` Python SDK, `minio/mc:latest` CLI for init containers, opencv-python for thumbnail generation, Flask backend
+- **Helm subchart:** `minio` (v0.5.4) from `https://rh-ai-quickstart.github.io/ai-architecture-charts`
+
+### Key Patterns
+
+#### Ephemeral StatefulSet with PVC Override
+
+The parent chart overrides the subchart's VolumeClaimTemplate to empty, preventing persistent storage. This means MinIO data does not survive pod restarts but also avoids PVCs being left behind after `helm uninstall`.
+
+```yaml
+# deploy/helm/ppe-compliance-monitor/values.yaml (lines 71-73)
+minio:
+  # Disable persistent storage so the PVC is not left behind after helm uninstall
+  volumeClaimTemplates: []
+  volumeMounts: []
+```
+
+#### Multi-Bucket Auto-Creation via Subchart Feature
+
+Three purpose-specific buckets are auto-created by the subchart's `bucketCreation` feature, each serving a distinct role in the video processing pipeline.
+
+```yaml
+# deploy/helm/ppe-compliance-monitor/values.yaml (lines 63-69)
+minio:
+  bucketCreation:
+    enabled: true
+    buckets:
+      - models
+      - data
+      - config # User uploads and thumbnails (enables horizontal scaling)
+```
+
+#### Centralized MinIO Client with URL Parsing and Retry
+
+The `minio_client.py` module provides a centralized client factory that handles both bare `host:port` and full `http://host:port` URL formats by stripping the scheme. The `download_file()` function includes configurable retry-with-backoff logic.
+
+```python
+# app/backend/minio_client.py (lines 23-41)
+def get_minio_client():
+    endpoint = os.getenv("MINIO_ENDPOINT", "minio:9000")
+    access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+    secret_key = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+    secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
+    # Minio() expects bare host:port; strip scheme if a full URL was provided
+    parsed = urlparse(endpoint)
+    if parsed.scheme in ("http", "https"):
+        endpoint = parsed.netloc or parsed.path
+        if parsed.scheme == "https":
+            secure = True
+    return Minio(endpoint, access_key=access_key,
+                 secret_key=secret_key, secure=secure)
+```
+
+```python
+# app/backend/minio_client.py (lines 44-88)
+def download_file(bucket, object_name, local_path,
+                  max_retries=5, retry_delay=3):
+    client = get_minio_client()
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    for attempt in range(max_retries):
+        try:
+            client.fget_object(bucket, object_name, local_path)
+            return local_path
+        except S3Error as e:
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+            else:
+                raise
+```
+
+#### s3:// URI Scheme as Universal Object Reference
+
+Video sources, thumbnails, and demo config seeds all use `s3://bucket/key` URIs as universal references. The backend parses these to determine whether to download from MinIO or use a local/RTSP path.
+
+```python
+# app/backend/video_processing/consumer.py (lines 18-43)
+def _resolve_video_source_to_path(video_source: str):
+    """S3 URIs (s3://bucket/key) are downloaded to a temp file."""
+    p = video_source.strip()
+    if p.startswith("s3://"):
+        parts = p[5:].split("/", 1)
+        if len(parts) == 2:
+            bucket, key = parts[0], parts[1]
+            fd, tmp_path = tempfile.mkstemp(suffix=".mp4")
+            os.close(fd)
+            download_file(bucket, key, tmp_path)
+            return tmp_path, tmp_path
+    return video_source, None
+```
+
+The seeding code builds these URIs when creating app configs:
+
+```python
+# app/backend/seed_demo_configs.py (lines 233-234)
+dest_key = f"uploads/{video_filename}"
+video_uri = f"s3://{cfg_bucket}/{dest_key}"
+```
+
+#### Config Bucket for Horizontal Scaling
+
+User-uploaded videos and generated thumbnails are stored in the MinIO `config` bucket instead of the local filesystem, enabling multiple backend replicas to share state. The upload endpoint returns an `s3://` URI.
+
+```python
+# app/backend/app.py (lines 581-603)
+@api.route("/config/upload", methods=["POST"])
+def config_upload():
+    """Upload a video file to MinIO. Returns S3 URI."""
+    safe_name = os.path.basename(f.filename)
+    bucket = get_config_bucket()
+    object_key = f"uploads/{safe_name}"
+    data = f.read()
+    upload_bytes(bucket, object_key, data, content_type="video/mp4")
+    path = f"s3://{bucket}/{object_key}"
+    return jsonify({"path": path, "filename": safe_name})
+```
+
+Thumbnails are generated from S3 videos and stored back in MinIO:
+
+```python
+# app/backend/thumbnail_utils.py (lines 35-42)
+def generate_thumbnail_for_video_source(video_path: str):
+    """Generate a JPEG thumbnail from S3 video, upload to MinIO.
+    Thumbnails are always stored in the config bucket under thumbnails/."""
+    thumb_bucket = get_config_bucket()
+    thumb_key = f"thumbnails/{stem}.jpg"
+```
+
+#### Server-Side Copy for Demo Seeding
+
+Demo configuration seeding uses MinIO server-side copy to move sample videos from the `data` bucket to the `config` bucket, avoiding unnecessary data transfer through the backend.
+
+```python
+# app/backend/seed_demo_configs.py (lines 162-192)
+def _ensure_object_with_retry(dest_bucket, dest_key,
+                               src_bucket, src_key,
+                               max_retries=12, delay_s=2.0):
+    if object_exists(dest_bucket, dest_key):
+        return
+    for attempt in range(max_retries):
+        if not object_exists(src_bucket, src_key):
+            time.sleep(delay_s)
+            continue
+        copy_object(dest_bucket, dest_key, src_bucket, src_key)
+        return
+```
+
+#### mc CLI Init Container for Video Download
+
+The video-stream deployment uses a `minio/mc` init container to download video files from MinIO before the FFmpeg sidecar starts streaming via MediaMTX. The init container uses `mc alias set` with wait-for-ready retry logic.
+
+```yaml
+# deploy/helm/ppe-compliance-monitor/templates/video-stream-deployment.yaml (lines 23-52)
+initContainers:
+  - name: download-video
+    image: "{{ .Values.videoStream.ffmpegImage.repository }}:{{ .Values.videoStream.ffmpegImage.tag }}"
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        export MC_CONFIG_DIR=/tmp/.mc
+        SRC="myminio/{{ .Values.storage.video.bucket }}/{{ .Values.storage.video.key }}"
+        until mc alias set myminio "${MINIO_ENDPOINT}" \
+            "{{ .Values.minio.secret.user }}" "{{ .Values.minio.secret.password }}"; do
+          sleep 2
+        done
+        mc cp "${SRC}" /data/video.mp4
+```
+
+#### MinIO Startup Ping with Retry
+
+The demo seeding process includes an explicit MinIO readiness check with retry before attempting any bucket operations.
+
+```python
+# app/backend/seed_demo_configs.py (lines 195-209)
+def _ping_minio(max_attempts=15, delay_s=2.0):
+    for attempt in range(max_attempts):
+        try:
+            client = get_minio_client()
+            client.list_buckets()
+            return
+        except Exception as e:
+            if attempt == max_attempts - 1:
+                raise RuntimeError(
+                    f"MinIO not reachable after {max_attempts} attempts: {e}"
+                ) from e
+            time.sleep(delay_s)
+```
+
+#### Runtime Deployer Consuming MinIO Credentials
+
+The KServe runtime deployer Job receives MinIO credentials to create a data connection Secret for model serving. It references the first bucket from `bucketCreation.buckets` for the model storage bucket.
+
+```yaml
+# deploy/helm/ppe-compliance-monitor/templates/runtime-deployer.yaml (lines 143-166)
+- name: S3_BUCKET
+  value: {{ index .Values.minio.bucketCreation.buckets 0 | quote }}
+- name: MINIO_ENDPOINT
+  value: "http://{{ .Values.minio.secret.host }}:{{ .Values.minio.secret.port }}"
+- name: MINIO_ACCESS_KEY
+  value: {{ .Values.minio.secret.user | quote }}
+- name: MINIO_SECRET_KEY
+  value: {{ .Values.minio.secret.password | quote }}
+```
+
+### Configuration
+- **Environment variables (backend):**
+  - `MINIO_ENDPOINT` -- MinIO endpoint URL with scheme (default: `http://minio:9000`)
+  - `MINIO_ACCESS_KEY` -- S3 access key (default: `minioadmin`)
+  - `MINIO_SECRET_KEY` -- S3 secret key (default: `minioadmin`)
+  - `MINIO_SECURE` -- TLS flag (default: `false`)
+  - `CONFIG_BUCKET` -- bucket for user uploads and thumbnails (default: `config`)
+  - `MINIO_VIDEO_BUCKET` -- bucket for video files (default: `data`)
+- **Environment variables (MinIO server):**
+  - `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` -- from subchart Secret
+- **Helm values:**
+  - `minio.secret.user` / `password` / `host` / `port` -- credentials and connection (default: `minioadmin`/`minioadmin`/`minio`/`9000`)
+  - `minio.bucketCreation.enabled` / `buckets` -- auto-create buckets on deployment (default: `[models, data, config]`)
+  - `minio.volumeClaimTemplates` -- override to `[]` to disable persistent storage
+  - `minio.volumeMounts` -- override to `[]` when PVC is disabled
+  - `storage.model.bucket` / `key` -- model file location (default: `models`/`ppe.pt`)
+  - `storage.video.bucket` / `key` -- video file location (default: `data`/`combined-video-no-gap-rooftop.mp4`)
+
+### Known Gotchas
+- The `volumeClaimTemplates: []` override disables persistent storage, meaning all MinIO data is lost on pod restart. The init-data Job re-uploads models and videos on each deployment, but user-uploaded configs and thumbnails in the `config` bucket are not recovered. This is a deliberate tradeoff documented in the values.yaml comment (line 72): "Disable persistent storage so the PVC is not left behind after helm uninstall."
+- The `get_minio_client()` function (line 29-31 of `minio_client.py`) strips the URL scheme from `MINIO_ENDPOINT` because the `Minio()` constructor expects bare `host:port`. The Helm templates inject `http://minio:9000` as the full URL, so this parsing is required. If the scheme is `https`, the function also sets `secure=True`.
+- The video-stream init container uses `minio/mc` as its image (line 24 of `video-stream-deployment.yaml`) via `videoStream.ffmpegImage.repository`, which is confusingly named since it is not actually FFmpeg -- it is the MinIO client CLI used for downloading video.
+- Credentials are injected as plain Helm values directly into env vars (not via secretKeyRef from a K8s Secret). The init-data Job, backend deployment, video-stream, and runtime-deployer all receive credentials the same way. The subchart does create a K8s Secret, but the parent chart templates do not reference it.
+- The `_ping_minio()` function (line 195 of `seed_demo_configs.py`) calls `list_buckets()` to check MinIO readiness. If MinIO is up but the `bucketCreation` Job has not yet completed, the ping succeeds but subsequent bucket operations may fail on non-existent buckets.
+- Unit tests mock the `minio_client` module at the `sys.modules` level (line 59-64 of `test_alert_endpoints.py`) to avoid needing a running MinIO instance, similar to Approach A's lazy init pattern but using monkeypatch instead.
+- The `download_file()` retry logic (5 retries, 3-second delay) and `_ensure_object_with_retry()` (12 retries, 2-second delay) use different defaults, creating inconsistent retry behavior across the codebase.
+
+### Testing Notes
+- Verify MinIO health: `curl -f http://minio:9000/minio/health/live` (compose healthcheck uses this)
+- Console is available at port 9001 locally for manual inspection (credentials: `minioadmin`/`minioadmin`)
+- Check that all three buckets exist (`models`, `data`, `config`) after the `bucketCreation` Job completes
+- Verify the init-data Job uploaded model and video files: check `models` bucket for `ppe.pt` and `data` bucket for video files
+- Unit tests use `monkeypatch.setitem(sys.modules, "minio_client", ...)` to stub out MinIO operations
+- On OpenShift, verify the video-stream init container successfully downloaded from MinIO by checking its logs: `oc logs <pod> -c download-video`
+
+### Related Patterns
+- Architecture: Video processing pipeline with RTSP streaming from S3-hosted MP4 files
+- Deployment: ai-architecture-charts minio subchart with PVC override for ephemeral storage
+- Architecture: Config bucket pattern for horizontal backend scaling
+- Deployment: mc CLI init containers for artifact download
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (lemonade-stand-assistant) | Approach F (multi-agent-loan-origination) |
-|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|---------------------------------------|-------------------------------------------|
-| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) | Langfuse v3 S3 backend (events, exports, media) | Guardrail detector model storage for KServe | Document uploads + MLflow artifact storage |
-| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client | None -- Langfuse handles S3 internally | None -- KServe handles S3 via data connection | boto3 / botocore with async thread-pool executor wrapper |
-| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) | Embedded in parent chart templates (StatefulSet + VolumeClaimTemplate) | Embedded in parent chart templates (Deployment + separate PVC) | Embedded in parent chart templates (Deployment + optional PVC) |
-| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag | Conditional on `langfuse.enabled` | Always-on required dependency | Optional via Helm `minio.enabled` toggle with external S3 override |
-| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart | Two (Langfuse web + worker) | Multiple KServe InferenceServices (HAP, prompt injection detectors) | Two (FastAPI document API + MLflow artifact store) |
-| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label | `<release>-minio-secret` with access-key/secret-key fields | RHOAI data connection Secret with AWS_* keys and `opendatahub.io/connection-type: s3` | Centralized `<release>-secret` with S3_* and MINIO_ROOT_* keys via secretKeyRef |
-| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination | Not created (internal-only) | Not created (internal-only) | Not created (internal-only) |
-| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC via StatefulSet VolumeClaimTemplate | 50Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC or emptyDir (toggled via `persistence.enabled`) |
-| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI | Init container with mc CLI + wait-for-ready loop | Init container downloads models directly to PVC | Entrypoint mkdir + Python SDK auto-create on startup |
-| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) | No | Yes (`opendatahub.io/dashboard: 'true'` + `opendatahub.io/managed: 'true'` labels, `opendatahub.io/connection-type: s3` annotation) | No |
-| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) | Embedded in parent chart templates | Embedded in parent chart templates | Embedded in parent chart templates |
-| Image version | latest | latest | latest | Pinned release tag | latest (TrustyAI image) | latest |
-| Security context | Not specified | Not specified | Empty (`{}`) | Full OpenShift restricted SCC (runAsNonRoot, drop ALL, seccomp) | Partial (drop ALL, seccomp, no runAsNonRoot) | Inherited from shared podSecurityContext/securityContext values |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (lemonade-stand-assistant) | Approach F (multi-agent-loan-origination) | Approach G (multimodal-compliance-monitor) |
+|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|---------------------------------------|-------------------------------------------|---------------------------------------------|
+| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) | Langfuse v3 S3 backend (events, exports, media) | Guardrail detector model storage for KServe | Document uploads + MLflow artifact storage | Video/model/config storage for multimodal video processing pipeline |
+| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client | None -- Langfuse handles S3 internally | None -- KServe handles S3 via data connection | boto3 / botocore with async thread-pool executor wrapper | minio (>=7.2.20) with retry-with-backoff and URL parsing |
+| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) | Embedded in parent chart templates (StatefulSet + VolumeClaimTemplate) | Embedded in parent chart templates (Deployment + separate PVC) | Embedded in parent chart templates (Deployment + optional PVC) | ai-architecture-charts minio subchart (StatefulSet, PVC disabled via override) |
+| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag | Conditional on `langfuse.enabled` | Always-on required dependency | Optional via Helm `minio.enabled` toggle with external S3 override | Always-on required dependency |
+| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart | Two (Langfuse web + worker) | Multiple KServe InferenceServices (HAP, prompt injection detectors) | Two (FastAPI document API + MLflow artifact store) | Multiple (backend, init-data Job, video-stream init container, runtime-deployer) |
+| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label | `<release>-minio-secret` with access-key/secret-key fields | RHOAI data connection Secret with AWS_* keys and `opendatahub.io/connection-type: s3` | Centralized `<release>-secret` with S3_* and MINIO_ROOT_* keys via secretKeyRef | Plain values in Helm values.yaml injected directly into env vars |
+| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination | Not created (internal-only) | Not created (internal-only) | Not created (internal-only) | API + WebUI routes with TLS edge termination (from subchart) |
+| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC via StatefulSet VolumeClaimTemplate | 50Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC or emptyDir (toggled via `persistence.enabled`) | Ephemeral -- VolumeClaimTemplate overridden to [] (compose uses named volume) |
+| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI | Init container with mc CLI + wait-for-ready loop | Init container downloads models directly to PVC | Entrypoint mkdir + Python SDK auto-create on startup | Subchart `bucketCreation` feature with bucket list |
+| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) | No | Yes (`opendatahub.io/dashboard: 'true'` + `opendatahub.io/managed: 'true'` labels, `opendatahub.io/connection-type: s3` annotation) | No | No |
+| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) | Embedded in parent chart templates | Embedded in parent chart templates | Embedded in parent chart templates | ai-architecture-charts (minio v0.5.4 subchart) |
+| Image version | latest | latest | latest | Pinned release tag | latest (TrustyAI image) | latest | latest (from subchart) |
+| Security context | Not specified | Not specified | Empty (`{}`) | Full OpenShift restricted SCC (runAsNonRoot, drop ALL, seccomp) | Partial (drop ALL, seccomp, no runAsNonRoot) | Inherited from shared podSecurityContext/securityContext values | Not specified (subchart defaults) |

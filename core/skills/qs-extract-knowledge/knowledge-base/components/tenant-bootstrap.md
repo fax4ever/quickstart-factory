@@ -1,7 +1,7 @@
 ---
 name: tenant-bootstrap
 description: Helm chart that creates an ArgoCD Application for tenant-scoped GitOps deployment of a quickstart
-summary: "Provisions an ArgoCD Application CR for tenant-scoped GitOps deployment of a quickstart Helm chart, serving as the third layer in the RHDP onboarding flow (infra, platform, tenant), with creation conditionally gated by `{{ if .Values.rag }}` — setting rag to empty skips it entirely. Use when wiring a quickstart into ArgoCD with Helm value passthrough (`rag.values` piped via `toYaml` into `spec.source.helm.values`) and git source (`rag.git.url`/`revision`/`path`); enable `rbac.enabled` to grant the ArgoCD controller in `gitops.namespace` (default openshift-gitops) permissions for RHOAI-specific CRDs (kubeflow.org notebooks, datasciencepipelinesapplications.opendatahub.io). Critical config: `tenant.name` becomes the Application name, automated sync sets `CreateNamespace=true` with 30-retry exponential backoff (5s/factor-2/max-5m), but `prune: false` and `selfHeal: false` require manual orphan cleanup. RBAC ClusterRole produces harmless warnings on non-RHOAI clusters missing those CRDs, and the aggressive 30-retry backoff can mask persistent sync failures for extended periods before surfacing errors."
+summary: "Provisions an ArgoCD Application CR for tenant-scoped GitOps deployment of a quickstart Helm chart, serving as the third layer in the RHDP onboarding flow (infra, platform, tenant), with creation conditionally gated by `{{ if .Values.rag }}` — setting rag to empty skips it entirely. Use when wiring a quickstart into ArgoCD with Helm value passthrough (`rag.values` piped via `toYaml` into `spec.source.helm.values`) and git source (`rag.git.url`/`revision`/`path`); for explicit overrides that take precedence over values use `spec.source.helm.parameters` as `--set` (multimodal-compliance-monitor variant) with explicit `releaseName` for DNS-1035 compliance; enable `rbac.enabled` to grant the ArgoCD controller in `gitops.namespace` (default openshift-gitops) permissions for RHOAI-specific CRDs (kubeflow.org notebooks, datasciencepipelinesapplications.opendatahub.io). Critical config: `tenant.name` becomes the Application name, automated sync sets `CreateNamespace=true` with 30-retry exponential backoff (5s/factor-2/max-5m), but `prune: false` and `selfHeal: false` require manual orphan cleanup. RBAC ClusterRole produces harmless warnings on non-RHOAI clusters missing those CRDs, the aggressive 30-retry backoff can mask persistent sync failures for extended periods before surfacing errors, and Helm `parameters` silently override matching keys in the `values` passthrough block."
 metadata:
   type: component
 tags:
@@ -13,6 +13,10 @@ source_examples:
   - quickstart: "RAG"
     repo: "https://github.com/rh-ai-quickstart/RAG"
     notes: "Tenant bootstrap chart creating an ArgoCD Application that deploys the RAG quickstart with Helm value passthrough and optional RBAC for the ArgoCD controller"
+    approach: "A"
+  - quickstart: "multimodal-compliance-monitor"
+    repo: "https://github.com/rh-ai-quickstart/multimodal-compliance-monitor"
+    notes: "Tenant bootstrap chart creating an ArgoCD Application for PPE compliance monitor with explicit Helm parameters for model serving overrides and releaseName for DNS-1035 compliance"
     approach: "A"
 ---
 
@@ -120,6 +124,31 @@ rules:
 {{- end }}
 ```
 
+### Helm Parameters for Explicit Overrides (from multimodal-compliance-monitor)
+
+The PPE compliance monitor variant uses `spec.source.helm.parameters` alongside `spec.source.helm.values` to force specific Helm `--set` overrides that take precedence over the values block. This is used to lock down model serving configuration regardless of what the values passthrough contains.
+
+```yaml
+# tenant/bootstrap/templates/application-ppe.yaml
+helm:
+  releaseName: "ppe-{{ .Values.tenant.name }}"
+  parameters:
+    - name: openshift.sharedHost
+      value: "ppe-{{ .Values.tenant.name }}-{{ .Values.ppe.namespace }}.{{ .Values.deployer.domain }}"
+    # Helm --set overrides spec.source.helm.values: OVMS (CPU) path, not KServe/Triton.
+    - name: modelServing.runtimeType
+      value: openvino
+    # Redundant if runtimeType stays openvino; protects if runtimeType is ever switched to kserve.
+    - name: modelServing.kserve.gpu.enabled
+      value: "false"
+  values: |
+{{ toYaml .Values.ppe.values | nindent 12 }}
+```
+
+### Explicit releaseName for DNS-1035 Compliance (from multimodal-compliance-monitor)
+
+The PPE variant explicitly sets `releaseName: "ppe-{{ .Values.tenant.name }}"` to ensure the Helm release name is DNS-1035 compliant. This was added in commit `923b01b` ("fix: set explicit releaseName to ensure DNS-1035 compliance") to prevent long or invalid release names from causing deployment failures.
+
 ### Three-Layer RHDP Onboarding Structure
 
 The tenant bootstrap chart is designed as the third step in a layered onboarding flow documented in `docs/RHDP_Onboarding.md`:
@@ -153,6 +182,8 @@ This separation keeps infrastructure, platform, and tenant/app team responsibili
 - **Retry limit is aggressive:** The sync retry is configured with 30 attempts and exponential backoff (5s base, factor 2, max 5m). This handles transient issues during initial cluster setup but can mask persistent failures for a long time before giving up.
 - **RBAC includes RHOAI-specific API groups:** The ClusterRole includes rules for `kubeflow.org` (notebooks) and `datasciencepipelinesapplications.opendatahub.io` (DSP). These are RHOAI-specific and will produce harmless RBAC warnings on clusters without these CRDs installed.
 - **CreateNamespace sync option:** The `CreateNamespace=true` sync option means ArgoCD will create the target namespace if it does not exist. This requires the ArgoCD controller to have namespace creation permissions, which the optional RBAC ClusterRole provides.
+- **Helm parameters override values passthrough (from multimodal-compliance-monitor):** The PPE variant uses `spec.source.helm.parameters` which act as `--set` overrides and take precedence over the `spec.source.helm.values` block. As the template comment notes, "Helm --set overrides spec.source.helm.values." This means if the same key appears in both `parameters` and `values`, the `parameters` value wins.
+- **releaseName required for DNS-1035 compliance (from multimodal-compliance-monitor):** Without an explicit `releaseName`, ArgoCD derives the Helm release name from the Application name, which can exceed DNS label length limits or contain invalid characters. Setting `releaseName: "ppe-{{ .Values.tenant.name }}"` prevents this (fix from commit `923b01b`).
 
 ## Testing Notes
 

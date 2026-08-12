@@ -1,14 +1,14 @@
 ---
 name: evaluations
 description: "DeepEval-based conversation evaluation framework for AI agent testing with LLM-as-judge metrics"
-summary: "DeepEval-based evaluation framework for validating deployed AI agents and RAG applications end-to-end through LLM-as-judge conversation metrics, with Approach A testing conversational agents via oc exec subprocess pipeline with pluggable flow registry auto-discovery (flows/ containing flow.py + metrics.py) and Approach B testing RAG apps via Playwright browser automation against Streamlit UIs with two-stage evaluation (response quality + retrieval chunk quality). Use Approach A when validating agent state-machine behavior with ConversationSimulator generation via live model callback (--conversation-source generate|export), RetryableConversationalGEval addressing judge non-determinism, and deterministic metadata evaluation for state transitions without LLM; use Approach B when evaluating RAG retrieval quality with Stage 1 ConversationalGEval response metrics (with ground truth context injection) and Stage 2 chunk metrics (ChunkCountMetric, ChunkDeduplicationMetric via Jaccard >= 0.8, ContextualPrecision, ContextualRelevancy, Faithfulness); both support negative testing via --check (--expect-failures for Approach B). Both approaches require LLM_API_TOKEN/LLM_URL env vars and CustomLLM adapter wrapping any OpenAI-compatible endpoint as judge with optional instructor structured output; Approach A uses multiprocessing with disjoint authoritative_user_ids partitions and parses :DONE terminators and TOKEN_SUMMARY: lines for token tracking, while Approach B uses asyncio.Semaphore (--max-concurrent-calls default 16) and endpoint auto-detection (RAG_UI_ENDPOINT > oc get route > localhost). DeepEval's wrap_up_test_run must be monkey-patched to no-op preventing login prompts, GPT-OSS-120b requires workaround for malformed JSON wrapping in {\"final\": ...}, ConversationalTestCase.context type hint says Optional[str] but runtime expects List[str], --concurrency N cannot exceed authoritative_user_ids count, Streamlit chunk extraction requires three DOM fallback strategies across versions, and DEEPEVAL_PER_TASK_TIMEOUT_SECONDS_OVERRIDE defaults to 600s because the default is too short for RAG evaluations."
+summary: "DeepEval-based evaluation framework for validating deployed AI agents and RAG applications end-to-end through LLM-as-judge conversation metrics, with Approach A testing conversational agents via oc exec subprocess pipeline with pluggable flow registry auto-discovery (flows/ containing flow.py + metrics.py), Approach B testing RAG apps via Playwright browser automation against Streamlit UIs with two-stage evaluation (response quality + retrieval chunk quality), and Approach C testing multimodal backends via direct REST API calls with dual strategies (GEval+Rubric for chat, deterministic SQL comparison for alerts) using VLMJudge reusing the app's own VLLM endpoint via langchain-openai.ChatOpenAI and containerized execution (Containerfile + compose profile + Helm test job with DB snapshot/restore and timestamp shifting). Use Approach A when validating agent state-machine behavior with ConversationSimulator generation via live model callback (--conversation-source generate|export), RetryableConversationalGEval addressing judge non-determinism, and deterministic metadata evaluation for state transitions without LLM; use Approach B when evaluating RAG retrieval quality with Stage 1 ConversationalGEval response metrics (with ground truth context injection) and Stage 2 chunk metrics (ChunkCountMetric, ChunkDeduplicationMetric via Jaccard >= 0.8, ContextualPrecision, ContextualRelevancy, Faithfulness); use Approach C when evaluating containerized backends with experiment auto-discovery from datasets/<feature>/<dataset>/*.json and DATASET_APP_CONFIG_ID mapping; all three support negative testing via --check (--expect-failures for Approach B). All approaches require LLM_API_TOKEN/LLM_URL env vars and CustomLLM adapter wrapping any OpenAI-compatible endpoint as judge with optional instructor structured output; Approach A uses multiprocessing with disjoint authoritative_user_ids partitions and parses :DONE terminators and TOKEN_SUMMARY: lines for token tracking, Approach B uses asyncio.Semaphore (--max-concurrent-calls default 16) and endpoint auto-detection (RAG_UI_ENDPOINT > oc get route > localhost), and Approach C uses asyncio.gather with VLMJudge and DB lifecycle management (snapshot then seed with timestamp shift then eval then restore in finally block). DeepEval's wrap_up_test_run must be monkey-patched to no-op preventing login prompts, GPT-OSS-120b requires workaround for malformed JSON wrapping in {\"final\": ...}, ConversationalTestCase.context type hint says Optional[str] but runtime expects List[str], --concurrency N cannot exceed authoritative_user_ids count, Streamlit chunk extraction requires three DOM fallback strategies across versions, .deepeval directory needs chmod 777 in Containerfile for non-root execution, SNAPSHOT_DIR must be a volume mount or live data cannot be restored, and DEEPEVAL_PER_TASK_TIMEOUT_SECONDS_OVERRIDE defaults to 600s because the default is too short for RAG evaluations."
 metadata:
   type: component
 tags:
-  tech_stack: [python, deepeval, openai, instructor, pydantic, playwright, pytest, markdownify, streamlit]
-  ai_pattern: [evaluation, agents, guardrails, rag, vector-search]
-  platform: [openshift]
-  data_layer: []
+  tech_stack: [python, deepeval, openai, instructor, pydantic, playwright, pytest, markdownify, streamlit, langchain-openai, psycopg2, uv]
+  ai_pattern: [evaluation, agents, guardrails, rag, vector-search, multimodal]
+  platform: [openshift, vllm, kserve]
+  data_layer: [postgresql]
 source_examples:
   - quickstart: "it-self-service-agent"
     repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/RAG"
     notes: "Playwright-based RAG evaluation with two-stage pipeline (conversational quality + retrieval chunk metrics), custom chunk deduplication/count metrics, and UI-driven conversation capture"
     approach: "B"
+  - quickstart: "multimodal-compliance-monitor"
+    repo: "https://github.com/rh-ai-quickstart/multimodal-compliance-monitor"
+    notes: "Containerized dual-feature eval (chat GEval + alerts SQL comparison) with DB snapshot/restore, VLLMJudge reusing the app's own model endpoint, and Helm test job integration"
+    approach: "C"
 ---
 
 # Evaluations
@@ -457,16 +461,232 @@ context.append("reflects THIS content, not on whether the content seems realisti
 
 ---
 
+## Approach C: Containerized Dual-Feature Eval with DB Snapshot/Restore (from multimodal-compliance-monitor)
+
+### When to Use
+
+When evaluating a backend API that serves two distinct features (chat Q&A and alert-driven SQL generation) against a live PostgreSQL database. The eval needs to temporarily replace live data with deterministic seed data, run tests, and restore the original data. Unlike Approaches A and B, this approach is fully containerized with its own Containerfile, runs as a podman-compose profile service for local dev, and deploys as a Helm test job on Kubernetes.
+
+### Differences from Approach A and B
+
+- **API interaction:** Direct REST API calls to backend endpoints (`/api/chat`, `/api/alerts`) using `urllib.request` -- no `oc exec` subprocess, no Playwright browser
+- **Dual evaluation strategies:** LLM-as-judge (GEval with rubrics) for chat responses, deterministic SQL result comparison for alert-generated queries
+- **Database lifecycle management:** Snapshot live DB to a volume, load seed data with timestamp shifting, run evals, restore live data in a `finally` block
+- **Custom judge model:** `VLLMJudge` class reusing the app's own VLLM endpoint as the DeepEval evaluator via `langchain-openai.ChatOpenAI`, rather than a separate judge LLM
+- **Containerized execution:** Has its own `Containerfile` (UBI9 + uv), runs in a `backend-eval` compose service, and is deployed as a Helm test job (`helm.sh/hook: test`)
+- **Dataset organization:** `datasets/<feature>/<dataset>/*.json` hierarchy with auto-discovery, supporting multiple models (bird, ppe, yolo) per feature
+- **No conversation generation:** Evals use predefined question/golden-answer pairs -- no ConversationSimulator, no Playwright capture
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Python >=3.11
+- **Container image:** `registry.access.redhat.com/ubi9/python-311:1-77` with uv for dependency management
+- **Key dependencies:** deepeval>=3.8.9, langchain-openai>=1.1.10, psycopg2-binary>=2.9
+- **Build system:** pyproject.toml with uv lockfile (`uv sync --locked`)
+
+### VLLMJudge -- Reusing the App's Own Model as Evaluator
+
+Wraps the same VLLM endpoint the application uses for inference, avoiding the need for a separate judge model deployment. Implements DeepEval's `DeepEvalBaseLLM` interface using `langchain-openai.ChatOpenAI`.
+
+```python
+# judge_model.py
+class VLLMJudge(DeepEvalBaseLLM):
+    def __init__(self) -> None:
+        self._chat = ChatOpenAI(
+            base_url=os.environ["OPENAI_API_ENDPOINT"],
+            api_key=os.environ["OPENAI_API_TOKEN"],
+            model=os.getenv("OPENAI_MODEL", "llama-4-scout-17b-16e-w4a16"),
+            temperature=0.7,
+        )
+
+    def generate(self, prompt: str) -> str:
+        return self._chat.invoke(prompt).content
+
+    async def a_generate(self, prompt: str) -> str:
+        res = await self._chat.ainvoke(prompt)
+        return res.content
+```
+
+### Chat Evaluation -- GEval with Rubrics
+
+Uses DeepEval's `GEval` metric with explicit `Rubric` score ranges that map numerical scores to expected outcomes. Test cases send questions to `/api/chat` concurrently via `asyncio.gather`, then batch-evaluate all responses.
+
+```python
+# run_eval.py -- GEval with rubrics
+correctness = GEval(
+    name="Correctness",
+    evaluation_steps=[
+        "Check that the actual output directly answers the core question in the input.",
+        "Verify all numerical values and yes/no conclusions match between the actual output and the expected output.",
+        "Penalize contradicted or omitted key facts; extra detail or phrasing differences are acceptable.",
+    ],
+    rubric=[
+        Rubric(score_range=(0, 2), expected_outcome="Numerical values not matching..."),
+        Rubric(score_range=(5, 7), expected_outcome="numerical values matching..."),
+        Rubric(score_range=(8, 9), expected_outcome="Correct but missing minor details."),
+        Rubric(score_range=(10, 10), expected_outcome="100% correct."),
+    ],
+    evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT,
+                       LLMTestCaseParams.EXPECTED_OUTPUT],
+    model=judge, threshold=THRESHOLD,
+)
+```
+
+### Alert Evaluation -- SQL Result Comparison
+
+For the `alerts` feature, evaluation is deterministic: the backend generates a SQL query from a natural language alert rule, the eval executes both the predicted and golden SQL queries against the database, and compares the first row/column result. No LLM judge is needed.
+
+```python
+# run_eval.py -- alert evaluation
+def run_alert_experiment(experiment_name, dataset_path, eval_run_id):
+    fetch_results = asyncio.run(_fetch_alert_all(dataset))
+    for entry, predicted_sql, error in fetch_results:
+        predicted_result = execute_sql(predicted_sql)
+        actual_golden = execute_sql(golden_sql)
+        passed = str(predicted_result).strip() == str(actual_golden).strip()
+        score = 1.0 if passed else 0.0
+```
+
+The alert endpoint is polled for completion when the response does not include the SQL query immediately:
+
+```python
+# run_eval.py -- alert polling
+poll_url = f"{ALERTS_ENDPOINT}/{alert_id}"
+for _ in range(60):
+    time.sleep(2)
+    # ... poll until status == "done" or "error"
+```
+
+### Database Snapshot/Restore Lifecycle
+
+Before evaluation starts, the live database is dumped to a volume-mounted SQL file. Seed data is loaded, and all timestamps are shifted so that the newest observation is `NOW() - 1 second`, keeping time-window queries valid. After evaluation (even on error), the live data is restored from the snapshot.
+
+```python
+# run_eval.py -- main entrypoint
+stmt_count = save_snapshot()  # dump live data to /snapshots/live_backup.sql
+try:
+    counts = load_seed(SEED_SQL_PATH)  # truncate + load seed + shift timestamps
+    run()
+finally:
+    restored = restore_snapshot()  # truncate + reload from snapshot
+```
+
+The timestamp shifting ensures seed data with fixed timestamps works regardless of when the eval runs:
+
+```python
+# load_seed.py -- shift timestamps to now
+def _shift_timestamps_to_now():
+    cur.execute("""
+        UPDATE detection_observations
+        SET "timestamp" = "timestamp" + (
+            NOW() - INTERVAL '1 second'
+            - (SELECT MAX("timestamp") FROM detection_observations)
+        )
+    """)
+```
+
+### Experiment Auto-Discovery
+
+Evaluation datasets are organized as `datasets/<feature>/<dataset>/*.json`. The runner auto-discovers all JSON files in the target directory and runs each as a separate experiment, producing per-experiment and overall summaries.
+
+```python
+# run_eval.py -- experiment discovery
+DATASETS_DIR = Path(__file__).parent / "datasets" / EVAL_FEATURE / EVAL_DATASET
+
+def discover_experiments():
+    experiments = sorted((p.stem, p) for p in DATASETS_DIR.glob("*.json"))
+```
+
+Dataset files for `chat` use `question`/`description`/`golden_answer` fields, while `alerts` datasets use `rule`/`golden_sql`/`golden_result` fields.
+
+### Containerized Execution
+
+The eval runs in its own container built from a UBI9 Python 3.11 base image with uv for dependency management:
+
+```dockerfile
+# app/evals/Containerfile
+FROM --platform=linux/amd64 registry.access.redhat.com/ubi9/python-311:1-77
+WORKDIR /evals
+COPY --from=ghcr.io/astral-sh/uv:0.9.7 /uv /uvx /bin/
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked
+COPY . .
+RUN mkdir -p /evals/.deepeval && chmod 777 /evals/.deepeval
+ENTRYPOINT ["python", "run_eval.py"]
+```
+
+The container runs as a podman-compose profile service for local dev (`make eval`) and as a Helm test job on Kubernetes (`make eval-k8s` / `helm test`):
+
+```yaml
+# deploy/helm/.../templates/eval-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `OPENAI_API_ENDPOINT` -- VLLM endpoint URL (shared with the app)
+  - `OPENAI_API_TOKEN` -- API key for the VLLM endpoint
+  - `OPENAI_MODEL` -- Model name (default: `llama-4-scout-17b-16e-w4a16`)
+  - `BACKEND_URL` -- Backend API URL (default: `http://localhost:8888`)
+  - `EVAL_FEATURE` -- Feature to evaluate: `chat` or `alerts` (default: `chat`)
+  - `EVAL_DATASET` -- Dataset name: `ppe`, `yolo`, or `bird` (default: `ppe`)
+  - `SNAPSHOT_DIR` -- Volume path for DB snapshots (default: `/snapshots`)
+  - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` -- PostgreSQL connection
+  - `DEEPEVAL_TELEMETRY_OPT_OUT` -- Set to `YES` to disable DeepEval telemetry
+- **Makefile targets:**
+  - `make eval` -- Run evaluation locally via podman-compose (`--profile eval`)
+  - `make eval-k8s` -- Run evaluation on Kubernetes via `helm test`
+  - `make init-eval-db` -- Snapshot the running DB into `app/evals/db_seed_data.sql`
+  - `make build-eval` -- Build the eval container image
+
+### Known Gotchas
+
+- The `.deepeval` directory must be created with `chmod 777` in the Containerfile because DeepEval writes cache/config files there at runtime and the container runs as non-root (USER 1001).
+- The `SNAPSHOT_DIR` defaults to `/snapshots` which must be a volume mount; without it, the snapshot is lost if the container crashes and the live database cannot be restored.
+- Timestamp shifting in `_shift_timestamps_to_now()` uses a single-statement approach that computes the offset from `MAX(timestamp)` to `NOW() - 1 second` -- all seed data timestamps are shifted by the same delta, preserving relative ordering.
+- The `DATASET_APP_CONFIG_ID` mapping (`bird: 1, ppe: 2, yolo: 3`) is hardcoded and must match the `app_config` table IDs in the seed data. If the seed data changes, this mapping must be updated manually.
+- Results are saved with `chmod 0o666` and parent directories with `chmod 0o777` to ensure files are writable from the host when using volume mounts with podman.
+- The eval process exits with code 0 only if all test cases pass; any failure returns exit code 1, which causes the Helm test job to report failure.
+- Alert evaluation polls every 2 seconds for up to 60 iterations (120s total) waiting for the backend to generate the SQL query, with a separate `TimeoutError` if the alert never completes.
+- The `db_tests.json` files in `chat/ppe/` and `chat/yolo/` provide additional database-focused test cases (e.g., counting detections over time windows) alongside the main `eval_dataset.json`.
+
+### Testing Notes
+
+- Run chat evaluation locally: `EVAL_DATASET=ppe make eval`
+- Run alert evaluation locally: `EVAL_FEATURE=alerts EVAL_DATASET=ppe make eval`
+- Run evaluation on Kubernetes: `make eval-k8s`
+- Snapshot DB for new seed data: `make init-eval-db`
+- Results are saved to `app/evals/preds/<feature>/<dataset>/<timestamp>/`
+
+### Related Patterns
+
+- `fastapi-backend` -- the backend API providing `/api/chat` and `/api/alerts` endpoints
+- `pgvector` / `postgresql` -- the database containing detection data evaluated by alert queries
+- `phoenix` -- observability companion running alongside the eval in the compose stack
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (it-self-service-agent) | Approach B (RAG) |
-|----------|-----------------------------------|-------------------|
-| **Application type** | Conversational agent with state machine (ticket lifecycle) | RAG chatbot with document retrieval |
-| **Conversation generation** | DeepEval ConversationSimulator with live agent via `oc exec` | Predefined JSON conversations replayed through Playwright UI |
-| **UI interaction** | None (CLI-based agent pod) | Streamlit web UI via Playwright browser automation |
-| **Evaluation focus** | Response quality + deterministic metadata (state transitions) | Response quality + retrieval chunk quality (two stages) |
-| **Custom metrics** | RetryableConversationalGEval, ConversationMetadataDeterministicEval | ChunkCountMetric, ChunkDeduplicationMetric (Jaccard), Chunk Alignment GEval |
-| **Test organization** | Pluggable flow registry (`flows/` with `flow.py` + `metrics.py`) | Static JSON files in `conversations/` subdirectories by domain |
-| **Concurrency model** | Multiprocessing workers with disjoint user ID partitions | asyncio.Semaphore limiting total in-flight LLM API calls |
-| **RAG chunk assessment** | Not applicable | Full retrieval evaluation (precision, relevancy, faithfulness, deduplication) |
-| **Known-bad validation** | `--check` flag verifies all bad conversations fail | `--check` with `--expect-failures` inverts exit code logic |
+| Criteria | Approach A (it-self-service-agent) | Approach B (RAG) | Approach C (multimodal-compliance-monitor) |
+|----------|-----------------------------------|-------------------|---------------------------------------------|
+| **Application type** | Conversational agent with state machine (ticket lifecycle) | RAG chatbot with document retrieval | Multimodal backend with chat Q&A and alert SQL generation |
+| **Conversation generation** | DeepEval ConversationSimulator with live agent via `oc exec` | Predefined JSON conversations replayed through Playwright UI | Predefined question/golden-answer pairs sent via REST API |
+| **UI interaction** | None (CLI-based agent pod) | Streamlit web UI via Playwright browser automation | None (direct REST API calls) |
+| **Evaluation focus** | Response quality + deterministic metadata (state transitions) | Response quality + retrieval chunk quality (two stages) | Chat correctness (GEval with rubrics) + alert SQL result comparison |
+| **Custom metrics** | RetryableConversationalGEval, ConversationMetadataDeterministicEval | ChunkCountMetric, ChunkDeduplicationMetric (Jaccard), Chunk Alignment GEval | GEval with explicit Rubric score ranges; deterministic SQL comparison for alerts |
+| **Judge model** | Separate LLM endpoint (CustomLLM adapter) | Separate LLM endpoint (CustomLLM with Semaphore) | App's own VLLM endpoint (VLLMJudge via langchain-openai) |
+| **Test organization** | Pluggable flow registry (`flows/` with `flow.py` + `metrics.py`) | Static JSON files in `conversations/` subdirectories by domain | `datasets/<feature>/<dataset>/*.json` with auto-discovery |
+| **Concurrency model** | Multiprocessing workers with disjoint user ID partitions | asyncio.Semaphore limiting total in-flight LLM API calls | asyncio.gather for concurrent API calls per experiment |
+| **Database management** | Not applicable | Not applicable | Snapshot/restore live DB with timestamp shifting for seed data |
+| **Deployment model** | Runs locally against deployed agent | Runs locally with Playwright | Containerized (Containerfile + compose profile + Helm test job) |
+| **Known-bad validation** | `--check` flag verifies all bad conversations fail | `--check` with `--expect-failures` inverts exit code logic | Not implemented; pass/fail based on threshold score |

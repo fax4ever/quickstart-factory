@@ -1,13 +1,13 @@
 ---
 name: react-frontend
-description: React frontend patterns for AI Quickstarts -- PatternFly/SSE or shadcn+Tailwind/WebSocket with TanStack Router
-summary: "Provides two React frontend patterns for AI Quickstarts -- Approach A (React 18 + PatternFly 6 + @patternfly/chatbot) for chatbot-first UIs with SSE streaming via requestAnimationFrame batching, TanStack Router/Query/Form, OAuth redirect, and single-container deployment baked into FastAPI; Approach B (React 19 + shadcn/ui + Tailwind CSS 4 + Radix) for multi-persona enterprise apps with WebSocket JSON protocol streaming, Keycloak OIDC with PKCE and dev-mode role headers, Zod-validated layered API (Component->Hook->TanStack Query->Service->Schema), atomic design with Storybook 8, pnpm monorepo, and separate nginx container with window.__RUNTIME_CONFIG__ injection. Choose A for simple chatbot apps needing PatternFly design system, SSE rAF-batched streaming, TanStack Form admin panels, and any OAuth provider with single-container deploy -- choose B for multi-role domain-rich UIs needing Keycloak OIDC, role-based persona routing (ROLE_HOME mapping), WebSocket chat sidebar, Zod schema validation, and two-container nginx+API deploy. Critical patterns: both use TanStack Router file-based routing with code-splitting; A models chat content as SimpleContentItem discriminated union (output_text, reasoning, tool_call, graph_node, input_image) with LlamaStack isToolExecutionType()/isStructuralItemType() type guards; B injects Keycloak/company config at container start via nginx location returning JavaScript snippet with envsubst-substituted values. Gotchas: Vite requires watch.usePolling:true in containers; A needs NODE_OPTIONS=--max-old-space-size=512 for builds, strips reasoning items on [DONE], raises chunkSizeWarningLimit to 2000, requires flushPendingUpdates() with confirmation modal on session switch during streaming, and excludes fetchSessionsData from useEffect deps to prevent infinite loops; B requires WebSocket upgrade map in nginx.conf (not conf.d/ where envsubst mangles $ variables), passes JWT as WebSocket query parameter (MVP trade-off), needs OpenShift arbitrary UID chmod/chgrp on nginx dirs, downgrades Vite 7 UNRESOLVED_IMPORT errors for pnpm hoisted deps, and uses deprecated ROPC grant for demo convenience."
+description: React frontend patterns for AI Quickstarts -- PatternFly/SSE, shadcn+Tailwind/WebSocket, or CRA+serve video monitoring
+summary: "Provides three React frontend patterns for AI Quickstarts -- Approach A (React 18 + PatternFly 6 + @patternfly/chatbot) for chatbot-first UIs with SSE streaming via requestAnimationFrame batching, TanStack Router/Query/Form, OAuth redirect, and single-container deployment baked into FastAPI; Approach B (React 19 + shadcn/ui + Tailwind CSS 4 + Radix) for multi-persona enterprise apps with WebSocket JSON protocol streaming, Keycloak OIDC with PKCE and dev-mode role headers, Zod-validated layered API (Component->Hook->TanStack Query->Service->Schema), atomic design with Storybook 8, pnpm monorepo, and separate nginx container with window.__RUNTIME_CONFIG__ injection; Approach C (React 17 + CRA JavaScript + serve) for MJPEG video monitoring with SSE cross-tab config sync, setInterval polling with stale detection guards, feedNonce cache-buster for stream switching, ConfigMap-mounted window.__ENV__ with protocol auto-upgrade, and Helm-deployed separate container. Choose A for chatbot apps needing PatternFly design system, SSE rAF-batched streaming, TanStack Form admin panels, any OAuth provider, and single-container deploy -- choose B for multi-role domain-rich UIs needing Keycloak OIDC, role-based persona routing (ROLE_HOME mapping), WebSocket chat sidebar, Zod schema validation, and two-container nginx+API deploy -- choose C for video/multimodal monitoring needing MJPEG feeds via <img> tags, polling-based detection, SSE config sync, plain JavaScript frontend, and Helm-deployed serve+ConfigMap container. Critical patterns: A and B use TanStack Router file-based routing with code-splitting; A models chat content as SimpleContentItem discriminated union (output_text, reasoning, tool_call, graph_node, input_image) with LlamaStack isToolExecutionType()/isStructuralItemType() type guards; B injects Keycloak/company config at container start via nginx location returning JavaScript snippet with envsubst-substituted values; C uses ConfigMap env.js with fallback chain (runtime -> REACT_APP_API_URL -> location.origin/api) and natural language alert rules with CRUD management. Gotchas: Vite requires watch.usePolling:true in containers; A needs NODE_OPTIONS=--max-old-space-size=512 for builds, strips reasoning items on [DONE], raises chunkSizeWarningLimit to 2000, requires flushPendingUpdates() with confirmation modal on session switch during streaming, and excludes fetchSessionsData from useEffect deps to prevent infinite loops; B requires WebSocket upgrade map in nginx.conf (not conf.d/ where envsubst mangles $ variables), passes JWT as WebSocket query parameter (MVP trade-off), needs OpenShift arbitrary UID chmod/chgrp on nginx dirs, downgrades Vite 7 UNRESOLVED_IMPORT errors for pnpm hoisted deps, and uses deprecated ROPC grant for demo convenience; C requires --openssl-legacy-provider for Node 18+, must avoid <img> remounting to prevent MJPEG connection stacking, disables ESLint during Docker build, and polls inference readiness every 200ms until OVMS model processes first frame."
 metadata:
   type: component
 tags:
-  tech_stack: [react, patternfly, typescript, vite, tanstack-router, tanstack-query, tanstack-form, tailwindcss, shadcn-ui, radix-ui, zod, keycloak, storybook, vitest, pnpm]
-  ai_pattern: [agents, rag, mcp]
-  platform: [openshift]
+  tech_stack: [react, patternfly, typescript, vite, tanstack-router, tanstack-query, tanstack-form, tailwindcss, shadcn-ui, radix-ui, zod, keycloak, storybook, vitest, pnpm, javascript, create-react-app, axios, react-markdown, serve]
+  ai_pattern: [agents, rag, mcp, multimodal, model-serving]
+  platform: [openshift, kserve]
 source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
@@ -17,6 +17,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
     notes: "React 19 + shadcn/ui + Tailwind CSS frontend with WebSocket chat streaming, Keycloak OIDC auth, role-based persona routing, separate nginx container"
     approach: "B"
+  - quickstart: "multimodal-compliance-monitor"
+    repo: "https://github.com/rh-ai-quickstart/multimodal-compliance-monitor"
+    notes: "React 17 CRA JavaScript frontend with MJPEG video feed, SSE config sync, polling-based detection results, serve static server, Helm-deployed separate container with ConfigMap env injection"
+    approach: "C"
 ---
 
 # React Frontend
@@ -356,17 +360,237 @@ Components follow atomic design: `atoms/` (button, badge, card, input, label, to
 
 ---
 
+## Approach C: CRA + serve with MJPEG Video Monitoring and Polling (from multimodal-compliance-monitor)
+
+### When to Use
+
+Use when the quickstart is a real-time video monitoring or multimodal compliance application where the primary interface is a live video feed with detection overlays, a chat assistant as a secondary feature, and dynamic configuration of video sources and OVMS model endpoints. Preferred when the frontend is lightweight JavaScript (no TypeScript), uses Create React App, and deploys as a separate container serving pre-built static assets via `serve`.
+
+### Differences from Approach A
+
+| Concern | Approach A | Approach C |
+|---------|-----------|-----------|
+| Language | TypeScript | JavaScript (plain) |
+| Build tooling | Vite 6 + SWC | Create React App (react-scripts 4) |
+| UI framework | PatternFly 6 + @patternfly/chatbot | Plain CSS (no component library) |
+| Primary UI | Chatbot-first | MJPEG video feed with detection panels |
+| Streaming | SSE for chat token streaming | MJPEG `<img>` for video; SSE (EventSource) for cross-tab config sync |
+| Data fetching | TanStack Query | Direct axios calls with `setInterval` polling |
+| Static server | Frontend baked into FastAPI backend | `serve` npm package in its own container |
+| React version | React 18 | React 17 |
+| Routing | TanStack Router (file-based) | React Router v6 (two routes) |
+| Runtime config | Vite env vars | `window.__ENV__` via ConfigMap-mounted `env.js` |
+| Helm deployment | None (baked into backend) | Separate Deployment + Service + ConfigMap |
+
+### Tech Stack & Dependencies
+
+- **Runtime:** React 17, JavaScript (ES2020), Create React App (react-scripts 4.0.3)
+- **Container image:** `registry.access.redhat.com/ubi9/nodejs-18:1-62` (single-stage build + `serve`)
+- **Key dependencies:** `axios` ^0.21, `react-router-dom` ^6.30, `react-markdown` ^8.0
+- **Helm subchart:** None (uses standalone Helm templates in `deploy/helm/ppe-compliance-monitor/templates/frontend-*.yaml`)
+
+### Key Patterns
+
+#### MJPEG Video Feed via `<img>` Tag
+
+The video feed is rendered as a standard `<img>` element pointing at the backend's `/video_feed` MJPEG endpoint. The `VideoPlayer` component avoids remounting the `<img>` on source switches (which would stack open HTTP connections) and instead clears `src` on the existing DOM node:
+
+```jsx
+// app/frontend/src/components/VideoPlayer.js
+useLayoutEffect(() => {
+  if (!hasSource) {
+    setInferenceReady(false);
+    return;
+  }
+  /* Abort prior multipart response: same <img> node + new src cancels the old fetch */
+  if (imgRef.current) {
+    imgRef.current.removeAttribute('src');
+  }
+  setInferenceReady(false);
+  setFeedNonce((n) => n + 1);
+}, [hasSource, activeConfigId]);
+```
+
+A `feedNonce` counter is appended to the URL as a cache-buster to force the browser to open a fresh MJPEG stream on each source switch.
+
+#### SSE for Cross-Tab Active Config Sync
+
+The Dashboard component subscribes to Server-Sent Events at `/active_config/events` so all browser tabs update when any user switches the active video source:
+
+```jsx
+// app/frontend/src/app.js
+useEffect(() => {
+  const eventSource = new EventSource(`${API_URL}/active_config/events`);
+  eventSource.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    setSelectedConfigId(data.active_config_id);
+    setActiveConfigId(data.active_config_id);
+  };
+  eventSource.onerror = (err) => {
+    console.error('SSE connection error:', err);
+    // EventSource automatically reconnects, no action needed
+  };
+  return () => eventSource.close();
+}, []);
+```
+
+#### Polling-Based Detection Results
+
+The `PPEDescription` component polls `/latest_info` every 5 seconds to get the latest detection description, safety trend summaries, and alert results. There is no WebSocket or SSE for detection data -- polling is used for simplicity:
+
+```jsx
+// app/frontend/src/components/PPEDescription.js
+useEffect(() => {
+  if (!activeConfigId) return undefined;
+  const fetchLatestInfo = async () => {
+    const response = await axios.get(`${API_URL}/latest_info`);
+    const data = response.data;
+    if (data.active_config_id !== activeConfigId) return;
+    setDescription(data.description);
+    setSummaries((prev) => [
+      { text: data.summary, isCurrent: true },
+      ...prev.slice(0, 2).map(s => ({ ...s, isCurrent: false })),
+    ]);
+    setAlerts(Array.isArray(data.alerts) ? data.alerts : []);
+  };
+  fetchLatestInfo();
+  const intervalId = setInterval(fetchLatestInfo, 5000);
+  return () => clearInterval(intervalId);
+}, [activeConfigId]);
+```
+
+#### Runtime Configuration via `window.__ENV__` and ConfigMap
+
+Runtime configuration is injected via a `public/env.js` script loaded before the React app. In local development, this file contains empty defaults. On Kubernetes, a ConfigMap mounts the file with the actual API URL:
+
+```yaml
+# deploy/helm/ppe-compliance-monitor/templates/frontend-configmap.yaml
+data:
+  env.js: |
+    window.__ENV__ = { API_URL: {{ .Values.frontend.apiUrl | default "/api" | quote }} };
+```
+
+The `config.js` module reads from `window.__ENV__` with fallback chain: runtime config -> `REACT_APP_API_URL` env var -> `window.location.origin + /api` -> `http://localhost:8888`:
+
+```javascript
+// app/frontend/src/config.js
+const runtimeConfig = window.__ENV__ || {};
+const configuredApiUrl = normalizeApiUrl(
+  runtimeConfig.API_URL || process.env.REACT_APP_API_URL
+);
+export const API_URL =
+  configuredApiUrl ||
+  `${window.location.origin}/api` ||
+  'http://localhost:8888';
+```
+
+#### Protocol Auto-Upgrade (HTTP to HTTPS)
+
+The `normalizeApiUrl` function in `config.js` automatically upgrades `http://` URLs to `https://` when the page is served over HTTPS (but not for localhost), preventing mixed-content browser errors:
+
+```javascript
+// app/frontend/src/config.js
+if (
+  window.location.protocol === 'https:' &&
+  value.startsWith('http://') &&
+  !value.includes('localhost') &&
+  !value.includes('127.0.0.1')
+) {
+  return value.replace(/^http:\/\//, 'https://');
+}
+```
+
+#### Chat Assistant with Session Management
+
+The `ChatBot` component implements a conversational chat sidebar that sends the current detection description as context with each question. Sessions are managed client-side with random IDs and reset when the active video source changes:
+
+```jsx
+// app/frontend/src/components/ChatBot.js
+const response = await axios.post(`${API_URL}/chat`, {
+  question,
+  description,          // Current detection context
+  session_id: sessionIdRef.current,
+  app_config_id: activeConfigId,
+});
+```
+
+#### Natural Language Alert Rules with CRUD Management
+
+The `AlertPanel` component (used in `ConfigPage`) provides full CRUD for alert rules defined in plain English. Alerts have severity levels (low/medium/high) and display results with violation counts. The panel polls every 5 seconds to refresh alert status:
+
+```jsx
+// app/frontend/src/components/AlertPanel.js
+await axios.post(`${API_URL}/alerts`, {
+  app_config_id: configId,
+  rule,                  // Plain English alert rule
+  severity: alertSeverity,
+});
+```
+
+#### Three-Column Dashboard Layout
+
+The main dashboard uses a three-column CSS layout: a left sidebar for video source selection (RTSP dropdown or MP4 thumbnails), a center column for the live video feed with detection results, and a right sidebar for the chat assistant.
+
+### Configuration
+
+- **Environment variables:**
+  - `REACT_APP_API_URL` - Backend API URL (build-time, via CRA env convention)
+  - `FRONTEND_API_URL` - Runtime API URL for podman-compose (injected into `env.js` at container start)
+- **Config files:**
+  - `public/env.js` - Runtime config injected via `window.__ENV__` object
+  - `public/index.html` - Loads Font Awesome 5 via CDN, loads `env.js` before React app
+- **Helm values:**
+  - `frontend.replicas` - Number of frontend pod replicas (default: 1)
+  - `frontend.port` - Container port (default: 3000)
+  - `frontend.apiUrl` - API URL injected into ConfigMap env.js (default: `/api`)
+  - `frontend.image.repository` - Image name (default: `ppe-compliance-monitor-frontend`)
+  - `frontend.image.tag` - Image tag (default: `latest`)
+  - `frontend.image.pullPolicy` - Pull policy (default: `Always`)
+
+### Known Gotchas
+
+- **OpenSSL legacy provider required:** Both `start` and `build` scripts pass `--openssl-legacy-provider` to `react-scripts` because CRA 4 / webpack 4 uses a hashing algorithm removed in newer Node.js OpenSSL versions. Without this flag, the build fails with `ERR_OSSL_EVP_UNSUPPORTED` on Node 18+.
+- **MJPEG connection stacking on rapid source switches:** The `VideoPlayer` component comment warns against using React `key` to remount the `<img>` element: "remounting created a NEW stream without reliably closing the old one, so rapid thumbnail switches stacked many /video_feed connections." Instead, it clears `src` on the existing element via `imgRef.current.removeAttribute('src')`.
+- **ESLint disabled during Docker build:** The Dockerfile sets `ENV DISABLE_ESLINT_PLUGIN=true` before `npm run build` to prevent lint errors from failing the container build.
+- **Stale detection guard:** The `PPEDescription` polling callback checks `data.active_config_id !== activeConfigId` and returns early, preventing stale detection results from a previous source from rendering after a source switch.
+- **Video inference readiness polling:** The `VideoPlayer` component polls `/latest_info` every 200ms checking `inference_ready` to show a "Loading model..." overlay until the OVMS model has processed its first frame. The interval self-clears once ready.
+- **Podman-compose env.js override:** In the podman-compose setup, the frontend container's command rewrites `env.js` at container start using `printf` and the `FRONTEND_API_URL` env var, overriding the build-time default before `serve` starts.
+- **`@babel/plugin-proposal-private-property-in-object` pinned:** Added as a devDependency to suppress a CRA 4 deprecation warning that would otherwise emit noisy console output during `npm install`.
+
+### Testing Notes
+
+- Run `npm test` (Jest with react-scripts) for unit tests
+- Verify the frontend loads at `http://localhost:3000` after `make local-build-up`
+- Check that selecting a video source shows the MJPEG feed and detection results update every 5 seconds
+- After cluster deployment, verify the ConfigMap-mounted `env.js` is served correctly by checking browser console for `API_URL` value
+- Verify SSE config sync by opening two browser tabs and switching the video source in one
+
+### Related Patterns
+
+- Component: FastAPI backend (serves `/video_feed` MJPEG stream, `/latest_info` detection results, `/chat` endpoint, `/active_config/events` SSE)
+- Component: OVMS model server (object detection model inference)
+- Deployment: Helm chart with separate frontend Deployment + Service + ConfigMap
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (PatternFly + SSE) | Approach B (shadcn/ui + WebSocket) |
-|----------|-------------------------------|-------------------------------------|
-| Primary UI purpose | Chatbot-first with admin config panels | Multi-persona app with chat as sidebar |
-| UI framework | PatternFly 6 (Red Hat design system) | shadcn/ui + Tailwind CSS (custom design) |
-| Chat streaming | SSE with rAF batching | WebSocket with JSON protocol |
-| Auth provider | External OAuth (any provider) | Keycloak OIDC specifically |
-| Deployment model | Single container (baked into backend) | Two containers (nginx + API) |
-| API validation | Unvalidated responses | Zod schema validation at service layer |
-| Component library | @patternfly/chatbot for chat UI | Custom components with Radix primitives |
-| Best for | Simple chatbot apps, single-user personas | Multi-role enterprise apps, domain-rich UIs |
-| Package manager | npm | pnpm (monorepo workspaces) |
-| Dev tooling | Lint + format only | Storybook + Vitest + lint + format |
+| Criteria | Approach A (PatternFly + SSE) | Approach B (shadcn/ui + WebSocket) | Approach C (CRA + serve + Video) |
+|----------|-------------------------------|-------------------------------------|-----------------------------------|
+| Primary UI purpose | Chatbot-first with admin config panels | Multi-persona app with chat as sidebar | Live video monitoring with detection overlays |
+| Language | TypeScript | TypeScript | JavaScript |
+| UI framework | PatternFly 6 (Red Hat design system) | shadcn/ui + Tailwind CSS (custom design) | Plain CSS (no component library) |
+| Build tooling | Vite 6 + SWC | Vite 7 + React plugin | Create React App (react-scripts 4) |
+| Chat streaming | SSE with rAF batching | WebSocket with JSON protocol | REST POST (no streaming) |
+| Real-time data | SSE for chat tokens | WebSocket for chat messages | MJPEG `<img>` for video; `setInterval` polling for detection data; SSE for config sync |
+| Auth provider | External OAuth (any provider) | Keycloak OIDC specifically | None (open access) |
+| Deployment model | Single container (baked into backend) | Two containers (nginx + API) | Two containers (serve + API) with Helm |
+| Runtime config | Vite env vars | nginx `window.__RUNTIME_CONFIG__` | ConfigMap-mounted `window.__ENV__` via env.js |
+| API validation | Unvalidated responses | Zod schema validation at service layer | Unvalidated responses |
+| Component library | @patternfly/chatbot for chat UI | Custom components with Radix primitives | Custom components with plain HTML/CSS |
+| Container base | UBI9/nodejs-22 | node:20-alpine + nginx:alpine | UBI9/nodejs-18 |
+| Static server | FastAPI (serves built assets) | nginx | serve (npm package) |
+| React version | React 18 | React 19 | React 17 |
+| Package manager | npm | pnpm (monorepo workspaces) | npm |
+| Best for | Chatbot apps, single-user personas | Multi-role enterprise apps, domain-rich UIs | Video/multimodal monitoring, OVMS-backed detection |
+| Dev tooling | Lint + format only | Storybook + Vitest + lint + format | CRA defaults only |
