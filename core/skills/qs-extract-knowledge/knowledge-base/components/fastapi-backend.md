@@ -1,13 +1,13 @@
 ---
 name: fastapi-backend
-description: "FastAPI backend with multi-runner agent dispatch (LlamaStack, LangGraph, CrewAI), async PostgreSQL, and MCP tool integration"
-summary: "Covers two FastAPI backend approaches for AI quickstarts: Approach A (ai-virtual-agent, Python 3.12/UBI9) delivers pluggable multi-runner dispatch to LlamaStack, LangGraph, or CrewAI with normalized SSE streaming (response, reasoning, tool_call, node_started/completed, error) and a declarative GraphEngine building StateGraphs from YAML node configs with auto-detected data dependencies for parallel fan-out; Approach B (ansible-log-analysis, Python 3.12/UBI8) implements a single-purpose LangGraph pipeline for event-driven log analysis with cluster-summarize-classify-route-solve steps using Command-based routing, Pydantic structured output, and sklearn log clustering. Use Approach A for interactive multi-framework agent platforms needing per-agent runner_type selection, domain-organized YAML agent templates (banking/legal/travel), MCP tool integration via JSON-RPC with K8s MCPServer CRD discovery, and SQLAlchemy/asyncpg with Alembic migrations; use Approach B for fixed event-driven pipelines needing configurable clustering algorithms (DBSCAN/HDBSCAN/MeanShift/Agglomerative) with sentence embeddings, dual LLM endpoints (tool-calling workaround for RHOAI models), Phoenix/OTEL tracing, MinIO for ML artifacts, and uv packaging with PyTorch CPU-only index. Approach A LLM resolution follows runner-specific env var (LANGGRAPH_LLM_API_BASE, CREWAI_LLM_API_BASE) > agent model_name > fallback default with __env_default__ sentinel; two main.py files where backend/main.py is production entry with pysqlite3 module swap (must execute before any imports for UBI9 SQLite 3.34 vs ChromaDB 3.35), SPA static files with dev proxy fallback, and deferred lifespan startup loading domain templates into the database. CrewAI auto-prefixes models with openai/ for LiteLLM routing and silently drops tools for small models (1B-3B); Alembic requires postgresql+asyncpg:// to postgresql:// URL conversion; MCP sessions cached at module level auto-refresh on 400/404 but LangGraph InMemorySaver must be swapped for PostgresSaver in multi-worker deployments; providers router must register before models router to prevent /{model_id:path} catch-all interception; Approach B prompts load from disk at import time requiring repo-root working directory."
+description: "FastAPI backend patterns for AI quickstarts: multi-runner dispatch, agentic pipelines, and multi-agent persona-based systems"
+summary: "Solves API backend implementation for AI quickstarts using FastAPI with three approaches: (A) multi-runner dispatch across LlamaStack/LangGraph/CrewAI with SSE streaming, declarative YAML graph engine auto-wiring parallel fan-out via template references, K8s MCPServer CRD discovery, InMemorySaver checkpoints, and __env_default__ sentinel-based model resolution; (B) single-purpose LangGraph Command-based pipeline for event-driven log analysis with sklearn clustering (DBSCAN/HDBSCAN/MeanShift/Agglomerative), dual LLM endpoints as tool-calling workaround for RHOAI models, SQLModel+create_all, Phoenix/OTEL tracing, stream_with_fallback partial result preservation, and dynamic router discovery via pkgutil; (C) 5 persona-scoped LangGraph agents for regulated industries with NeMo Guardrails fail-closed input/output shield nodes, 3-layer RBAC (route/tool_auth/DataScope), Keycloak OIDC, WebSocket disconnect cancellation, PII masking middleware, Prometheus custom metrics + MLflow RHOAI Kubernetes auth, langgraph-checkpoint-postgres persistence, langchain-mcp-adapters Streamable HTTP, and Kagenti A2A with SPIRE mTLS. Use Approach A for interactive multi-framework agent platforms needing pluggable runner_type dispatch and YAML agent template suites organized by domain; Approach B for single fixed event-driven pipelines with structured Pydantic output schemas, log clustering, and no migration framework; Approach C for regulated-industry applications requiring per-persona safety shields, RBAC-scoped data isolation, PII masking, compliance knowledge bases, and Helm chart deployment with init containers. Critical patterns: all approaches use async SQLAlchemy/asyncpg except B (SQLModel+create_all); Approach A requires pysqlite3 module swap before any imports on UBI9 for CrewAI/ChromaDB (SQLite >=3.35); Approach C uses YAML models.yaml with ${VAR:-default} env substitution and mtime-based hot-reload for llm/vision/embedding tiers, and /v1/guardrail/checks for output shields instead of full LLM re-send to avoid 30s httpx timeouts. Common gotchas: pysqlite3 swap must be first lines in production main.py (separate from test app factory main.py), CrewAI auto-prefixes models with openai/ for LiteLLM and silently drops tools for small models (1-3B params), Alembic env.py must convert postgresql+asyncpg:// to sync driver for migrations, OpenShift restricted SCC requires chmod g+w on .cache for HuggingFace model downloads, MCP sessions cached at module level need automatic refresh on 400/404, and small models may emit <think> tags requiring regex stripping in chat handlers."
 metadata:
   type: component
 tags:
-  tech_stack: [fastapi, python, postgresql, sqlalchemy, alembic, asyncpg, langchain, langgraph, crewai, litellm, httpx, pydantic, sqlmodel, uvicorn, scikit-learn, sentence-transformers, faiss, minio, phoenix, opentelemetry]
-  ai_pattern: [agents, model-serving, rag, guardrails, mcp, tool-use, embeddings, clustering, log-analysis, structured-output]
-  platform: [llamastack, openshift, kubernetes, grafana, loki]
+  tech_stack: [fastapi, python, postgresql, sqlalchemy, alembic, asyncpg, langchain, langgraph, crewai, litellm, httpx, pydantic, sqlmodel, uvicorn, scikit-learn, sentence-transformers, faiss, minio, phoenix, opentelemetry, keycloak, mlflow, prometheus, boto3, a2a-sdk]
+  ai_pattern: [agents, model-serving, rag, guardrails, mcp, tool-use, embeddings, clustering, log-analysis, structured-output, multi-agent, safety-shields]
+  platform: [llamastack, openshift, kubernetes, grafana, loki, rhoai, kserve, vllm]
   data_layer: [pgvector, postgresql, minio, faiss]
 source_examples:
   - quickstart: "ai-virtual-agent"
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/ansible-log-analysis"
     notes: "Single-purpose LangGraph agentic pipeline for Ansible log analysis with clustering, RAG context retrieval, Loki integration, and Grafana alert processing"
     approach: "B"
+  - quickstart: "multi-agent-loan-origination"
+    repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
+    notes: "Multi-agent FastAPI backend with 5 persona-scoped LangGraph agents, NeMo Guardrails safety shields, Keycloak OIDC, RBAC, PII masking, MLflow tracing, Prometheus metrics, MCP tool integration, and Kagenti A2A protocol support"
+    approach: "C"
 ---
 
 # FastAPI Backend
@@ -549,19 +553,286 @@ RUN UV_HTTP_TIMEOUT=600 \
 
 ---
 
+---
+
+## Approach C: Multi-Agent Persona-Scoped System (from multi-agent-loan-origination)
+
+### When to Use
+
+When building a multi-agent backend where each persona (role) has its own dedicated LangGraph agent with role-scoped tools, safety shields (NeMo Guardrails), RBAC-controlled tool access, WebSocket streaming, conversation persistence, audit trails, and Prometheus observability. Suited for regulated-industry applications (financial services, healthcare) requiring per-role data isolation, PII masking, compliance knowledge bases, and Keycloak OIDC authentication.
+
+### Differences from Approach A
+
+- **Agent architecture:** 5 persona-specific LangGraph agents (public, borrower, loan officer, underwriter, CEO) loaded from YAML configs with mtime-based hot-reload, instead of a single multi-runner dispatch across frameworks
+- **Safety:** NeMo Guardrails input/output shields integrated into the LangGraph graph as nodes (`input_shield -> agent -> tools -> output_shield`), instead of no built-in safety
+- **Communication:** WebSocket streaming with buffered-until-done delivery, instead of SSE streaming
+- **Auth:** Keycloak OIDC with JWT validation and role-based data scoping, instead of OAuth header forwarding
+- **RBAC:** 3-layer authorization (route-level `require_roles`, graph-level `tool_auth` node, data-level `DataScope`), instead of basic user/admin checks
+- **Observability:** MLflow autolog for LangChain/LangGraph tracing + Prometheus custom metrics (token usage, inference latency, tool calls, agent routing), instead of no observability
+- **Base image:** `python:3.11-slim` with multi-stage build, instead of UBI9
+- **Package manager:** `uv` with hatchling build system in a Turborepo monorepo, instead of pip
+- **MCP integration:** `langchain-mcp-adapters` MultiServerMCPClient with Streamable HTTP transport, instead of raw JSON-RPC
+- **Deployment:** Helm chart with init containers (wait-for-db, run-migrations), Kagenti A2A sidecar support, SPIRE identity for mTLS, instead of compose-only
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Python 3.11 on `python:3.11-slim`
+- **Container image:** Multi-stage Containerfile using `uv` with CPU-only PyTorch index for embedding model
+- **Key dependencies:**
+  - `fastapi`, `uvicorn[standard]` -- ASGI web framework and server
+  - `sqlalchemy[asyncio]`, `asyncpg`, `alembic` -- async ORM, PostgreSQL driver, migrations (shared `packages/db` package)
+  - `langgraph`, `langchain-openai`, `langchain-core` -- LangGraph agent graphs with safety shield nodes
+  - `langgraph-checkpoint-postgres`, `psycopg[binary]` -- PostgreSQL-backed conversation persistence
+  - `langchain-mcp-adapters` -- MCP tool integration via Streamable HTTP
+  - `mcp>=1.0.0,<2.0` -- MCP protocol SDK
+  - `a2a-sdk[http-server]>=0.2.0` -- A2A protocol for Kagenti agent discovery
+  - `PyJWT[crypto]` -- JWT validation for Keycloak OIDC
+  - `prometheus-fastapi-instrumentator` -- automatic HTTP metrics + custom agent metrics
+  - `mlflow>=3.1.0` -- LangChain/LangGraph autolog tracing
+  - `sentence-transformers` -- local embedding model (nomic-embed-text-v1.5) for compliance KB
+  - `boto3` -- S3/MinIO document storage
+  - `pymupdf` -- PDF document extraction
+  - `sqladmin` -- admin dashboard
+  - `httpx` -- async HTTP client for NeMo Guardrails and MCP servers
+- **Helm subchart:** Custom Helm chart at `deploy/helm/mortgage-ai/` with api-deployment, api-service templates
+
+### Key Patterns
+
+#### LangGraph Agent with Safety Shield Nodes
+
+Each agent graph follows: `input_shield -> agent -> tools <-> agent -> output_shield -> END`. Safety shields call NeMo Guardrails `/v1/guardrail/checks` endpoint (runs only rails, no full LLM call). Shields fail-closed in regulated domains.
+
+```python
+# packages/api/src/agents/base.py
+graph = StateGraph(AgentState)
+graph.add_node("input_shield", input_shield)
+graph.add_node("agent", agent)
+graph.add_node("tools", tools_with_metrics)
+graph.add_node("output_shield", output_shield)
+graph.set_entry_point("input_shield")
+graph.add_conditional_edges("input_shield", after_input_shield,
+    {END: END, "agent": "agent"})
+graph.add_edge("tools", "agent")
+graph.add_edge("output_shield", END)
+```
+
+#### YAML-Driven Agent Registry with Hot-Reload
+
+Agent configs live in `config/agents/<name>.yaml` with system prompts, tool definitions, and RBAC rules. The registry caches compiled graphs and rebuilds them when the YAML file's mtime changes (checked at most every 5 seconds). Failed reloads keep the last valid graph.
+
+```python
+# packages/api/src/agents/registry.py
+def get_agent(agent_name: str, checkpointer=None):
+    config_path = _AGENTS_CONFIG_DIR / f"{agent_name}.yaml"
+    current_mtime = config_path.stat().st_mtime
+    if agent_name in _graphs:
+        cached_graph, cached_mtime = _graphs[agent_name]
+        if current_mtime <= cached_mtime:
+            return cached_graph
+    config = load_agent_config(agent_name)
+    graph = _build_graph(agent_name, config, checkpointer=checkpointer)
+    _graphs[agent_name] = (graph, current_mtime)
+    return graph
+```
+
+#### 3-Layer RBAC with Per-Tool Authorization
+
+Layer 1: Route-level `require_roles()` dependency. Layer 2: `tool_auth` graph node checks each pending tool call against `tool_allowed_roles` from agent YAML config. Layer 3: `DataScope` object restricts query results per role (borrower sees own data, CEO gets PII-masked aggregates).
+
+```python
+# packages/api/src/core/auth.py
+def build_data_scope(role: UserRole, user_id: str) -> DataScope:
+    if role == UserRole.BORROWER:
+        return DataScope(own_data_only=True, user_id=user_id)
+    if role == UserRole.CEO:
+        return DataScope(pii_mask=True, document_metadata_only=True,
+                         full_pipeline=True)
+    if role == UserRole.UNDERWRITER:
+        return DataScope(full_pipeline=True)
+    return DataScope()
+```
+
+#### WebSocket Chat with Disconnect Cancellation
+
+Chat endpoints use WebSocket with a race pattern: the agent task runs against a disconnect sentinel. If the client disconnects mid-stream, the agent task is cancelled immediately, freeing the LLM slot.
+
+```python
+# packages/api/src/routes/_chat_handler.py
+agent_task = asyncio.create_task(_run_agent(user_text, input_messages))
+disconnect_task = asyncio.create_task(_wait_disconnect())
+done, pending = await asyncio.wait(
+    {agent_task, disconnect_task},
+    return_when=asyncio.FIRST_COMPLETED,
+)
+if disconnect_task in done:
+    agent_task.cancel()
+    return
+```
+
+#### YAML Model Config with Env Var Substitution and Hot-Reload
+
+A `config/models.yaml` file defines LLM tiers (llm, vision, embedding) with `${VAR:-default}` placeholders. The config supports nested env var references and is hot-reloaded on mtime change.
+
+```yaml
+# config/models.yaml
+models:
+  llm:
+    provider: openai_compatible
+    model_name: "${LLM_MODEL:-gpt-4o-mini}"
+    endpoint: "${LLM_BASE_URL:-https://api.openai.com/v1}"
+    api_key: "${LLM_API_KEY:-not-needed}"
+  vision:
+    model_name: "${VISION_MODEL:-${LLM_MODEL:-gpt-4o-mini}}"
+    endpoint: "${VISION_BASE_URL:-${LLM_BASE_URL:-https://api.openai.com/v1}}"
+```
+
+#### Prometheus Custom Metrics for Agent Observability
+
+Custom Prometheus metrics track LLM token usage (input/output by model and persona), inference latency, tool call counts/duration, agent routing decisions, and active WebSocket sessions. These complement automatic HTTP metrics from `prometheus-fastapi-instrumentator`.
+
+```python
+# packages/api/src/core/metrics.py
+llm_tokens_total = Counter("llm_tokens_total",
+    "Total LLM tokens used",
+    ["model", "direction", "persona"])
+llm_inference_duration_seconds = Histogram("llm_inference_duration_seconds",
+    "LLM inference duration in seconds",
+    ["model", "persona"],
+    buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0])
+```
+
+#### MLflow Tracing with RHOAI Kubernetes Auth
+
+MLflow autolog traces all LangChain/LangGraph operations. Auth supports three modes: RHOAI 3.4+ Kubernetes plugin (reads mounted ServiceAccount token automatically), explicit bearer token, or legacy SA token file. Initialization runs in a background thread to avoid blocking startup.
+
+```python
+# packages/api/src/observability.py
+def _configure_auth() -> None:
+    if os.environ.get("MLFLOW_TRACKING_AUTH") == "kubernetes":
+        # RHOAI 3.4+ plugin -- reads SA token and namespace automatically
+        if not settings.MLFLOW_WORKSPACE and _SA_NAMESPACE_PATH.is_file():
+            namespace = _SA_NAMESPACE_PATH.read_text().strip()
+            os.environ["MLFLOW_WORKSPACE"] = namespace
+        return
+    if settings.MLFLOW_TRACKING_TOKEN:
+        os.environ["MLFLOW_TRACKING_TOKEN"] = settings.MLFLOW_TRACKING_TOKEN
+        return
+    # Legacy: read mounted SA token file directly
+```
+
+#### PII Masking Middleware
+
+A Starlette middleware intercepts JSON responses and recursively masks sensitive fields (SSN, DOB, account numbers) when the authenticated user's data scope has `pii_mask=True`. Coverage is automatic across all endpoints.
+
+```python
+# packages/api/src/middleware/pii.py
+class PIIMaskingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if not getattr(request.state, "pii_mask", False):
+            return response
+        # Read body, mask PII fields, return new response
+        data = json.loads(body_bytes)
+        masked = _mask_pii_recursive(data)
+        return Response(content=json.dumps(masked).encode("utf-8"), ...)
+```
+
+#### MCP Tool Integration via langchain-mcp-adapters
+
+Uses `MultiServerMCPClient` with Streamable HTTP transport to connect to MCP servers at startup. Tools are cached and injected into agent graphs. Supports multiple MCP servers (risk-assessment, predictive-model) with graceful degradation when optional servers are unreachable.
+
+```python
+# packages/api/src/agents/mcp_integration.py
+_client = MultiServerMCPClient({
+    "risk-assessment": {
+        "transport": "streamable_http",
+        "url": url,
+    },
+})
+_tools = await _client.get_tools()
+```
+
+#### Kagenti A2A Protocol for Agent Discovery
+
+Each LangGraph agent is exposed as an A2A-compatible endpoint for Kagenti multi-agent orchestration. Agents register with skills, capabilities, and SPIRE identity for mTLS. Feature-gated by `KAGENTI_ENABLED` env var.
+
+```python
+# packages/api/src/a2a_server.py
+class LoanAgentExecutor(AgentExecutor):
+    async def execute(self, context, event_queue):
+        graph = get_agent(self._agent_name, checkpointer=self._checkpointer)
+        result = await graph.ainvoke(inputs, config)
+        tag_trace_with_spire()  # Attach SPIRE identity to MLflow trace
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `DATABASE_URL` -- async PostgreSQL connection string (`postgresql+asyncpg://...`)
+  - `COMPLIANCE_DATABASE_URL` -- separate connection for HMDA compliance schema with dedicated `compliance_app` role
+  - `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` -- primary LLM config (any OpenAI-compatible endpoint)
+  - `VISION_MODEL` / `VISION_BASE_URL` / `VISION_API_KEY` -- optional vision-capable model (falls back to main LLM)
+  - `KEYCLOAK_URL` / `KEYCLOAK_REALM` / `KEYCLOAK_CLIENT_ID` / `KEYCLOAK_ISSUER` -- Keycloak OIDC config
+  - `AUTH_DISABLED` -- bypass JWT validation for dev/tests
+  - `NEMO_GUARDRAILS_ENDPOINT` -- NeMo Guardrails server for safety shields
+  - `MCP_RISK_SERVER_URL` -- MCP risk assessment server (Streamable HTTP)
+  - `PREDICTIVE_MODEL_MCP_URL` -- optional external predictive model MCP server
+  - `MLFLOW_TRACKING_URI` / `MLFLOW_EXPERIMENT_NAME` / `MLFLOW_TRACKING_AUTH` -- MLflow tracing config
+  - `S3_ENDPOINT` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` / `S3_BUCKET` -- MinIO document storage
+  - `KAGENTI_ENABLED` / `KAGENTI_SERVICE_NAME` -- enable A2A protocol servers
+  - `COMPANY_NAME` / `AGENT_NAME` -- branding and agent name injection
+- **Config files:**
+  - `packages/api/src/core/config.py` -- centralized `Settings` class via pydantic-settings
+  - `config/models.yaml` -- model tier definitions with env var substitution and hot-reload
+  - `config/agents/*.yaml` -- per-agent system prompts, tool configs, and RBAC rules with hot-reload
+  - `config/keycloak/` -- Keycloak realm export
+- **Helm values:** `deploy/helm/mortgage-ai/values.yaml` with `api.enabled`, `api.replicas`, `api.image`, `api.healthCheck`, `api.resources`
+
+### Known Gotchas
+
+- **OpenShift restricted SCC and HuggingFace cache:** The Containerfile sets `chown -R appuser:0 /app && chmod -R g+w /app/.cache` because OpenShift's restricted SCC assigns arbitrary UIDs in group 0. Without `g+w` on the cache directory, the sentence-transformers model download fails at runtime.
+- **CPU-only PyTorch in Containerfile:** The embedding model runs on CPU in the container. The Containerfile uses `--extra-index-url https://download.pytorch.org/whl/cpu` to avoid shipping ~25GB of unused CUDA libraries. A comment in the Containerfile documents this choice.
+- **MLflow init in background thread:** MLflow initialization may block on HTTP calls to the tracking server. The `init_mlflow_tracing()` function runs `_do_mlflow_init()` in a daemon thread to prevent blocking app startup if the MLflow server is slow or unreachable.
+- **Output shield timeout workaround:** The NeMo Guardrails output check previously re-sent the full assistant response as a new user message, triggering a full LLM call (32s+) that exceeded the httpx 30s timeout. The code now uses `/v1/guardrail/checks` which runs only the rails (<5s). The `OUTPUT_SHIELD_DISABLED` setting remains as a fallback toggle.
+- **PREDICTIVE_MODEL_MCP_URL empty string handling:** A Pydantic field_validator converts empty strings to `None` so that deleting the env var value properly disables the predictive model feature, rather than leaving an empty URL that would cause connection errors.
+- **Monorepo editable install for DB package:** The `pyproject.toml` uses `[tool.uv.sources]` with `path = "../db", editable = true` to link the shared `packages/db` package. Both the Containerfile and the Helm init container must set `PYTHONPATH` to include both packages.
+- **Think tag stripping in chat handler:** Small models (e.g., Llama) sometimes emit `<think>` tags and inline tool-call text instead of using structured tool-calling format. The chat handler strips these with regex before sending the response to the client.
+
+### Testing Notes
+
+- Health check at `GET /health/` with structured response including database, storage, and LLM connectivity status
+- Auth bypass with `AUTH_DISABLED=true` for local dev and testing
+- 1083+ pytest tests with `pytest-asyncio` (`asyncio_mode = "auto"`)
+- Three test tiers: unit tests, functional tests (real FastAPI app with middleware), integration tests (real PostgreSQL + MinIO via testcontainers)
+- `Prometheus /metrics` endpoint auto-exposed by `prometheus-fastapi-instrumentator`
+- Containerfile includes a built-in HEALTHCHECK using Python urllib
+
+### Related Patterns
+
+- Deployment: Helm chart at `deploy/helm/mortgage-ai/` with init containers for db-wait and migrations, Kagenti sidecar annotations, SPIRE SVID volume mounts
+- Database: shared `packages/db` package with SQLAlchemy models, Alembic migrations, HMDA schema isolation
+- Frontend: separate `packages/ui` React app communicating via WebSocket and REST
+- MCP servers: external risk-assessment and predictive-model MCP servers consumed via Streamable HTTP
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) |
-|----------|-------------------------------|-----------------------------------|
-| **Use case** | Interactive multi-framework agent chat platform | Event-driven log analysis pipeline |
-| **Agent frameworks** | LlamaStack, LangGraph, CrewAI (pluggable) | LangGraph only (fixed pipeline) |
-| **LLM routing** | Per-runner env vars with sentinel-based resolution | Single OpenAI-compatible endpoint + optional tool-calling endpoint |
-| **ORM / Migrations** | SQLAlchemy + Alembic | SQLModel + create_all (no migrations) |
-| **Base image** | UBI9 | UBI8 |
-| **Package manager** | pip | uv (with PyTorch CPU-only index) |
-| **Graph definition** | Declarative YAML -> StateGraph | Imperative Python with Command routing |
-| **Frontend bundling** | React SPA built into backend static files | Separate Gradio UI container |
-| **Observability** | None built-in | Phoenix/OTEL with LangChain instrumentation |
-| **ML workload** | None | Log clustering (sklearn) + sentence embeddings |
-| **Object storage** | MinIO for attachments (optional) | MinIO for ML models and RAG indexes |
-| **MCP usage** | Tool integration in graph engine + K8s CRD discovery | Loki log querying via dedicated MCP client |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (multi-agent-loan-origination) |
+|----------|-------------------------------|-----------------------------------|-------------------------------------------|
+| **Use case** | Interactive multi-framework agent chat platform | Event-driven log analysis pipeline | Multi-agent regulated-industry application |
+| **Agent frameworks** | LlamaStack, LangGraph, CrewAI (pluggable) | LangGraph only (fixed pipeline) | LangGraph only (5 persona-specific agents) |
+| **Agent count** | 1 (dynamically configured) | 1 (fixed pipeline) | 5 (public, borrower, LO, underwriter, CEO) |
+| **LLM routing** | Per-runner env vars with sentinel-based resolution | Single endpoint + optional tool-calling endpoint | YAML model tiers (llm, vision, embedding) with hot-reload |
+| **Safety** | None built-in | None built-in | NeMo Guardrails input/output shield nodes (fail-closed) |
+| **Auth / RBAC** | OAuth header forwarding | None | Keycloak OIDC + 3-layer RBAC (route, tool_auth node, DataScope) |
+| **Communication** | SSE streaming | REST endpoints | WebSocket streaming with disconnect cancellation |
+| **ORM / Migrations** | SQLAlchemy + Alembic | SQLModel + create_all (no migrations) | SQLAlchemy + Alembic (shared db package in monorepo) |
+| **Base image** | UBI9 | UBI8 | python:3.11-slim |
+| **Package manager** | pip | uv (with PyTorch CPU-only index) | uv + hatchling (Turborepo monorepo) |
+| **Observability** | None built-in | Phoenix/OTEL with LangChain instrumentation | MLflow autolog + Prometheus custom metrics |
+| **PII handling** | None | None | Middleware-based recursive PII masking per role |
+| **MCP usage** | Tool integration in graph engine + K8s CRD discovery | Loki log querying via dedicated MCP client | langchain-mcp-adapters MultiServerMCPClient (Streamable HTTP) |
+| **Conversation persistence** | InMemorySaver | None | langgraph-checkpoint-postgres (per-user threads) |
+| **Multi-agent protocol** | None | None | Kagenti A2A with SPIRE mTLS |
+| **Deployment** | compose.yaml | compose.yaml | Helm chart + compose.yml (init containers, Kagenti sidecar) |

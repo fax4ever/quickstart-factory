@@ -1,18 +1,22 @@
 ---
 name: nemo-guardrails
 description: NeMo Guardrails proxy with TrustyAI NemoGuardrails CRD for LLM-based input/output safety checks on RHOAI
-summary: "Deploys LLM input/output safety rails as a TrustyAI-managed proxy (NemoGuardrails CRD, trustyai.opendatahub.io/v1alpha1) that intercepts agent-to-LLM traffic on RHOAI, using Colang flow definitions and custom Python @action handlers with domain-specific self-check prompts embedded in a single ConfigMap. Use over guardrails-orchestrator when LLM-based self-check prompts are preferred over dedicated ML detector models (regex, HAP, prompt-injection) -- avoids Llama Guard false positives for agentic flows; optionally enable jailbreakDetect.enabled for GPU-accelerated NemoGuard JailbreakDetect NIM requiring NGC_API_KEY. Standalone Helm chart configures LLM endpoint via llm.url (takes precedence) or http://<serviceHostname>:<servicePort>/v1 with Makefile override routing through LlamaStack; agent service calls /v1/guardrail/checks via httpx toggled by USE_NEMO_GUARDRAILS env var with OPENAI_API_KEY passed to the CR for LLM auth. NemoGuardrails CRD must pre-exist (requires RHOAI 3.3+ with TrustyAI operator enabled), ConfigMap changes require explicit oc rollout restart, JailbreakDetect NIM has up to 15-minute cold start for NGC model pull, and its PVC (nemoguard-jailbreakdetect-cache) must be manually deleted on undeploy since Helm uninstall skips PVCs."
+summary: "Deploys LLM input/output safety rails as a TrustyAI-managed proxy (NemoGuardrails CRD, trustyai.opendatahub.io/v1alpha1) intercepting agent-to-LLM traffic on RHOAI via /v1/guardrail/checks (<5s vs ~45s for /v1/chat/completions). Approach A (standalone Helm chart) uses LLM-based self-check prompts with Colang flows and custom Python @action handlers, routing through LlamaStack -- prefer over Llama Guard when domain-specific policy avoids false positives in agentic flows; Approach B (umbrella Helm chart) uses declarative regex patterns (SSN/credit-card/email/phone), sensitive_data_detection entities, and KServe-served NemoGuard 8B with 23 safety categories (S1-S23) plus fail-closed error behavior -- prefer for regulated industries needing PII interception; use guardrails-orchestrator instead for dedicated ML detector models with gateway routing. Approach A configures LLM via llm.url (precedence) or http://<serviceHostname>:<servicePort>/v1 with OPENAI_API_KEY on the CR and USE_NEMO_GUARDRAILS toggle; Approach B uses NEMO_GUARDRAILS_ENDPOINT auto-populated to http://nemo-guardrails-internal:8000 by Helm with nginx proxy (DNS resolver hardcoded 172.30.0.10) bridging HTTP-HTTPS for MaaS endpoints. NemoGuardrails CRD must pre-exist (RHOAI 3.3+ TrustyAI operator), ConfigMap changes require explicit oc rollout restart, JailbreakDetect NIM has 15-minute cold start for NGC model pull with PVC (nemoguard-jailbreakdetect-cache) requiring manual deletion, NemoGuard 8B needs GPU and S3 storage, and shields degrade gracefully logging DEGRADED when endpoint is unset."
 metadata:
   type: component
 tags:
-  tech_stack: [trustyai, nemo-guardrails, helm, python, httpx]
-  ai_pattern: [guardrails, agents, prompt-chaining]
+  tech_stack: [trustyai, nemo-guardrails, helm, python, httpx, nginx, vllm]
+  ai_pattern: [guardrails, agents, prompt-chaining, model-serving]
   platform: [rhoai, openshift, kserve]
 source_examples:
   - quickstart: "it-self-service-agent"
     repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
     notes: "NeMo Guardrails with TrustyAI CRD for LLM-based self-check input/output rails plus optional NemoGuard JailbreakDetect NIM"
     approach: "A"
+  - quickstart: "multi-agent-loan-origination"
+    repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
+    notes: "NeMo Guardrails with TrustyAI CRD using regex pattern detection, PII/sensitive data detection, and KServe-served NemoGuard 8B content safety model behind nginx proxy"
+    approach: "B"
 ---
 
 # NeMo Guardrails
@@ -222,3 +226,238 @@ async def _check_nemo_guardrails(self, text, role="user"):
 
 - `guardrails-orchestrator` -- alternative TrustyAI guardrails approach using dedicated ML detector models (regex, HAP, prompt-injection) with gateway routing instead of LLM-based self-checks
 - `llamastack` -- LlamaStack service that this component routes LLM calls through
+
+---
+
+## Approach B: Regex + PII Detection + Content Safety Model with Nginx Proxy (from multi-agent-loan-origination)
+
+### When to Use
+
+When the guardrails need focuses on pattern-based filtering (SSN, credit card, email, phone numbers), sensitive data entity detection, and a dedicated content safety classifier model rather than LLM-based self-check prompts. Suited for regulated domains (e.g., financial services) where fail-closed behavior and PII interception are paramount, and where the guardrails component is deployed as part of an umbrella Helm chart rather than a standalone chart.
+
+### Differences from Approach A
+
+- **Rail type:** Uses regex pattern matching (`regex_detection`) and entity-based sensitive data detection (`sensitive_data_detection`) instead of LLM-based self-check prompts and Colang flow logic
+- **Content safety model:** Deploys NemoGuard 8B (`llama-3.1-nemoguard-8b-content-safety-merged`) as a KServe InferenceService with a vLLM ServingRuntime, rather than the JailbreakDetect NIM
+- **Proxy layer:** Includes an nginx reverse proxy for HTTP-to-HTTPS bridging (MaaS LLM endpoints) and content safety detector indirection
+- **Deployment method:** Integrated into the umbrella Helm chart (`deploy/helm/mortgage-ai/`) with `nemoGuardrails.enabled` toggle, not a standalone chart
+- **Client integration:** Uses `NEMO_GUARDRAILS_ENDPOINT` env var pointing to `http://nemo-guardrails-internal:8000` (auto-populated by Helm when enabled), not a boolean `USE_NEMO_GUARDRAILS` toggle
+- **Fail-closed design:** The Python client (`NeMoGuardrailsChecker`) blocks on any error, documented as intentional for regulated lending
+- **No Colang custom actions:** Rails are purely declarative (regex patterns, entity lists, content safety NIM prompts) with no custom Python `@action` handlers
+
+### TrustyAI NemoGuardrails CR with Regex Rails
+
+The same `NemoGuardrails` CRD is used, but the ConfigMap contains regex-based rails and sensitive data detection rather than Colang self-check flows.
+
+```yaml
+# deploy/helm/mortgage-ai/templates/nemo-guardrails.yaml
+apiVersion: trustyai.opendatahub.io/v1alpha1
+kind: NemoGuardrails
+metadata:
+  name: nemo-guardrails
+  annotations:
+    security.opendatahub.io/enable-auth: 'false'
+spec:
+  nemoConfigs:
+    - name: nemo-guardrails-config
+      configMaps:
+        - nemo-guardrails-config
+  env:
+    - name: "OPENAI_API_KEY"
+      valueFrom:
+        secretKeyRef:
+          name: "nemo-guardrails-api-key"
+          key: "token"
+```
+
+### Regex Pattern Detection Configuration
+
+Input and output patterns are defined declaratively in the ConfigMap. The input patterns cover PII (SSN, credit card, email, phone), security keywords, and competitor names.
+
+```yaml
+# deploy/helm/mortgage-ai/templates/nemo-guardrails-config.yaml (excerpt)
+rails:
+  config:
+    regex_detection:
+      input:
+        patterns:
+          - "\\d{3}-\\d{2}-\\d{4}"                                    # SSN
+          - "\\d{4}[- ]?\\d{4}[- ]?\\d{4}[- ]?\\d{4}"               # Credit card
+          - "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"       # Email
+          - "\\b(password|hack|exploit|vulnerability|secret|api[_-]?key|token)\\b"
+        case_insensitive: true
+    sensitive_data_detection:
+      input:
+        entities:
+          - CREDIT_CARD
+          - US_SSN
+          - EMAIL_ADDRESS
+          - PHONE_NUMBER
+```
+
+### Content Safety Detector via KServe InferenceService
+
+The content safety model is deployed as a KServe `InferenceService` with a dedicated `ServingRuntime` using vLLM, requiring GPU and S3 storage for model weights.
+
+```yaml
+# deploy/helm/mortgage-ai/templates/nemo-guardrails-model.yaml (excerpt)
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: vllm-nemoguard-runtime
+spec:
+  containers:
+    - name: kserve-container
+      image: {{ .Values.nemoGuardrails.contentSafety.runtime.image }}
+      args:
+        - "--model=/mnt/models"
+        - "--gpu-memory-utilization=0.95"
+        - "--max-model-len=4096"
+        - "--enforce-eager"
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: content-safety-detector
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    model:
+      runtime: vllm-nemoguard-runtime
+      storage:
+        key: nemo-model-storage
+        path: {{ .Values.nemoGuardrails.contentSafety.modelPath }}
+```
+
+### Nginx Proxy for HTTP-HTTPS Bridging
+
+An nginx reverse proxy handles two concerns: bridging HTTP to HTTPS for external MaaS LLM endpoints (port 8081), and proxying to the in-cluster content safety detector (port 8085). The NeMo Guardrails config references the proxy instead of direct endpoints.
+
+```yaml
+# deploy/helm/mortgage-ai/templates/nemo-guardrails-proxy.yaml (excerpt)
+# HTTP->HTTPS proxy for MaaS LLM endpoint
+server {
+  listen 8081;
+  location / {
+    set $upstream {{ .Values.nemoGuardrails.proxy.maas.upstream }};
+    proxy_pass $upstream;
+    proxy_ssl_server_name on;
+  }
+}
+# HTTP proxy for content safety detector (NemoGuard via vLLM)
+server {
+  listen 8085;
+  location / {
+    set $nemoguard http://content-safety-detector-predictor.{{ .Release.Namespace }}.svc.cluster.local:8080;
+    proxy_pass $nemoguard;
+  }
+}
+```
+
+### Fail-Closed Client Integration
+
+The Python client uses `NEMO_GUARDRAILS_ENDPOINT` (auto-populated by Helm to `http://nemo-guardrails-internal:8000`) and blocks on any error -- intentional for regulated lending.
+
+```python
+# packages/api/src/inference/safety.py
+class NeMoGuardrailsChecker:
+    """Uses /v1/guardrail/checks endpoint -- runs only the rails,
+    returns in <5s (previous /v1/chat/completions routed through
+    the main LLM at ~45s per call)."""
+
+    async def _call_nemo(self, messages):
+        try:
+            response = await self._client.post(
+                f"{self._endpoint}/v1/guardrail/checks",
+                json={"model": "nemo-guardrails", "messages": messages},
+            )
+            data = response.json()
+            if data.get("status") == "blocked":
+                activated = data.get("guardrails_data", {}).get("log", {}).get("activated_rails", [])
+                return SafetyResult(is_safe=False, violation_categories=activated or ["nemo_blocked"])
+            return SafetyResult(is_safe=True)
+        except Exception:
+            # Fail-closed: block on error in regulated lending domain
+            return SafetyResult(is_safe=False, explanation="Safety check unavailable")
+```
+
+### Content Safety Prompt Templates
+
+When the content safety model is enabled, custom prompt templates are injected into the ConfigMap for both input and output checks, using 23 safety categories (S1-S23) and the `nemoguard_parse_prompt_safety` / `nemoguard_parse_response_safety` output parsers.
+
+```yaml
+# deploy/helm/mortgage-ai/templates/nemo-guardrails-config.yaml (excerpt)
+prompts:
+  - task: content_safety_check_input $model=content_safety
+    content: |
+        Task: Check if there is unsafe content...
+        <BEGIN UNSAFE CONTENT CATEGORIES>
+        S1: Violence.
+        S2: Sexual.
+        ...
+        S23: Immoral/Unethical.
+        <END UNSAFE CONTENT CATEGORIES>
+    output_parser: nemoguard_parse_prompt_safety
+    max_tokens: 50
+```
+
+### RBAC for NeMo Guardrails
+
+A dedicated ServiceAccount, Role, and RoleBinding are created to grant the NeMo Guardrails service access to read Service resources in the namespace.
+
+```yaml
+# deploy/helm/mortgage-ai/templates/nemo-guardrails-rbac.yaml (excerpt)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nemo-guardrails-api
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nemo-guardrails-api-access
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `NEMO_GUARDRAILS_ENDPOINT` -- auto-populated to `http://nemo-guardrails-internal:8000` when `nemoGuardrails.enabled=true`; can be overridden for external NeMo Guardrails servers
+  - `OUTPUT_SHIELD_DISABLED` -- defaults to `false` because `/v1/guardrail/checks` runs only rails without triggering a full LLM call (completes in <1s)
+  - `OPENAI_API_KEY` -- passed to NemoGuardrails CR via a Secret for LLM authentication
+- **Helm values:**
+  - `nemoGuardrails.enabled` -- master toggle for the entire NeMo Guardrails stack
+  - `nemoGuardrails.llm.baseUrl` / `modelName` / `apiKey` -- main LLM endpoint configuration
+  - `nemoGuardrails.contentSafety.deploy` -- toggle for the KServe content safety detector model
+  - `nemoGuardrails.contentSafety.modelPath` -- S3 path to NemoGuard 8B weights (default: `llama-3.1-nemoguard-8b-content-safety-merged`)
+  - `nemoGuardrails.contentSafety.gpu.resourceType` -- GPU resource type (default: `nvidia.com/mig-2g.35gb`)
+  - `nemoGuardrails.proxy.enabled` -- toggle for the nginx proxy (default: `true`)
+  - `nemoGuardrails.proxy.maas.upstream` / `pathPrefix` -- external MaaS LLM endpoint and path rewrite
+
+### Known Gotchas
+
+- **Endpoint auto-population:** When `nemoGuardrails.enabled=true` and no explicit `secrets.NEMO_GUARDRAILS_ENDPOINT` is set, the Helm secret template auto-populates the endpoint to `http://nemo-guardrails-internal:8000` (from `deploy/helm/mortgage-ai/templates/secret.yaml`)
+- **Content safety model requires GPU and S3:** The NemoGuard 8B InferenceService requires a GPU resource (configurable via `contentSafety.gpu.resourceType`) and S3-compatible storage with pre-loaded model weights
+- **Proxy DNS resolver hardcoded:** The nginx proxy config hardcodes the CoreDNS resolver IP as `172.30.0.10` (from the proxy ConfigMap: `resolver 172.30.0.10 valid=30s`), which is the default for OpenShift clusters
+- **Proxy path rewriting for MaaS:** The nginx proxy rewrites `/v1/*` to `/<pathPrefix>/v1/*` when `proxy.maas.pathPrefix` is set, supporting MaaS endpoints that require a path prefix
+- **Graceful degradation:** Shields are no-ops when `NEMO_GUARDRAILS_ENDPOINT` is not set; the `log_safety_status()` function logs `DEGRADED` at startup as a warning (from `packages/api/src/inference/safety.py`)
+- **Performance improvement from /v1/guardrail/checks:** The code comments document that the previous `/v1/chat/completions` approach routed every check through the main LLM (~45s per call), while `/v1/guardrail/checks` runs only the rails and returns in <5s
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (it-self-service-agent) | Approach B (multi-agent-loan-origination) |
+|----------|-----------|-----------|
+| **Rail type** | LLM-based self-check prompts (the LLM evaluates its own messages against policy) | Regex patterns, PII entity detection, and dedicated content safety model |
+| **Content safety** | Optional JailbreakDetect NIM (GPU, NGC pull) | KServe-served NemoGuard 8B via vLLM (GPU, S3 model storage) |
+| **Custom logic** | Colang flows + Python `@action` handlers in ConfigMap | Declarative regex/entity patterns + NeMo built-in content safety prompts |
+| **Deployment** | Standalone Helm chart with Makefile targets | Integrated in umbrella Helm chart with `nemoGuardrails.enabled` toggle |
+| **LLM proxy** | Routes through LlamaStack | Nginx reverse proxy for HTTP-HTTPS bridging to MaaS endpoints |
+| **Client toggle** | `USE_NEMO_GUARDRAILS` boolean env var | `NEMO_GUARDRAILS_ENDPOINT` URL (auto-populated by Helm) |
+| **Error behavior** | Standard HTTP error handling | Fail-closed (blocks message on any error) |
+| **Best for** | Custom domain-specific policy enforcement via natural language prompts | PII/sensitive data interception, regulated industries, pattern-based filtering |

@@ -1,12 +1,12 @@
 ---
 name: minio
-description: "S3-compatible object storage for attachments, models, RAG indexes, Langfuse, and KServe model serving"
-summary: "Provides S3-compatible object storage for chat attachments, RAG index and ML model persistence, Loki logging backend, Langfuse v3 observability, and KServe guardrail detector model serving across five approaches with different deployment kinds, Python SDK choices, and optionality patterns. Choose A (boto3, compose profiles, DISABLE_ATTACHMENTS feature flag, configure-pipeline subchart) for optional single-consumer attachment uploads with lazy _get_s3() and session-scoped keys; B (minio Python SDK, standalone subchart, always-on StatefulSet 50Gi PVC) for multi-consumer RAG/ML/Loki with LATEST.json index status tracking, joblib model serialization, and centralized client factory; C (in-repo Helm chart, Deployment 100Gi PVC, post-install mc CLI bucket Job) for infrastructure-only with Makefile DEPLOY_MINIO gating, credential validation, and ODH dashboard labels; D (embedded StatefulSet 10Gi PVC, init container mc provisioning, MC_CONFIG_DIR=/tmp/.mc) for Langfuse-dedicated S3 gated by langfuse.enabled with full OpenShift restricted SCC and per-feature LANGFUSE_S3_*_FORCE_PATH_STYLE env vars; E (TrustyAI image, HuggingFace CLI init container, RHOAI data connection Secret with opendatahub.io/connection-type: s3) for KServe InferenceService detector models with helm.sh/weight ordering. Env var naming differs per approach -- ATTACHMENTS_BUCKET_* (A), MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY with secure=False (B), minio.userId/password Helm values (C), LANGFUSE_S3_*_FORCE_PATH_STYLE: \"true\" required for path-style addressing (D), AWS_* keys in data connection Secret (E) -- and Python SDK splits between boto3 lazy initialization for test compatibility (A) and minio SDK centralized client factory with config priority params > env > defaults (B). Feature flag uses inverted DISABLE_ATTACHMENTS logic bridged by start script (A); Loki deploys its own separate MinIO instance requiring anyuid SCC via minio-sa ServiceAccount (B); post-install bucket Job lacks wait-for-ready with backoffLimit: 3 and mc:latest unpinned (C); MC_CONFIG_DIR=/tmp/.mc required because default ~/.mc is not writable under restricted SCC, and anonymous download policy exposes all three buckets namespace-wide (D); credentials hardcoded as plain-text THEACCESSKEY/THESECRETKEY in Deployment template, init container creates unused /mnt/models/llms/ directory, and TrustyAI image has different update cadence than standard quay.io/minio/minio (E)."
+description: "S3-compatible object storage for attachments, models, RAG indexes, Langfuse, KServe, and document/MLflow storage"
+summary: "Provides S3-compatible object storage for chat attachments, RAG index and ML model persistence, Loki logging backend, Langfuse v3 observability, KServe guardrail detector model serving, and document/MLflow artifact storage across six approaches (A-F) with different deployment kinds, Python SDK choices, and optionality patterns. Choose A (boto3, compose profiles, DISABLE_ATTACHMENTS feature flag, configure-pipeline subchart) for optional single-consumer attachment uploads with lazy _get_s3() and session-scoped keys; B (minio Python SDK, standalone StatefulSet subchart, 50Gi PVC) for multi-consumer RAG/ML/Loki with LATEST.json index tracking, joblib serialization, and centralized client factory; C (in-repo Helm Deployment, 100Gi PVC, post-install mc CLI bucket Job) for infrastructure-only with Makefile DEPLOY_MINIO gating, credential validation, and ODH dashboard labels; D (embedded StatefulSet 10Gi PVC, init container mc provisioning, MC_CONFIG_DIR=/tmp/.mc) for Langfuse-dedicated S3 gated by langfuse.enabled with full OpenShift restricted SCC and per-feature LANGFUSE_S3_*_FORCE_PATH_STYLE env vars; E (TrustyAI image, HuggingFace CLI init container, RHOAI data connection Secret with opendatahub.io/connection-type: s3) for KServe InferenceService detector models with helm.sh/weight ordering; F (async boto3 singleton via run_in_executor, embedded Deployment with minio.enabled toggle and external S3 override, 10Gi PVC with persistence toggle) for dual-consumer document uploads with presigned URLs and path traversal protection plus MLflow artifact storage with testcontainers integration tests. Env var naming differs per approach -- ATTACHMENTS_BUCKET_* (A), MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY with secure=False (B), minio.userId/password Helm values (C), LANGFUSE_S3_*_FORCE_PATH_STYLE: \"true\" required for path-style addressing (D), AWS_* keys in data connection Secret (E), S3_*/AWS_*/MLFLOW_S3_ENDPOINT_URL from centralized Secret with secretKeyRef (F) -- and Python SDK splits between boto3 lazy initialization for test compatibility (A), minio SDK centralized client factory with config priority params > env > defaults (B), and boto3 async singleton with _ensure_bucket() at app lifespan startup (F). Common gotchas: inverted DISABLE_ATTACHMENTS logic bridged by start script (A); Loki deploys its own separate MinIO instance requiring anyuid SCC via minio-sa ServiceAccount (B); post-install bucket Job lacks wait-for-ready with backoffLimit: 3 and mc:latest unpinned (C); MC_CONFIG_DIR=/tmp/.mc required because default ~/.mc is not writable under restricted SCC, and anonymous download policy exposes all three buckets namespace-wide (D); credentials hardcoded as plain-text THEACCESSKEY/THESECRETKEY and TrustyAI image has different update cadence than standard quay.io/minio/minio (E); Helm entrypoint only pre-creates documents bucket while compose creates both documents and mlflow, and _ensure_bucket() raises ClientError if MinIO not yet healthy at API startup (F)."
 metadata:
   type: component
 tags:
-  tech_stack: [minio, python, boto3, fastapi, joblib, faiss, helm, langfuse, kserve, huggingface]
-  ai_pattern: [rag, embeddings, vector-search, data-pipeline, evaluation, guardrails, model-serving]
+  tech_stack: [minio, python, boto3, fastapi, joblib, faiss, helm, langfuse, kserve, huggingface, mlflow, langgraph]
+  ai_pattern: [rag, embeddings, vector-search, data-pipeline, evaluation, guardrails, model-serving, agents]
   platform: [openshift, rhoai, opendatahub, kserve]
   data_layer: [minio]
 source_examples:
@@ -30,6 +30,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/lemonade-stand-assistant"
     notes: "MinIO Deployment for guardrail detector model storage with HuggingFace init container download, KServe InferenceService consumption via RHOAI data connection Secret"
     approach: "E"
+  - quickstart: "multi-agent-loan-origination"
+    repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
+    notes: "Multi-consumer MinIO Deployment for document uploads and MLflow artifact storage, boto3 async singleton with thread-pool executor, embedded Helm chart with minio.enabled toggle and external S3 override pattern"
+    approach: "F"
 ---
 
 # MinIO
@@ -1039,20 +1043,281 @@ annotations:
 
 ---
 
+## Approach F: Multi-Consumer Document and MLflow Storage with Async boto3 Singleton (from multi-agent-loan-origination)
+
+### When to Use
+
+When MinIO serves two distinct consumers in a multi-agent application -- the FastAPI backend for document uploads (mortgage documents) and MLflow for artifact storage (agent traces, experiment data). This approach uses boto3 with an async thread-pool executor wrapper as a module-level singleton, deploys MinIO as a Deployment embedded in the parent Helm chart with `minio.enabled` toggle, and supports external S3 override for production via `--set minio.enabled=false --set secrets.S3_ENDPOINT=https://...`.
+
+### Differences from Approaches A through E
+
+- **Python SDK:** boto3 with async wrapper via `asyncio.run_in_executor()`, initialized as a singleton at app lifespan (not lazy globals like A, not minio SDK like B)
+- **Deployment kind:** Kubernetes Deployment with Recreate strategy, embedded in parent chart templates (not a subchart like A/B, not standalone chart like C)
+- **Multi-consumer:** API (document uploads with presigned URLs) and MLflow (artifact storage using AWS_* env vars) share one MinIO instance but use separate buckets (`documents`, `mlflow`)
+- **Optionality:** Helm `minio.enabled` toggle with external S3 override pattern documented in values.yaml comments and chart README
+- **Bucket init:** Entrypoint `mkdir -p /data/mlflow /data/documents` pre-creates data directories on server side; StorageService `_ensure_bucket()` auto-creates the API bucket client-side
+- **Env var naming:** `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_REGION` for API; `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `MLFLOW_S3_ENDPOINT_URL` for MLflow
+- **Secret pattern:** Centralized `<release>-secret` K8s Secret containing all app config (S3_* keys for API, MINIO_ROOT_* for server), consumed via secretKeyRef
+- **Persistence:** Configurable via `minio.persistence.enabled` with toggle between PVC (10Gi default) and emptyDir
+- **Security:** Pod and container security contexts inherited from shared `podSecurityContext` and `securityContext` values
+- **Compose:** Always-on service (no profiles), pre-creates both buckets via entrypoint, both API and MLflow declare `minio` as a healthcheck dependency
+
+### Tech Stack & Dependencies
+- **Runtime:** MinIO server (S3-compatible API)
+- **Container image:** `minio/minio:latest`
+- **Key dependencies:** boto3 and botocore in the Python backend for S3 client operations; MLflow uses AWS SDK env vars internally
+- **Helm chart:** Embedded in parent chart `deploy/helm/mortgage-ai/templates/minio.yaml` (not a subchart)
+
+### Key Patterns
+
+#### Async boto3 Singleton with Thread-Pool Executor
+
+The StorageService wraps boto3's synchronous S3 client in async methods using `asyncio.run_in_executor()`. It is initialized as a module-level singleton at app startup via `init_storage_service()` and injected via `get_storage_service()`. The s3v4 signature version and path-style addressing are configured explicitly for MinIO compatibility.
+
+```python
+# packages/api/src/services/storage.py (lines 23-48)
+class StorageService:
+    """Thin wrapper around a boto3 S3 client."""
+
+    def __init__(self, endpoint, access_key, secret_key,
+                 bucket, region="us-east-1"):
+        self._bucket = bucket
+        self._client = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name=region,
+            config=BotoConfig(
+                signature_version="s3v4",
+                s3={"addressing_style": "path",
+                    "use_accelerate_endpoint": False},
+            ),
+        )
+        self._ensure_bucket()
+```
+
+#### Client-Side Bucket Auto-Creation
+
+The StorageService auto-creates its target bucket on initialization if it does not exist, using `head_bucket` to check existence and `create_bucket` as fallback. This runs at app startup, not lazily.
+
+```python
+# packages/api/src/services/storage.py (lines 51-57)
+def _ensure_bucket(self) -> None:
+    """Create the bucket if it doesn't already exist."""
+    try:
+        self._client.head_bucket(Bucket=self._bucket)
+    except ClientError:
+        logger.info("Creating S3 bucket: %s", self._bucket)
+        self._client.create_bucket(Bucket=self._bucket)
+```
+
+#### Path Traversal Protection in Object Keys
+
+Object keys are built with `os.path.basename()` to strip path components from user-supplied filenames, preventing path traversal attacks through S3 key manipulation.
+
+```python
+# packages/api/src/services/storage.py (lines 102-109)
+@staticmethod
+def build_object_key(application_id: int, document_id: int,
+                     filename: str) -> str:
+    """Build the S3 object key: {app_id}/{doc_id}/{filename}.
+
+    Strips path components from filename to prevent path traversal.
+    """
+    safe_name = os.path.basename(filename) or f"doc-{document_id}"
+    return f"{application_id}/{document_id}/{safe_name}"
+```
+
+#### Presigned URL Generation for Downloads
+
+The StorageService generates presigned GET URLs for secure, time-limited document downloads without exposing MinIO credentials to the frontend.
+
+```python
+# packages/api/src/services/storage.py (lines 88-100)
+async def get_download_url(self, object_key: str,
+                           expires_in: int = 3600) -> str:
+    """Return a presigned GET URL for the given object key."""
+    loop = asyncio.get_running_loop()
+    url: str = await loop.run_in_executor(
+        None,
+        partial(
+            self._client.generate_presigned_url,
+            "get_object",
+            Params={"Bucket": self._bucket, "Key": object_key},
+            ExpiresIn=expires_in,
+        ),
+    )
+    return url
+```
+
+#### Dual-Bucket Entrypoint Initialization
+
+The compose and Helm entrypoint pre-creates both `documents` and `mlflow` bucket directories before starting the MinIO server, ensuring both consumers have their buckets available immediately.
+
+```yaml
+# compose.yml (lines 210-211)
+minio:
+  image: docker.io/minio/minio:latest
+  entrypoint: sh
+  command: >-
+    -c 'mkdir -p /data/mlflow /data/documents &&
+    exec minio server --address ":9000"
+    --console-address ":9001" /data'
+```
+
+The Helm template uses the same pattern:
+
+```yaml
+# deploy/helm/mortgage-ai/templates/minio.yaml (lines 29-35)
+command:
+  - sh
+  - -c
+  - >-
+    mkdir -p /data/documents &&
+    exec minio server --address ":9000"
+    --console-address ":9001" /data
+```
+
+#### External S3 Override Pattern
+
+The Helm chart supports swapping MinIO for an external S3 endpoint by disabling the MinIO Deployment and overriding the S3 connection secrets. This is documented in the values.yaml header comments.
+
+```yaml
+# deploy/helm/mortgage-ai/values.yaml (lines 8-9)
+#   External MinIO/S3:  --set minio.enabled=false
+#                       --set secrets.S3_ENDPOINT=https://...
+```
+
+#### MLflow S3 Artifact Backend
+
+MLflow uses MinIO as its artifact store via AWS SDK env vars. The MLflow container receives `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `MLFLOW_S3_ENDPOINT_URL` pointing to the same MinIO instance, with `s3://mlflow` as the default artifact root.
+
+```yaml
+# compose.yml (lines 189-197)
+mlflow:
+  depends_on:
+    minio:
+      condition: service_healthy
+  environment:
+    MLFLOW_DEFAULT_ARTIFACT_ROOT: s3://mlflow
+    AWS_ACCESS_KEY_ID: minio
+    AWS_SECRET_ACCESS_KEY: miniosecret
+    MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+```
+
+#### Helm Deployment with Persistence Toggle
+
+The Helm template supports toggling between PVC-backed and emptyDir storage via `minio.persistence.enabled`. The PVC uses the global `storageClass` if set, defaulting to the cluster default.
+
+```yaml
+# deploy/helm/mortgage-ai/templates/minio.yaml (lines 72-78)
+volumes:
+  - name: minio-storage
+    {{- if .Values.minio.persistence.enabled }}
+    persistentVolumeClaim:
+      claimName: {{ .Values.minio.name }}-pvc
+    {{- else }}
+    emptyDir: {}
+    {{- end }}
+```
+
+#### Centralized Secret with secretKeyRef
+
+MinIO server credentials and S3 client credentials are both stored in a single centralized Secret (`<release>-secret`). The MinIO Deployment consumes `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` via secretKeyRef; the API Deployment consumes `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, and `S3_REGION` from the same Secret.
+
+```yaml
+# deploy/helm/mortgage-ai/templates/minio.yaml (lines 44-53)
+env:
+  - name: MINIO_ROOT_USER
+    valueFrom:
+      secretKeyRef:
+        name: {{ include "mortgage-ai.fullname" . }}-secret
+        key: MINIO_ROOT_USER
+  - name: MINIO_ROOT_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: {{ include "mortgage-ai.fullname" . }}-secret
+        key: MINIO_ROOT_PASSWORD
+```
+
+#### Integration Test with testcontainers
+
+Integration tests use `testcontainers.minio.MinioContainer` to spin up an ephemeral MinIO instance for testing the StorageService, avoiding dependency on external infrastructure.
+
+```python
+# packages/api/tests/integration/conftest.py (lines 19, 46-47)
+from testcontainers.minio import MinioContainer
+
+@pytest.fixture(scope="session")
+def minio_container():
+    """Start minio/minio:latest via testcontainers."""
+```
+
+### Configuration
+- **Environment variables (API consumer):**
+  - `S3_ENDPOINT` -- MinIO endpoint URL (default: `http://localhost:9090` local, `http://minio:9000` in compose/cluster)
+  - `S3_ACCESS_KEY` -- S3 access key (default: `minio`)
+  - `S3_SECRET_KEY` -- S3 secret key (default: `miniosecret`)
+  - `S3_BUCKET` -- bucket name for document uploads (default: `documents`)
+  - `S3_REGION` -- region (default: `us-east-1`)
+  - `UPLOAD_MAX_SIZE_MB` -- maximum upload size in MB (default: `50`)
+- **Environment variables (MLflow consumer):**
+  - `AWS_ACCESS_KEY_ID` -- S3 access key (same credentials as API)
+  - `AWS_SECRET_ACCESS_KEY` -- S3 secret key (same credentials as API)
+  - `MLFLOW_S3_ENDPOINT_URL` -- MinIO endpoint (`http://minio:9000`)
+  - `MLFLOW_DEFAULT_ARTIFACT_ROOT` -- artifact store URI (`s3://mlflow`)
+- **Environment variables (MinIO server):**
+  - `MINIO_ROOT_USER` -- root user (default: `minio`)
+  - `MINIO_ROOT_PASSWORD` -- root password (default: `miniosecret`)
+- **Helm values:**
+  - `minio.enabled` -- deploy MinIO (default: `true`); set `false` for external S3
+  - `minio.name` -- resource name (default: `minio`)
+  - `minio.image.repository` / `.tag` -- container image (default: `minio/minio:latest`)
+  - `minio.persistence.enabled` -- PVC or emptyDir (default: `true`)
+  - `minio.persistence.size` -- PVC size (default: `10Gi`)
+  - `minio.resources` -- requests and limits (default: 128Mi-384Mi memory, 100m-500m CPU)
+  - `secrets.S3_ENDPOINT` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` / `S3_BUCKET` / `S3_REGION` -- S3 connection for API
+  - `secrets.MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` -- MinIO server credentials
+
+### Known Gotchas
+- The compose port mapping uses `9090:9000` for the API and `9091:9001` for the console, which differs from most MinIO setups that use `9000:9000`. The `S3_ENDPOINT` default in the Python config (`config.py` line 132) is `http://localhost:9090` to match this mapping, while the in-container endpoint remains `http://minio:9000`.
+- The Helm entrypoint only pre-creates the `documents` directory (`mkdir -p /data/documents`) while the compose entrypoint pre-creates both `documents` and `mlflow` (`mkdir -p /data/mlflow /data/documents`). The MLflow bucket on cluster may need to be created separately or by MLflow's own initialization.
+- The StorageService uses `run_in_executor(None, ...)` with the default executor (thread pool), wrapping boto3's synchronous calls. This is documented as intentional at the top of the module (`storage.py` lines 4-5: "Uses boto3 synchronous client run in a thread-pool executor for async compatibility").
+- The `_ensure_bucket()` method runs at singleton initialization time (app startup), not lazily. If MinIO is not yet healthy when the API starts, initialization will raise a `ClientError`. The compose healthcheck dependency (`minio: condition: service_healthy`) prevents this in local dev, but on cluster the API pod may need readiness probes tuned to allow MinIO startup time.
+- The `get_storage_service()` function raises `RuntimeError("StorageService not initialised")` if called before `init_storage_service()` -- this guards against using the storage module before the app lifespan hook runs.
+- The `build_object_key()` static method includes path traversal protection via `os.path.basename()` (noted in the docstring at line 107 of storage.py: "Strips path components from filename to prevent path traversal attacks").
+- MLflow and the API use the same MinIO credentials but different env var naming conventions -- `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` for MLflow vs. `S3_ACCESS_KEY`/`S3_SECRET_KEY` for the API. Both are sourced from the same Helm Secret.
+
+### Testing Notes
+- Verify MinIO health via compose healthcheck: `curl -sf http://localhost:9090/minio/health/live`
+- Console is available at port 9091 locally for manual inspection (credentials from `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`)
+- Integration tests use `testcontainers.minio.MinioContainer` to spin up ephemeral MinIO instances -- no external MinIO dependency needed for testing
+- Verify both buckets exist (`documents` and `mlflow`) after startup by checking the MinIO console or using `mc ls`
+- Test the external S3 override by deploying with `--set minio.enabled=false --set secrets.S3_ENDPOINT=https://...`
+
+### Related Patterns
+- Architecture: Multi-agent loan origination with per-agent document handling
+- Deployment: Embedded Helm Deployment with enabled/disabled toggle and external override
+- Architecture: MLflow artifact storage via S3-compatible backend
+- Architecture: async singleton service pattern with FastAPI lifespan hooks
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (lemonade-stand-assistant) |
-|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|---------------------------------------|
-| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) | Langfuse v3 S3 backend (events, exports, media) | Guardrail detector model storage for KServe |
-| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client | None -- Langfuse handles S3 internally | None -- KServe handles S3 via data connection |
-| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) | Embedded in parent chart templates (StatefulSet + VolumeClaimTemplate) | Embedded in parent chart templates (Deployment + separate PVC) |
-| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag | Conditional on `langfuse.enabled` | Always-on required dependency |
-| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart | Two (Langfuse web + worker) | Multiple KServe InferenceServices (HAP, prompt injection detectors) |
-| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label | `<release>-minio-secret` with access-key/secret-key fields | RHOAI data connection Secret with AWS_* keys and `opendatahub.io/connection-type: s3` |
-| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination | Not created (internal-only) | Not created (internal-only) |
-| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC via StatefulSet VolumeClaimTemplate | 50Gi PVC (ReadWriteOnce, separate resource) |
-| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI | Init container with mc CLI + wait-for-ready loop | Init container downloads models directly to PVC |
-| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) | No | Yes (`opendatahub.io/dashboard: 'true'` + `opendatahub.io/managed: 'true'` labels, `opendatahub.io/connection-type: s3` annotation) |
-| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) | Embedded in parent chart templates | Embedded in parent chart templates |
-| Image version | latest | latest | latest | Pinned release tag | latest (TrustyAI image) |
-| Security context | Not specified | Not specified | Empty (`{}`) | Full OpenShift restricted SCC (runAsNonRoot, drop ALL, seccomp) | Partial (drop ALL, seccomp, no runAsNonRoot) |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (lemonade-stand-assistant) | Approach F (multi-agent-loan-origination) |
+|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|---------------------------------------|-------------------------------------------|
+| Primary use case | Chat attachment uploads | RAG index + ML model + Loki backend storage | General-purpose S3 storage (infrastructure-only) | Langfuse v3 S3 backend (events, exports, media) | Guardrail detector model storage for KServe | Document uploads + MLflow artifact storage |
+| Python SDK | boto3 / botocore | minio (>=7.2.17) | None -- no application-level client | None -- Langfuse handles S3 internally | None -- KServe handles S3 via data connection | boto3 / botocore with async thread-pool executor wrapper |
+| Deployment method | configure-pipeline subchart | Standalone minio subchart (StatefulSet + PVC) | In-repo Helm chart (Deployment + separate PVC) | Embedded in parent chart templates (StatefulSet + VolumeClaimTemplate) | Embedded in parent chart templates (Deployment + separate PVC) | Embedded in parent chart templates (Deployment + optional PVC) |
+| Optional/required | Optional via compose profiles and feature flag | Always-on required dependency | Optional via Makefile `DEPLOY_MINIO` flag | Conditional on `langfuse.enabled` | Always-on required dependency | Optional via Helm `minio.enabled` toggle with external S3 override |
+| Number of consumers | Single (backend attachments API) | Multiple (backend, clustering, rag, Loki) | Infrastructure-only, consumers not wired in chart | Two (Langfuse web + worker) | Multiple KServe InferenceServices (HAP, prompt injection detectors) | Two (FastAPI document API + MLflow artifact store) |
+| Secret pattern | ATTACHMENTS_BUCKET_* env vars | Shared `minio` K8s Secret with secretKeyRef | `minio-secret` with ODH dashboard label | `<release>-minio-secret` with access-key/secret-key fields | RHOAI data connection Secret with AWS_* keys and `opendatahub.io/connection-type: s3` | Centralized `<release>-secret` with S3_* and MINIO_ROOT_* keys via secretKeyRef |
+| OpenShift Routes | Not created | API + WebUI routes with TLS edge termination | API + UI routes with TLS edge termination | Not created (internal-only) | Not created (internal-only) | Not created (internal-only) |
+| Storage persistence | Compose volume (local dev) | 50Gi PVC via StatefulSet VolumeClaimTemplate | 100Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC via StatefulSet VolumeClaimTemplate | 50Gi PVC (ReadWriteOnce, separate resource) | 10Gi PVC or emptyDir (toggled via `persistence.enabled`) |
+| Bucket creation | Python SDK auto-create on first use | Python SDK make_bucket + sample doc upload Job | Helm post-install hook Job using minio/mc CLI | Init container with mc CLI + wait-for-ready loop | Init container downloads models directly to PVC | Entrypoint mkdir + Python SDK auto-create on startup |
+| ODH dashboard integration | No | No | Yes (`opendatahub.io/dashboard: 'true'` labels) | No | Yes (`opendatahub.io/dashboard: 'true'` + `opendatahub.io/managed: 'true'` labels, `opendatahub.io/connection-type: s3` annotation) | No |
+| Chart source | ai-architecture-charts | ai-architecture-charts | In-repo (`helm/minio/`) | Embedded in parent chart templates | Embedded in parent chart templates | Embedded in parent chart templates |
+| Image version | latest | latest | latest | Pinned release tag | latest (TrustyAI image) | latest |
+| Security context | Not specified | Not specified | Empty (`{}`) | Full OpenShift restricted SCC (runAsNonRoot, drop ALL, seccomp) | Partial (drop ALL, seccomp, no runAsNonRoot) | Inherited from shared podSecurityContext/securityContext values |

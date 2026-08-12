@@ -1,11 +1,11 @@
 ---
 name: guardrails-layer
 description: AI safety guardrails via LlamaStack shields, F5 AI Guardrails proxy, TrustyAI orchestrator, or NeMo Guardrails
-summary: "Implements AI safety guardrails for LLM inference via five approaches: (A) LlamaStack per-agent input shields executed via `client.safety.run_shield()` in runner code with output refusal handling via Responses API `refusal` content type and shield IDs stored as JSON columns, (B) F5 AI Guardrails (Calypso AI Moderator) as an external commercial reverse proxy intercepting OpenAI-compatible API calls with Block/Audit/Redact enforcement modes and per-project Moderator UI management, (C) TrustyAI GuardrailsOrchestrator (fms-orchestr8) as an RHOAI-native open-source gateway deploying HF detector microservices (gibberish, DeBERTa v3 prompt injection, Granite Guardian HAP, regex PII) as KServe InferenceServices in RawDeployment mode with CPU-only default, (D) NeMo Guardrails as a standalone service with custom Colang flow definitions (config.yaml, rails.co, actions.py in ConfigMap), LLM-based self-check input/output evaluation, optional NemoGuard JailbreakDetect NIM, and global scope across all agents via `USE_NEMO_GUARDRAILS` env var, and (E) TrustyAI v2 API with inline per-request detector configuration via `/api/v2/chat/completions-detection` (gateway disabled, 2-container pod, direct port 8032 access), application-level multilingual regex pre-filtering in 13 languages, Lingua language detection service, sentence chunker (gRPC port 8085), MinIO-based model storage with HuggingFace CLI download init container, and R Shiny real-time monitoring dashboard with Prometheus `/metrics` endpoint scraped at 3-second intervals. Choose A for per-agent shield customization within LlamaStack applications (requires runner code integration), B for centralized security-team-managed enforcement with Audit/Redact modes (requires 1-3 extra GPUs, two-pass Helm deployment, anyuid SCC for 7 SAs across 4 namespaces), C for open-source RHOAI-native guardrails with CPU-only detectors, single Helm chart deployment, and per-route detector grouping via ConfigMaps (`/all/` and `/passthrough/` routes), D for custom domain-specific rail logic via Colang flows with optional jailbreak NIM (optional 1 GPU) and HTTP `/v1/guardrail/checks` endpoint, or E for per-request detector control with application-level pre-filtering, SSE streaming with duplicate chunk detection, and real-time observability via R Shiny dashboard; B and C require no application code changes (change target URL only), A and D require code integration, and E requires detector payload construction, SSE parsing, local regex pre-filter, and metrics collection. A stores shield IDs as JSON columns on the agent model and executes shields sequentially before inference; B requires the Moderator endpoint at `https://<hostname>/openai/<connection-name>/chat/completions` where connection-name is the display name from the Moderator UI (not model ID); C configures detector thresholds in the NLP orchestrator ConfigMap (gibberish at 0.35, others at 0.5) and deploys detectors in RawDeployment mode using OCI-stored models with 2Gi shared-memory emptyDir volumes per detector; D calls `NEMO_GUARDRAILS_URL` (default `http://nemo-guardrails/v1/guardrail/checks`) with a 10-second timeout and uses the same inference LLM for self-check evaluations; E sends inline `detectors.input` and `detectors.output` maps in each request body, reads system prompt from ConfigMap-mounted file at `/system-prompt/prompt`, and uses Kubernetes-injected service discovery env vars for orchestrator connection. A is fail-open (shield errors caught and logged but request proceeds without safety validation), B is fail-closed but may false-positive on RAG content injected into prompts and `extra_body` parameters must not be sent through the Moderator, C is fail-closed with its orchestrator pod requiring all three containers healthy (NLP orchestrator port 8032, gateway port 8090, regex detector port 8080) plus a 2Gi shared-memory emptyDir volume per detector for PyTorch model loading, D is fail-closed with guardrail errors propagating as exceptions -- D shares the inference LLM for self-checks (adding latency under load) and `BLOCKED_OUTPUT_PHRASES` are hard-coded in the ConfigMap requiring pod restart to update, and E is fail-closed with TLS verification disabled (`ssl.CERT_NONE`) for self-signed orchestrator certificates, a 100-character input limit enforced before any guardrail check, hard-coded MinIO credentials in the deployment template, and the prompt injection detector requiring 4x more resources (4 CPU/16Gi) than other detectors (1 CPU/4Gi)."
+summary: "Implements AI safety guardrails for LLM inference via six approaches: (A) LlamaStack per-agent input shields executed via `client.safety.run_shield()` in runner code with output refusal handling via Responses API `refusal` content type and shield IDs stored as JSON columns, (B) F5 AI Guardrails (Calypso AI Moderator) as an external commercial reverse proxy intercepting OpenAI-compatible API calls with Block/Audit/Redact enforcement modes and per-project Moderator UI management, (C) TrustyAI GuardrailsOrchestrator (fms-orchestr8) as an RHOAI-native open-source gateway deploying HF detector microservices (gibberish, DeBERTa v3 prompt injection, Granite Guardian HAP, regex PII) as KServe InferenceServices in RawDeployment mode with CPU-only default, (D) NeMo Guardrails as a standalone service with custom Colang flow definitions (config.yaml, rails.co, actions.py in ConfigMap), LLM-based self-check input/output evaluation, optional NemoGuard JailbreakDetect NIM, and global scope across all agents via `USE_NEMO_GUARDRAILS` env var, (E) TrustyAI v2 API with inline per-request detector configuration via `/api/v2/chat/completions-detection` (gateway disabled, 2-container pod, direct port 8032 access), application-level multilingual regex pre-filtering in 13 languages, Lingua language detection service, sentence chunker (gRPC port 8085), MinIO-based model storage with HuggingFace CLI download init container, and R Shiny real-time monitoring dashboard with Prometheus `/metrics` endpoint scraped at 3-second intervals, and (F) NeMo Guardrails as LangGraph StateGraph nodes (`input_shield`, `output_shield`) with conditional edges, `safety_blocked` AgentState field, rails-only `/v1/guardrail/checks` endpoint reducing check latency from ~45s to <5s, and configurable output shield disable via `OUTPUT_SHIELD_DISABLED`. Choose A for per-agent shield customization within LlamaStack applications (requires runner code integration), B for centralized security-team-managed enforcement with Audit/Redact modes (requires 1-3 extra GPUs, two-pass Helm deployment, anyuid SCC for 7 SAs across 4 namespaces), C for open-source RHOAI-native guardrails with CPU-only detectors, single Helm chart deployment, and per-route detector grouping via ConfigMaps (`/all/` and `/passthrough/` routes), D for custom domain-specific rail logic via Colang flows with optional jailbreak NIM (optional 1 GPU) and HTTP `/v1/guardrail/checks` endpoint, E for per-request detector control with application-level pre-filtering, SSE streaming with duplicate chunk detection, and real-time observability via R Shiny dashboard, or F for graph-level safety routing in LangGraph agents with conditional edges and `after_input_shield` routing to END when blocked; B and C require no application code changes (change target URL only), A and D require code integration, and E and F require significant code changes including detector payload construction, SSE parsing, graph node definitions, or AgentState extension. A stores shield IDs as JSON columns on the agent model and executes shields sequentially before inference; B requires the Moderator endpoint at `https://<hostname>/openai/<connection-name>/chat/completions` where connection-name is the display name from the Moderator UI (not model ID); C configures detector thresholds in the NLP orchestrator ConfigMap (gibberish at 0.35, others at 0.5) and deploys detectors in RawDeployment mode using OCI-stored models with 2Gi shared-memory emptyDir volumes per detector; D calls `NEMO_GUARDRAILS_URL` (default `http://nemo-guardrails/v1/guardrail/checks`) with a 10-second timeout and uses the same inference LLM for self-check evaluations; E sends inline `detectors.input` and `detectors.output` maps in each request body, reads system prompt from ConfigMap-mounted file at `/system-prompt/prompt`, and uses Kubernetes-injected service discovery env vars for orchestrator connection; F uses `NeMoGuardrailsChecker` module-level singleton with 30s httpx timeout calling `/v1/guardrail/checks` (rails-only, no full LLM inference) and routes via `after_input_shield` conditional edge to END when blocked. A is fail-open (shield errors caught and logged but request proceeds without safety validation), B is fail-closed but may false-positive on RAG content injected into prompts and `extra_body` parameters must not be sent through the Moderator, C is fail-closed with its orchestrator pod requiring all three containers healthy (NLP orchestrator port 8032, gateway port 8090, regex detector port 8080) plus a 2Gi shared-memory emptyDir volume per detector for PyTorch model loading, D is fail-closed with guardrail errors propagating as exceptions -- D shares the inference LLM for self-checks (adding latency under load) and `BLOCKED_OUTPUT_PHRASES` are hard-coded in the ConfigMap requiring pod restart to update, E is fail-closed with TLS verification disabled (`ssl.CERT_NONE`) for self-signed orchestrator certificates, a 100-character input limit enforced before any guardrail check, hard-coded MinIO credentials in the deployment template, and the prompt injection detector requiring 4x more resources (4 CPU/16Gi) than other detectors (1 CPU/4Gi), and F is fail-closed with the output shield adding ~32s latency (NeMo re-sends full response through LLM for self-check) making `OUTPUT_SHIELD_DISABLED=true` a practical necessity, shared `SAFETY_REFUSAL_MESSAGE` across all agents with no per-violation customization, and the httpx client in `NeMoGuardrailsChecker` never explicitly closed."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, llamastack, python, streamlit, calypso-ai, jupyter, nemo-guardrails, colang, r-shiny, aiohttp, lingua]
+  tech_stack: [fastapi, llamastack, python, streamlit, calypso-ai, jupyter, nemo-guardrails, colang, r-shiny, aiohttp, lingua, langchain, langgraph, httpx]
   ai_pattern: [guardrails, agents, model-serving]
   platform: [llamastack, rhoai, openshift, kserve, vllm, trustyai]
   data_layer: [postgresql, minio]
@@ -30,6 +30,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/lemonade-stand-assistant"
     notes: "TrustyAI GuardrailsOrchestrator v2 API with inline detector config in request body, application-level regex pre-filtering for 13-language content blocking, Lingua language detection, sentence chunker, Prometheus metrics, and R Shiny real-time monitoring dashboard"
     approach: "E"
+  - quickstart: "multi-agent-loan-origination"
+    repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
+    notes: "NeMo Guardrails integrated as LangGraph StateGraph nodes (input_shield, output_shield) using /v1/guardrail/checks rails-only endpoint, fail-closed behavior, conditional graph edges for safety routing, and configurable output shield disable"
+    approach: "F"
 ---
 
 # Guardrails Layer
@@ -1188,21 +1192,165 @@ Guardrails operate outside the prompt chain at two levels. First, the FastAPI ap
 
 ---
 
+## Approach F: NeMo Guardrails as LangGraph StateGraph Nodes (from multi-agent-loan-origination)
+
+### When to Use
+
+Use Approach F when you want safety guardrails tightly integrated into the LangGraph graph structure itself, enforced as graph nodes with conditional edges rather than external middleware or service calls. Best suited for LangGraph-based agents where you want the graph execution engine to handle the safety routing logic (block vs proceed) rather than implementing it in application code. The `/v1/guardrail/checks` endpoint runs only the rails without triggering a full LLM inference, keeping input check latency under ~5 seconds.
+
+### Differences from Approach D
+
+- **Graph-level integration**: Safety checks are LangGraph StateGraph nodes (`input_shield`, `output_shield`) with conditional edges, not standalone HTTP calls from application code. The graph structure is `input_shield -> agent -> tools <-> agent -> output_shield -> END`, with `after_input_shield` routing to `END` when blocked.
+- **Rails-only endpoint**: Uses `/v1/guardrail/checks` (runs only configured rails) rather than `/v1/chat/completions` (which triggers full LLM inference). This reduces check latency from ~45s to <5s.
+- **Per-graph scope**: Each agent graph has its own shield nodes, but all agents share the same NeMo Guardrails service. Approach D applies guardrails globally via a single `USE_NEMO_GUARDRAILS` flag.
+- **State-based routing**: The `safety_blocked` field in `AgentState` drives conditional edges. When input is blocked, an `AIMessage` with the refusal is added to state and the graph routes directly to `END`, skipping the agent and tools entirely.
+- **Configurable output shield**: The output shield can be disabled via `OUTPUT_SHIELD_DISABLED=true` because NeMo's output check re-sends the full response as a new user message, triggering a full LLM call (~32s+) that can exceed the httpx 30s timeout.
+- **No custom Colang flows**: This approach uses the NeMo server's pre-configured rails (regex, PII detection, content safety NIM) without custom Colang flow definitions.
+
+### Data Flow
+
+1. User message enters the LangGraph graph at the `input_shield` node
+2. `input_shield` calls `get_safety_checker()` which returns a cached `NeMoGuardrailsChecker` if `NEMO_GUARDRAILS_ENDPOINT` is set, otherwise `None` (shields disabled)
+3. The checker calls `POST {endpoint}/v1/guardrail/checks` with `[{"role": "user", "content": ...}]` and model `"nemo-guardrails"`
+4. If NeMo returns `status: "blocked"`, the node sets `safety_blocked: True` and adds a refusal `AIMessage` to state
+5. The `after_input_shield` conditional edge routes to `END` (blocked) or `agent` (safe)
+6. After the agent completes, the `output_shield` node checks the last `AIMessage` by sending both the user message and assistant response to NeMo
+7. If blocked, the response is replaced with a refusal message; otherwise the graph proceeds to `END`
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| LangGraph input_shield node | NeMo Guardrails server | HTTP (httpx, 30s timeout) | Input safety check via `/v1/guardrail/checks` |
+| LangGraph output_shield node | NeMo Guardrails server | HTTP (httpx, 30s timeout) | Output safety check via `/v1/guardrail/checks` |
+| LangGraph conditional edges | AgentState.safety_blocked | State check | Route to END (blocked) or agent (safe) |
+| Chat handler | Audit service | SQLAlchemy async | Log safety_block events with shield type |
+
+### Key Integration Points
+
+#### NeMoGuardrailsChecker with Rails-Only Endpoint
+
+The checker calls the `/v1/guardrail/checks` endpoint which runs only configured rails without triggering full LLM inference. Fail-closed: any error returns `is_safe=False`.
+
+```python
+# packages/api/src/inference/safety.py (lines 32-85)
+class NeMoGuardrailsChecker:
+    def __init__(self, *, endpoint: str) -> None:
+        self._endpoint = endpoint.rstrip("/")
+        self._client = httpx.AsyncClient(timeout=30.0)
+
+    async def _call_nemo(self, messages: list[dict[str, str]]) -> SafetyResult:
+        try:
+            response = await self._client.post(
+                f"{self._endpoint}/v1/guardrail/checks",
+                json={"model": "nemo-guardrails", "messages": messages},
+            )
+            response.raise_for_status()
+            data = response.json()
+            if data.get("status") == "blocked":
+                activated = data.get("guardrails_data", {}).get("log", {}).get("activated_rails", [])
+                return SafetyResult(is_safe=False, violation_categories=activated or ["nemo_blocked"])
+            return SafetyResult(is_safe=True)
+        except Exception:
+            logger.error("NeMo Guardrails check failed, blocking (fail-closed)", exc_info=True)
+            return SafetyResult(is_safe=False, explanation="Safety check unavailable")
+
+    async def check_input(self, user_message: str) -> SafetyResult:
+        return await self._call_nemo([{"role": "user", "content": user_message}])
+
+    async def check_output(self, user_message: str, assistant_response: str) -> SafetyResult:
+        return await self._call_nemo([
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": assistant_response},
+        ])
+```
+
+#### Input Shield as LangGraph Node with Conditional Routing
+
+The input shield node checks the user's message and sets `safety_blocked` in the graph state. The conditional edge routes to `END` when blocked, bypassing the agent and tools entirely.
+
+```python
+# packages/api/src/agents/base.py (lines 128-151, 306-308)
+async def input_shield(state: AgentState) -> dict:
+    checker = get_safety_checker()
+    if not checker:
+        return {"safety_blocked": False}
+    last_msg = state["messages"][-1]
+    result = await checker.check_input(last_msg.content)
+    if not result.is_safe:
+        logger.warning("Input shield BLOCKED: categories=%s", result.violation_categories)
+        return {
+            "safety_blocked": True,
+            "messages": [AIMessage(content=SAFETY_REFUSAL_MESSAGE)],
+        }
+    return {"safety_blocked": False}
+
+def after_input_shield(state: AgentState) -> str:
+    if state.get("safety_blocked"):
+        return END
+    return "agent"
+
+graph.set_entry_point("input_shield")
+graph.add_conditional_edges("input_shield", after_input_shield, {END: END, "agent": "agent"})
+```
+
+#### Output Shield with Configurable Disable
+
+The output shield re-sends the full response to NeMo for checking but can be disabled via `OUTPUT_SHIELD_DISABLED=true` due to latency issues.
+
+```python
+# packages/api/src/agents/base.py (lines 229-261)
+async def output_shield(state: AgentState) -> dict:
+    if getattr(settings, "OUTPUT_SHIELD_DISABLED", False):
+        return {}
+    checker = get_safety_checker()
+    if not checker:
+        return {}
+    last_msg = state["messages"][-1]
+    if not isinstance(last_msg, AIMessage) or not last_msg.content:
+        return {}
+    user_msg = ""
+    for msg in reversed(state["messages"]):
+        if isinstance(msg, HumanMessage):
+            user_msg = msg.content
+            break
+    result = await checker.check_output(user_msg, last_msg.content)
+    if not result.is_safe:
+        return {"messages": [AIMessage(content=SAFETY_REFUSAL_MESSAGE)]}
+    return {}
+```
+
+### Gotchas
+
+- The `NEMO_GUARDRAILS_ENDPOINT` env var enables shields; when unset, `get_safety_checker()` returns `None` and both shield nodes become no-ops. A startup log message reports "Safety shields: DEGRADED" when not configured (line 118-120 of `safety.py`).
+- The output shield's NeMo check re-sends the full assistant response as a new `{"role": "assistant"}` message, which triggers NeMo's output rails. Because NeMo internally processes this through the configured LLM for self-check evaluation, this adds ~32s+ latency. When this exceeds the httpx 30s timeout, the fail-closed behavior blocks every response, making `OUTPUT_SHIELD_DISABLED=true` a practical necessity in some deployments.
+- The `NeMoGuardrailsChecker` is a module-level singleton (`_checker_instance`) created on first call. The httpx client uses a 30-second timeout and is never explicitly closed -- it relies on process shutdown for cleanup.
+- Safety block events are logged in the audit trail via the chat handler (not the graph node itself). The handler listens for `on_chain_end` events from the `input_shield` and `output_shield` nodes and writes audit events with `{"shield": "input/output", "blocked": True}`.
+- The `SAFETY_REFUSAL_MESSAGE` ("I'm not able to help with that request. Can I assist you with something else?") is shared across all agents and both shield types. There is no per-agent or per-violation customization of the refusal message.
+- Unlike Approach D which uses custom Colang flow definitions for domain-specific rails, this approach relies entirely on the NeMo server's pre-configured rails. The NeMo server configuration is external to the application.
+
+### Related Architectures
+
+- [agent-orchestration](agent-orchestration.md) -- The safety shield nodes are part of the shared `build_agent_graph` factory used by all five persona-specific agents
+- [mcp-tool-integration](mcp-tool-integration.md) -- MCP risk tools are bound to the agent node and executed by the tools node, both of which run only after the input shield passes
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (LlamaStack Shields) | Approach B (F5 AI Guardrails) | Approach C (TrustyAI Gateway) | Approach D (NeMo Guardrails) | Approach E (TrustyAI v2 API + App Pre-Filter) |
-|----------|-------------------------------|------------------------------|-----------------------------------|------------------------------|-----------------------------------------------|
-| Enforcement model | Per-agent shields in runner code | External proxy at network level | RHOAI-native gateway at network level | Standalone service called via HTTP from application code | RHOAI-native orchestrator with app-level pre-filtering and inline detector config |
-| Application changes needed | Yes (shield IDs in agent config, runner integration) | No (change target URL only) | No (change target URL only) | Yes (input/output shield methods, session manager integration) | Yes (detector payload construction, SSE parsing, local regex pre-filter, metrics collection) |
-| Enforcement modes | Block only | Block, Audit, Redact | Block only (empty choices + detections) | Block only (with role-aware blocking messages) | Block only (detector-specific styled error messages) |
-| Failure behavior | Fail-open (shield errors logged, request proceeds) | Fail-closed (proxy errors block request) | Fail-closed (detector errors block request) | Fail-closed (guardrail errors propagate as exceptions) | Fail-closed (orchestrator errors return HTTP error; local regex is always-on) |
-| Configuration management | Developer-managed (JSON columns, CRUD API) | Security-team-managed (Moderator UI) | Platform-team-managed (ConfigMaps + Helm values) | Platform-team-managed (ConfigMap with Colang flows + custom actions) | Developer-managed (inline detectors in request body, ConfigMap for system prompt and NLP config) |
-| Built-in detector types | Depends on LlamaStack-registered shields | Prompt Injection, PII, EU AI Act, Restricted Topics + custom | Gibberish, Prompt Injection (DeBERTa v3), HAP (Granite Guardian), Regex PII | Self-check input/output (LLM-based), jailbreak detection NIM, custom blocked phrases | HAP (Granite Guardian), Prompt Injection (DeBERTa v3), Lingua language detection, Regex (multilingual fruit names in 13 languages) |
-| Observability | Application logs only | Dashboard, Logs, Reports in Moderator UI | Pod logs, Prometheus metrics, OTEL exporter | Application logs (structured logging via shared_models) | Prometheus `/metrics` endpoint (3s scrape), R Shiny real-time dashboard, OTEL exporter |
-| GPU overhead | None (uses existing safety models) | 1-3 GPUs for scanner/red-team models | None by default (CPU); optional 1 GPU per detector | None by default; optional 1 GPU for JailbreakDetect NIM | None by default (CPU); optional 1 GPU per detector |
-| Scope | Per-agent (different policies per agent) | Per-project (shared policies for a connection) | Per-route (named routes apply different detector sets) | Global (all agents share same guardrails service) | Per-request (different detectors per input vs output, configurable in each request body) |
-| Response scanning | LlamaStack Responses API refusal types | Moderator scans response on return path | Gateway scans response through output-enabled detectors | Agent code calls output shield after receiving LLM response | Orchestrator scans streaming output through detectors specified in `detectors.output` |
-| Licensing | Open source (LlamaStack) | Commercial (F5/Calypso AI) | Open source (TrustyAI/fms-orchestr8) | Open source (NeMo Guardrails) + NVIDIA NIM (JailbreakDetect) | Open source (TrustyAI/fms-orchestr8) |
-| Deployment complexity | N/A (part of application) | Two-pass Helm, OLM Subscription, 4 namespaces, anyuid SCC | Single Helm chart, single namespace, no SCC changes | Single Helm subchart, ConfigMap-driven, optional NIM sidecar | Single Helm chart, single namespace, additional services (chunker, Lingua, MinIO, R Shiny) |
-| RHOAI integration | External (LlamaStack server) | External (F5 operator) | Native (TrustyAI operator ships with RHOAI) | External (NeMo Guardrails, NemoGuard NIM) | Native (TrustyAI operator ships with RHOAI) |
-| Custom rail logic | Not supported (shield is opaque) | Custom GenAI/Keyword/Regex scanners via Moderator UI | Not supported (fixed detector types) | Full Colang flow definitions + custom Python actions | Custom detector services (e.g., Lingua) + application-level regex pre-filter with multilingual patterns |
+| Criteria | Approach A (LlamaStack Shields) | Approach B (F5 AI Guardrails) | Approach C (TrustyAI Gateway) | Approach D (NeMo Guardrails) | Approach E (TrustyAI v2 API + App Pre-Filter) | Approach F (NeMo as LangGraph Nodes) |
+|----------|-------------------------------|------------------------------|-----------------------------------|------------------------------|-----------------------------------------------|---------------------------------------|
+| Enforcement model | Per-agent shields in runner code | External proxy at network level | RHOAI-native gateway at network level | Standalone service called via HTTP from application code | RHOAI-native orchestrator with app-level pre-filtering and inline detector config | LangGraph StateGraph nodes with conditional edges |
+| Application changes needed | Yes (shield IDs in agent config, runner integration) | No (change target URL only) | No (change target URL only) | Yes (input/output shield methods, session manager integration) | Yes (detector payload construction, SSE parsing, local regex pre-filter, metrics collection) | Yes (graph node definitions, conditional edges, AgentState extension) |
+| Enforcement modes | Block only | Block, Audit, Redact | Block only (empty choices + detections) | Block only (with role-aware blocking messages) | Block only (detector-specific styled error messages) | Block only (refusal AIMessage injected into graph state) |
+| Failure behavior | Fail-open (shield errors logged, request proceeds) | Fail-closed (proxy errors block request) | Fail-closed (detector errors block request) | Fail-closed (guardrail errors propagate as exceptions) | Fail-closed (orchestrator errors return HTTP error; local regex is always-on) | Fail-closed (httpx errors return is_safe=False, graph routes to END) |
+| Configuration management | Developer-managed (JSON columns, CRUD API) | Security-team-managed (Moderator UI) | Platform-team-managed (ConfigMaps + Helm values) | Platform-team-managed (ConfigMap with Colang flows + custom actions) | Developer-managed (inline detectors in request body, ConfigMap for system prompt and NLP config) | Environment variable (NEMO_GUARDRAILS_ENDPOINT) + external NeMo server config |
+| Built-in detector types | Depends on LlamaStack-registered shields | Prompt Injection, PII, EU AI Act, Restricted Topics + custom | Gibberish, Prompt Injection (DeBERTa v3), HAP (Granite Guardian), Regex PII | Self-check input/output (LLM-based), jailbreak detection NIM, custom blocked phrases | HAP (Granite Guardian), Prompt Injection (DeBERTa v3), Lingua language detection, Regex (multilingual fruit names in 13 languages) | Depends on external NeMo server's configured rails |
+| Observability | Application logs only | Dashboard, Logs, Reports in Moderator UI | Pod logs, Prometheus metrics, OTEL exporter | Application logs (structured logging via shared_models) | Prometheus `/metrics` endpoint (3s scrape), R Shiny real-time dashboard, OTEL exporter | Application logs + hash-chained audit events for safety_block |
+| GPU overhead | None (uses existing safety models) | 1-3 GPUs for scanner/red-team models | None by default (CPU); optional 1 GPU per detector | None by default; optional 1 GPU for JailbreakDetect NIM | None by default (CPU); optional 1 GPU per detector | None by default; depends on NeMo server's configured models |
+| Scope | Per-agent (different policies per agent) | Per-project (shared policies for a connection) | Per-route (named routes apply different detector sets) | Global (all agents share same guardrails service) | Per-request (different detectors per input vs output, configurable in each request body) | Per-graph (each agent has shield nodes, all share same NeMo service) |
+| Response scanning | LlamaStack Responses API refusal types | Moderator scans response on return path | Gateway scans response through output-enabled detectors | Agent code calls output shield after receiving LLM response | Orchestrator scans streaming output through detectors specified in `detectors.output` | Output shield graph node re-sends response to NeMo (disable-able due to latency) |
+| Licensing | Open source (LlamaStack) | Commercial (F5/Calypso AI) | Open source (TrustyAI/fms-orchestr8) | Open source (NeMo Guardrails) + NVIDIA NIM (JailbreakDetect) | Open source (TrustyAI/fms-orchestr8) | Open source (NeMo Guardrails) |
+| Deployment complexity | N/A (part of application) | Two-pass Helm, OLM Subscription, 4 namespaces, anyuid SCC | Single Helm chart, single namespace, no SCC changes | Single Helm subchart, ConfigMap-driven, optional NIM sidecar | Single Helm chart, single namespace, additional services (chunker, Lingua, MinIO, R Shiny) | External NeMo service (existing deployment), graph integration in application code |
+| RHOAI integration | External (LlamaStack server) | External (F5 operator) | Native (TrustyAI operator ships with RHOAI) | External (NeMo Guardrails, NemoGuard NIM) | Native (TrustyAI operator ships with RHOAI) | External (NeMo Guardrails) |
+| Custom rail logic | Not supported (shield is opaque) | Custom GenAI/Keyword/Regex scanners via Moderator UI | Not supported (fixed detector types) | Full Colang flow definitions + custom Python actions | Custom detector services (e.g., Lingua) + application-level regex pre-filter with multilingual patterns | Not in application code; depends on external NeMo server configuration |

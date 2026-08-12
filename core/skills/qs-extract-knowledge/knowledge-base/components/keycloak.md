@@ -1,12 +1,12 @@
 ---
 name: keycloak
-description: Red Hat Build of Keycloak deployed via operator CR as OpenShift OAuth IDP with CNPG Postgres and realm import
-summary: "Deploys Keycloak as an OpenShift OAuth identity provider via the Red Hat Build of Keycloak Operator (k8s.keycloak.org/v2alpha1 CR) backed by CNPG PostgreSQL, providing SSO with bulk demo user provisioning and automated cluster OAuth patching. Use when quickstarts need SSO with pre-provisioned users and OpenShift RBAC integration via Keycloak realm roles mapped to groups claims through oidc-usermodel-realm-role-mapper; the chart is disabled by default (keycloak.enabled: false) and must be explicitly enabled. The Keycloak CR connects to CNPG Postgres via convention-based secret (`<cluster-name>-app`) with XA transactions enabled, a Helm post-install Job patches cluster OAuth in openshift-authentication namespace using cluster-admin, and the openid-client-secret is created in openshift-config (not the Keycloak namespace); TLS uses OpenShift serving certs with Route re-encryption at `<name>.<wildcardDomain>`. The OAuth patching Job requires cluster-admin privileges in openshift-authentication namespace, for external Postgres both postgresCluster.host and credentialsSecret must be overridden together, the ClusterRoleBinding maps Keycloak \"admin\" realm role to full cluster-admin access, and optional removeKubeAdmin (default: false) deletes the kubeadmin secret permanently."
+description: Keycloak OIDC identity provider deployed via operator CR or raw container with realm import and JWT validation
+summary: "Keycloak provides SSO and identity management for OpenShift quickstarts via two approaches: Approach A deploys via Red Hat Build of Keycloak Operator (k8s.keycloak.org/v2alpha1 CR) with CNPG PostgreSQL (XA-enabled), automated OAuth patching via cluster-admin Helm post-install Job, bulk user provisioning with oidc-usermodel-realm-role-mapper mapping realm roles to OpenShift groups claims, and ClusterRoleBinding granting admin role full cluster-admin; Approach B uses raw quay.io/keycloak/keycloak:26.0 in dev mode (embedded H2) for application-level OIDC with domain-specific roles (borrower/loan_officer/underwriter/ceo), PyJWT JWKS-cached validation with kid-mismatch cache-bust retry, keycloak-js PKCE S256 frontend, AUTH_DISABLED dev bypass with X-Dev-Role simulation, and DataScope-driven per-role data scoping. Use Approach A for cluster-wide SSO requiring OpenShift OAuth integration and RBAC via ClusterRoleBinding; use Approach B for per-application persona-based auth without cluster privileges -- chart is disabled by default (keycloak.enabled: false) in both approaches and must be explicitly enabled. Approach A creates openid-client-secret in openshift-config namespace (not Keycloak namespace), connects to CNPG Postgres via convention-based secret (<cluster-name>-app), uses TLS re-encryption at Route <name>.<wildcardDomain> with serving certs, and supports ingressCA for custom CA injection; Approach B constructs JWT issuer as {KEYCLOAK_ISSUER or KEYCLOAK_URL}/realms/{realm} with accessTokenLifespan 900s and frontend token refresh 60s pre-expiry. Approach A's removeKubeAdmin (default false) permanently deletes kubeadmin secret, external Postgres requires overriding both postgresCluster.host and credentialsSecret together, and OAuth patching requires cluster-admin in openshift-authentication namespace; Approach B's directAccessGrantsEnabled enables deprecated ROPC flow (OAuth 2.1), demo passwords are hardcoded in realm JSON (not env-driven), and Keycloak only starts with compose --profile auth or --profile full."
 metadata:
   type: component
 tags:
-  tech_stack: [keycloak, postgresql, helm]
-  ai_pattern: []
+  tech_stack: [keycloak, postgresql, helm, fastapi, react, python, nodejs]
+  ai_pattern: [agents]
   platform: [openshift, kubernetes]
   data_layer: [postgresql]
 source_examples:
@@ -14,6 +14,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/maas-code-assistant"
     notes: "Keycloak as OpenShift OAuth identity provider with operator CR, CNPG postgres, realm import, and automated OAuth patching"
     approach: "A"
+  - quickstart: "multi-agent-loan-origination"
+    repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
+    notes: "Keycloak as application-level OIDC provider with raw container Deployment, realm JSON import, domain-specific RBAC roles, PyJWT validation, and keycloak-js frontend SDK"
+    approach: "B"
 ---
 
 # Keycloak
@@ -222,3 +226,229 @@ data:
 - CNPG PostgreSQL operator pattern (see `pgvector.md` for another CNPG usage)
 - OpenShift OAuth integration
 - Helm post-install hooks for cluster-level configuration
+
+---
+
+## Approach B: Application-Level OIDC with Raw Container (from multi-agent-loan-origination)
+
+### When to Use
+
+When the quickstart needs application-level authentication (not cluster-level OpenShift OAuth) with domain-specific roles, where Keycloak provides OIDC tokens consumed directly by a FastAPI backend and React frontend. Suitable for multi-persona applications where different users have different capabilities (e.g., borrower vs loan officer vs underwriter).
+
+### Differences from Approach A
+
+- **Deployment:** Raw `quay.io/keycloak/keycloak:26.0` container as a Kubernetes Deployment (not operator CR)
+- **Database:** Uses Keycloak's embedded H2 in dev mode (`start-dev`), no external Postgres for Keycloak itself
+- **Auth integration:** Application-level JWT validation via JWKS endpoint, not OpenShift OAuth patching
+- **Realm config:** Static JSON file mounted as a volume, not `KeycloakRealmImport` CR
+- **Roles:** Domain-specific realm roles (borrower, loan_officer, underwriter, ceo, admin), not generic SSO roles
+- **Dev bypass:** `AUTH_DISABLED=true` environment variable to skip JWT validation entirely for local dev
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Keycloak 26.0 in dev mode (`start-dev --import-realm`)
+- **Container image:** `quay.io/keycloak/keycloak:26.0`
+- **Key dependencies:** PyJWT (backend JWT validation), keycloak-js 26.x (frontend SDK), httpx (JWKS fetching)
+- **Helm subchart:** Inline in parent chart at `deploy/helm/mortgage-ai/templates/keycloak.yaml`
+
+### Key Patterns
+
+#### Realm JSON Import via Volume Mount
+
+The realm definition is a static JSON file mounted into the Keycloak container at `/opt/keycloak/data/import/`. The `--import-realm` flag imports it on startup. This avoids the need for the Keycloak Operator or `KeycloakRealmImport` CRs.
+
+```yaml
+# compose.yml -- keycloak service
+keycloak:
+  image: quay.io/keycloak/keycloak:26.0
+  command: start-dev --import-realm
+  environment:
+    KC_BOOTSTRAP_ADMIN_USERNAME: admin
+    KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    KC_HEALTH_ENABLED: "true"
+  volumes:
+    - ./config/keycloak/mortgage-ai-realm.json:/opt/keycloak/data/import/mortgage-ai-realm.json:ro
+```
+
+#### Domain-Specific Realm Roles with PKCE Client
+
+The realm defines application-specific roles and a public OIDC client with PKCE (S256) enabled. A separate bearer-only client validates API tokens.
+
+```json
+{
+  "realm": "mortgage-ai",
+  "roles": {
+    "realm": [
+      { "name": "admin" },
+      { "name": "borrower" },
+      { "name": "loan_officer" },
+      { "name": "underwriter" },
+      { "name": "ceo" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "mortgage-ai-ui",
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "attributes": { "pkce.code.challenge.method": "S256" }
+    },
+    { "clientId": "mortgage-ai-api", "bearerOnly": true }
+  ]
+}
+```
+
+#### Backend JWT Validation with JWKS Caching
+
+The FastAPI backend validates JWTs directly against Keycloak's JWKS endpoint using PyJWT. JWKS keys are cached with a configurable TTL and automatically refreshed on key rotation (kid mismatch).
+
+```python
+# packages/api/src/middleware/auth.py
+async def _fetch_jwks() -> dict:
+    url = f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}/protocol/openid-connect/certs"
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, timeout=5)
+    response.raise_for_status()
+    return response.json()
+
+async def _decode_token(token: str) -> TokenPayload:
+    signing_key = await _get_signing_key(token)
+    base = settings.KEYCLOAK_ISSUER or settings.KEYCLOAK_URL
+    issuer = f"{base}/realms/{settings.KEYCLOAK_REALM}"
+    payload = jwt.decode(
+        token, signing_key.key, algorithms=["RS256"],
+        issuer=issuer, audience=settings.KEYCLOAK_CLIENT_ID,
+        options={"verify_aud": True},
+    )
+    return TokenPayload(**payload)
+```
+
+#### AUTH_DISABLED Dev Bypass with Role Simulation
+
+When `AUTH_DISABLED=true`, the middleware returns a synthetic dev user without any JWT validation. The role can be overridden via the `X-Dev-Role` header, enabling per-role testing without Keycloak.
+
+```python
+# packages/api/src/middleware/auth.py
+async def get_current_user(request: Request) -> UserContext:
+    if settings.AUTH_DISABLED:
+        role_header = request.headers.get("x-dev-role")
+        role = _DEV_ROLE_MAP.get(role_header.lower()) if role_header else None
+        dev_user = _build_dev_user(
+            role or UserRole.ADMIN,
+            user_id=request.headers.get("x-dev-user-id", "dev-user"),
+            email=request.headers.get("x-dev-user-email", "dev@example.com"),
+        )
+        return dev_user
+```
+
+#### Frontend keycloak-js Integration with Dual Auth Modes
+
+The React frontend uses the `keycloak-js` SDK for SSO when `KEYCLOAK_URL` is configured, or falls back to a dev mode with simulated users. Runtime config (from Nginx-injected `__RUNTIME_CONFIG__`) takes precedence over Vite env vars.
+
+```typescript
+// packages/ui/src/contexts/auth-context.tsx
+const KEYCLOAK_URL = _rtc?.KEYCLOAK_URL
+    || import.meta.env.VITE_KEYCLOAK_URL || undefined;
+const IS_KEYCLOAK_ENABLED = !!KEYCLOAK_URL;
+
+// Keycloak SSO init with PKCE
+kc.init({
+    onLoad: 'check-sso',
+    silentCheckSsoRedirectUri: `${window.location.origin}/silent-check-sso.html`,
+    pkceMethod: 'S256',
+});
+```
+
+#### Role-Based Data Scoping from JWT Claims
+
+Realm roles from the JWT `realm_access.roles` claim drive a `DataScope` that controls data visibility per persona. This is enforced server-side in the auth middleware.
+
+```python
+# packages/api/src/core/auth.py
+def build_data_scope(role: UserRole, user_id: str) -> DataScope:
+    if role == UserRole.BORROWER:
+        return DataScope(own_data_only=True, user_id=user_id)
+    if role == UserRole.LOAN_OFFICER:
+        return DataScope(assigned_to=user_id)
+    if role == UserRole.CEO:
+        return DataScope(pii_mask=True, document_metadata_only=True)
+    if role == UserRole.UNDERWRITER:
+        return DataScope(full_pipeline=True)
+    return DataScope()
+```
+
+#### Helm Deployment with Optional Toggle
+
+On OpenShift, Keycloak deploys as a standard Deployment with admin credentials from a Secret, the realm JSON from a ConfigMap, and proxy header support for OpenShift Routes.
+
+```yaml
+# deploy/helm/mortgage-ai/templates/keycloak.yaml
+{{- if .Values.keycloak.enabled }}
+# ConfigMap with realm JSON, Deployment, Service
+containers:
+  - name: keycloak
+    image: "{{ .Values.keycloak.image.repository }}:{{ .Values.keycloak.image.tag }}"
+    args: ["start-dev", "--import-realm"]
+    env:
+      - name: KC_PROXY_HEADERS
+        value: "xforwarded"
+      - name: KC_HTTP_ENABLED
+        value: "true"
+{{- end }}
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `KEYCLOAK_URL` -- Keycloak server URL (default: `http://localhost:8080`)
+  - `KEYCLOAK_ISSUER` -- JWT issuer URL if different from KEYCLOAK_URL (e.g., external Route)
+  - `KEYCLOAK_REALM` -- Realm name (default: `mortgage-ai`)
+  - `KEYCLOAK_CLIENT_ID` -- OIDC client ID (default: `mortgage-ai-ui`)
+  - `JWKS_CACHE_TTL` -- JWKS cache lifetime in seconds (default: `300`)
+  - `AUTH_DISABLED` -- Bypass JWT validation for dev (default: `false`)
+  - `KC_BOOTSTRAP_ADMIN_USERNAME` / `KC_BOOTSTRAP_ADMIN_PASSWORD` -- Keycloak admin credentials
+- **Config files:** `config/keycloak/mortgage-ai-realm.json` -- full realm definition with roles, clients, protocol mappers, and demo users
+- **Helm values:**
+  - `keycloak.enabled` -- Deploy Keycloak (default: `true`)
+  - `keycloak.image.repository` / `keycloak.image.tag` -- Container image (default: `quay.io/keycloak/keycloak:26.0`)
+  - `keycloak.resources` -- Resource requests/limits (512Mi-1536Mi memory)
+  - `secrets.AUTH_DISABLED` -- Auth bypass flag (default: `false`)
+
+### Known Gotchas
+
+- The `KEYCLOAK_ISSUER` setting exists because the issuer in the JWT may differ from the internal `KEYCLOAK_URL` when Keycloak is behind an OpenShift Route. The backend constructs the expected issuer as `{KEYCLOAK_ISSUER or KEYCLOAK_URL}/realms/{realm}` and validates against it. Mismatched issuers cause `InvalidTokenError`.
+- The JWKS key rotation handling in `_get_signing_key` does a cache-bust retry when a `kid` is not found. This prevents authentication failures during Keycloak key rotation, but means a single bad token can force a JWKS refresh for all coroutines.
+- The realm JSON has `directAccessGrantsEnabled: true` on the public client, which enables the ROPC (Resource Owner Password Credentials) flow used by the sign-in page. This is explicitly noted as deprecated in OAuth 2.1 in a code comment: "ROPC is deprecated in OAuth 2.1. For production, switch to Authorization Code + PKCE flow (already configured on the client)."
+- Demo user passwords are set to `"demo"` (and admin to `"admin"`) in the realm JSON. These are not environment-variable driven and must be changed for non-demo deployments.
+- The compose profile system means Keycloak only starts with `--profile auth` or `--profile full`. Without it, `AUTH_DISABLED` defaults to `true` and auth is bypassed entirely.
+- The `accessTokenLifespan` is set to 900 seconds (15 minutes) and `ssoSessionMaxLifespan` to 28800 seconds (8 hours) in the realm JSON. The frontend schedules token refresh 60 seconds before expiry.
+
+### Testing Notes
+
+- Run API tests with `AUTH_DISABLED=true` to bypass Keycloak: `cd packages/api && AUTH_DISABLED=true uv run pytest -v`
+- Test auth behavior with `AUTH_DISABLED=false` and mock JWKS using monkeypatch (see `packages/api/tests/test_auth.py`)
+- Verify role-based access by setting `X-Dev-Role` header in dev mode
+- For full-stack auth testing, start Keycloak with `podman-compose --profile auth up -d` and set `AUTH_DISABLED=false`
+
+### Related Patterns
+
+- FastAPI dependency injection for auth (`CurrentUser = Annotated[UserContext, Depends(get_current_user)]`)
+- Role-based route guards (`require_roles(*allowed_roles)` dependency factory)
+- keycloak-js with runtime config injection for containerized frontends
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (Operator CR) | Approach B (Raw Container) |
+|----------|--------------------------|----------------------------|
+| Deployment method | Keycloak Operator CR (`k8s.keycloak.org/v2alpha1`) | Raw container Deployment |
+| Database | CNPG PostgreSQL cluster | Embedded H2 (dev mode) |
+| Auth integration | OpenShift OAuth (cluster-level SSO) | Application-level OIDC (JWT validation) |
+| Realm provisioning | `KeycloakRealmImport` CR with templated users | Static JSON file via volume mount |
+| Role model | Generic SSO roles mapped to OpenShift groups | Domain-specific roles (borrower, underwriter, etc.) |
+| User provisioning | Bulk templated users (user1..userN) | Named demo personas with fixed UUIDs |
+| TLS | OpenShift serving certs with Route re-encryption | Keycloak dev mode (HTTP), TLS at Route/proxy level |
+| Dev experience | Requires Keycloak Operator installed | `AUTH_DISABLED=true` bypass, no Keycloak needed |
+| Cluster privileges | Requires `cluster-admin` for OAuth patching | No cluster-level changes needed |
+| Best for | Cluster-wide SSO for all OpenShift users | Per-application auth with persona-based RBAC |

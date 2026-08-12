@@ -1,12 +1,12 @@
 ---
 name: helm-flat-chart-direct-crd-templating
 description: Single Helm chart with no dependencies or subcharts, directly templating operator CRDs as raw templates
-summary: "Deploys an entire quickstart from a single flat Helm chart with no dependencies block or subchart directories, directly templating operator CRDs (KServe InferenceService, ServingRuntime, TrustyAI GuardrailsOrchestrator, Kubeflow Notebook) as individual template files for full field-level control without subchart abstraction layers. Use over umbrella charts (helm-umbrella-all-remote-ai-arch-deps) or independent subcharts (helm-independent-subcharts-no-umbrella) when full CRD field control is needed; Approach A (guardrailing-llms) uses one CRD per file with `_helpers.tpl`, 11 files producing 14 resources including 3 orchestrator ConfigMaps, while Approach B (lemonade-stand-assistant) adds `helm.sh/weight` ordering (MinIO at -5/-4, runtimes at 0, InferenceServices at 1), bundles multiple resources per file, and conditionally skips the entire LLM stack via `{{ if not .Values.model }}` producing 20+ resources -- choose A for simpler organization, B when resource ordering or conditional deployment is needed. Configuration uses a flat values.yaml with top-level keys (mainLLM, detectors, orchestrator, workbench, clusterdomainurl); Chart.yaml contains only name, version, and description with no dependencies block; installation is a single `helm install` with no `helm dependency update`, requiring KServe, TrustyAI operator, and Kubeflow Notebook controller pre-installed; detectors default to CPU (`useGpu: false`) and the LLM requires 1 GPU. Without subcharts, common pattern changes (e.g., InferenceService structure) cannot be inherited from a shared chart, all resources upgrade atomically in a single release making partial upgrades impossible, and neither approach provides a Makefile for pre-install validation checks, wait loops, or phased deployment."
+summary: "Deploys quickstarts from a single flat Helm chart with no dependencies or subchart directories, directly templating operator CRDs (KServe InferenceService/ServingRuntime, TrustyAI GuardrailsOrchestrator/NemoGuardrails, Kubeflow Notebook, LlamaStackDistribution) as raw template files for full field-level control without subchart abstraction. Use over umbrella charts (helm-umbrella-all-remote-ai-arch-deps) or independent subcharts (helm-independent-subcharts-no-umbrella) when full CRD field control is needed; Approach A (guardrailing-llms, llm-cpu-serving, multi-agent-loan-origination) uses one CRD per file with `_helpers.tpl` per-component label/selector helpers, scaling from 11 files/14 resources to 27 files with 10+ `.enabled`-toggled conditional components (keycloak, llamastack, nemo-guardrails, kagenti, mcp servers, mlflow, minio, seed) and supporting SQLite sidecars and dual seed Jobs, while Approach B (lemonade-stand-assistant) adds `helm.sh/weight` ordering (MinIO at -5/-4, runtimes at 0, InferenceServices at 1), bundles multiple resources per file, and conditionally skips the entire LLM stack via `{{ if not .Values.model }}` -- choose A for simpler organization or complex multi-component toggles, B when resource ordering or conditional deployment is needed. Configuration uses flat values.yaml with top-level keys (mainLLM, detectors, orchestrator, workbench, clusterdomainurl); Chart.yaml has only name/version/description with no dependencies block; single `helm install` with no `helm dependency update`, requiring KServe, TrustyAI operator, and Kubeflow Notebook controller pre-installed; detectors default to CPU (`useGpu: false`), LLM requires 1 GPU. Without subcharts, common CRD pattern changes (e.g., InferenceService structure) cannot be inherited from a shared chart, all resources upgrade atomically in a single release making partial upgrades impossible, and neither approach provides a Makefile for pre-install validation checks, wait loops, or phased deployment."
 metadata:
   type: deployment-pattern
 tags:
   tech_stack: [helm]
-  ai_pattern: [guardrails, model-serving]
+  ai_pattern: [guardrails, model-serving, agents]
   platform: [kserve, vllm, rhoai, openshift]
 source_examples:
   - quickstart: "guardrailing-llms"
@@ -20,6 +20,10 @@ source_examples:
   - quickstart: "llm-cpu-serving"
     repo: "https://github.com/rh-ai-quickstart/llm-cpu-serving"
     notes: "Flat chart directly templates KServe ServingRuntime/InferenceService, LlamaStackDistribution CR, Kubeflow Notebook with SQLite sidecar, and dual seed Jobs"
+    approach: "A"
+  - quickstart: "multi-agent-loan-origination"
+    repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
+    notes: "Flat chart with 27 template files, 10+ conditional components (keycloak, llamastack, nemo-guardrails, kagenti, mcp servers, mlflow, minio, seed) toggled via .enabled flags, extensive _helpers.tpl with per-component label/selector helpers, and TrustyAI NemoGuardrails + KServe InferenceService CRDs"
     approach: "A"
 ---
 

@@ -1,11 +1,11 @@
 ---
 name: rag-pipeline
 description: RAG patterns from LlamaStack vector stores to NVIDIA Blueprints to standalone FAISS microservices to Helm-only dual-frontend deployments
-summary: "Implements retrieval-augmented generation across seven approaches: (A) LlamaStack with external ingestion pipeline, pgvector vector stores, and transparent file_search retrieval via Responses API requiring no RAG-specific prompting; (B) NVIDIA RAG Blueprint with NV-Ingest document processing, GPU-accelerated Milvus GPU_CAGRA, vLLM on KServe with MIG-sliced GPUs, NIM-to-vLLM translation proxies for embedding/reranking, ODF ObjectBucketClaim for S3 storage, and optional query rewriting/reflection/decomposition with /no_think Nemotron directive; (C) standalone FAISS microservice with TEI nomic-embed-text-v1.5 (search_document:/search_query: prefixes), MinIO LATEST.json pointer file for init-job-to-service coordination, and results consumed as agent-internal context enrichment from static PDFs; (D) frontend-only Streamlit using LlamaStack rag_tool APIs with manual CONTEXT: prompt injection, direct pgvector access via asyncpg, all-MiniLM-L6-v2 at 384 dimensions, and triple-fallback vector DB registration; (E) startup-time ingestion of curated text files via LlamaStack OpenAI-compatible files.create/vector_stores.files.create with per-agent knowledge_bases YAML config, explicit extra_body={\"provider_id\": \"pgvector\"}, and transparent file_search retrieval identical to Approach A; (F) dual-mode Streamlit frontend with Direct mode (vector_stores.search + manual context injection) and Agent-based mode (Responses API file_search), Docling-based ingestion service (DocumentConverter + HybridChunker filtering TEXT/PARAGRAPH labels) with multi-source support (GitHub/S3/URL), Kubeflow Pipelines for automated ingestion, OpenAI-compatible Files API for document management, frontend-integrated input/output shields via safety.run_shield, file citation stripping for four marker formats, reasoning_content support for R1-style models, suggested questions via ConfigMap, and Podman Compose local dev with host Ollama; (G) Helm-only dual-frontend RAG with AnythingLLM (LanceDB + native embeddings + LocalAI provider) and LlamaStackDistribution CR (inline Milvus SQLite-backed + sentence-transformers granite-embedding-125m-english at 768 dimensions + remote::vllm), Kubernetes Job seeding from web URLs with HTML stripping (script/style/nav/header/footer/aside removal), admin username auto-discovery via Kubernetes RoleBindings for SHA-256-hashed vector store naming matching RHOAI Playground convention, SQLite sidecar for AnythingLLM API key injection, zero custom code, and CPU-only inference. Choose A for custom FastAPI backends needing LlamaStack-integrated transparent retrieval; B for no-custom-code GPU-heavy deployments with pre-built NVIDIA RAG server and built-in multimodal/reranking capabilities; C for agent-pipeline context enrichment from curated PDF knowledge bases with minimal GPU requirements (TEI only); D for minimal-complexity frontend-only demos where RAG is a supporting feature alongside other capabilities like guardrails; E for curated text knowledge bases bundled with the application or ConfigMap-mounted, requiring automatic startup ingestion and per-agent knowledge base assignment without user-facing document management; F for self-contained RAG chatbots needing automated multi-source ingestion (GitHub/S3/URL), dual retrieval modes (Direct control vs Agent-based transparency), standard OpenAI-compatible document management without direct database access, and optional local development support; G for zero-custom-code CPU-only deployments needing two independent UIs (AnythingLLM workbench for daily use + RHOAI Playground for exploration) with deploy-time document seeding from web URLs and no GPU requirements. Critical config: A requires update_vector_store_ids() to sync dual metadata (PostgreSQL + LlamaStack); B needs cross-chart ConfigMap (ingestor-server-prompt) installed before rag-server, anyuid SCC for three service accounts, and NV-Ingest MESSAGE_CLIENT_HOST hardcoded to ingest-redis-master; C requires TEI connection pooling and FAISS index files on disk (faiss.read_index needs file paths not buffers); D hardcodes embedding dimension 384 and uses direct pgvector queries with vs_{id.replace('-','_')} table naming; E requires extra_body={\"provider_id\": \"pgvector\"} for LlamaStack 0.3.3+ vector store creation and creates new UUID-suffixed vector stores each restart; F uses legacy vector_dbs.register() in ingestion service but vector_stores.create() in UI, Docling HybridChunker discards tables/images, and vector_stores.search response format varies across LlamaStack versions (data/chunks/results fallback); G's rag-seed Job uses llama-stack-client SDK with SHA-256-hashed admin username for vector store naming matching RHOAI Playground auto-provisioning, inline Milvus stores data in SQLite at pod-local path requiring PVC for persistence, and AnythingLLM uses native embedding engine separate from vLLM inference endpoint. Common gotchas: A's dual metadata can desync if update_vector_store_ids fails and RAG only works with LlamaStack runner (not LangGraph/CrewAI); B depends on NVIDIA cloud NIMs for OCR/table/graphic detection (external network dependency) and embedding proxy strips input_type losing query-vs-passage distinction; C's FAISS index must fit entirely in RAM and RAGHandler singleton silently returns empty strings if RAG is disabled; D bypasses LlamaStack for document management via direct pgvector access that breaks if LlamaStack changes its internal schema; E accumulates stale vector stores across restarts (_get_vector_store_id selects latest by created_at) and only supports .txt files (no PDF/DOCX); F's search_vector_stores_fallback() must explicitly re-search after streaming because Responses API stream doesn't consistently include file_search results, file citation stripping handles partial markers during streaming to prevent UI flicker, and ingestion service uses rag_tool.insert (pre-chunked via Docling) while UI uses files.create (server-side chunking via LlamaStack pypdf provider); G's inline Milvus (SQLite-backed) loses all indexed documents on pod restart without a PVC, the RHOAI Playground auto-provisioning vector store hash must match the seed Job's naming convention, and AnythingLLM's hardcoded API key (sk-automation-workspace-setup) is injected via SQLite sidecar that runs indefinitely."
+summary: "Implements retrieval-augmented generation across eight approaches: (A) LlamaStack with external ingestion pipeline, pgvector vector stores, and transparent file_search retrieval via Responses API requiring no RAG-specific prompting; (B) NVIDIA RAG Blueprint with NV-Ingest document processing, GPU-accelerated Milvus GPU_CAGRA, vLLM on KServe with MIG-sliced GPUs, NIM-to-vLLM translation proxies for embedding/reranking, ODF ObjectBucketClaim for S3 storage, and optional query rewriting/reflection/decomposition with /no_think Nemotron directive; (C) standalone FAISS microservice with TEI nomic-embed-text-v1.5 (search_document:/search_query: prefixes), MinIO LATEST.json pointer file for init-job-to-service coordination, and results consumed as agent-internal context enrichment from static PDFs; (D) frontend-only Streamlit using LlamaStack rag_tool APIs with manual CONTEXT: prompt injection, direct pgvector access via asyncpg, all-MiniLM-L6-v2 at 384 dimensions, and triple-fallback vector DB registration; (E) startup-time ingestion of curated text files via LlamaStack OpenAI-compatible files.create/vector_stores.files.create with per-agent knowledge_bases YAML config, explicit extra_body={\"provider_id\": \"pgvector\"}, and transparent file_search retrieval identical to Approach A; (F) dual-mode Streamlit frontend with Direct mode (vector_stores.search + manual context injection) and Agent-based mode (Responses API file_search), Docling-based ingestion service (DocumentConverter + HybridChunker filtering TEXT/PARAGRAPH labels) with multi-source support (GitHub/S3/URL), Kubeflow Pipelines for automated ingestion, OpenAI-compatible Files API for document management, frontend-integrated input/output shields via safety.run_shield, file citation stripping for four marker formats, reasoning_content support for R1-style models, suggested questions via ConfigMap, and Podman Compose local dev with host Ollama; (G) Helm-only dual-frontend RAG with AnythingLLM (LanceDB + native embeddings + LocalAI provider) and LlamaStackDistribution CR (inline Milvus SQLite-backed + sentence-transformers granite-embedding-125m-english at 768 dimensions + remote::vllm), Kubernetes Job seeding from web URLs with HTML stripping (script/style/nav/header/footer/aside removal), admin username auto-discovery via Kubernetes RoleBindings for SHA-256-hashed vector store naming matching RHOAI Playground convention, SQLite sidecar for AnythingLLM API key injection, zero custom code, and CPU-only inference; (H) domain-specific compliance RAG using direct pgvector queries (no LlamaStack) with three-tier boosting (federal=1.5x, agency=1.2x, internal=1.0x), markdown-aware chunking with ##-header splitting, paragraph-boundary sub-splitting with ~64-token overlap, pairwise conflict detection across sources (numeric threshold disagreements, contradictory must/must-not directives, same-tier value divergence), audit-logged search as a LangGraph tool with InjectedState, and configurable embedding provider (local sentence-transformers or remote OpenAI-compatible). Choose A for custom FastAPI backends needing LlamaStack-integrated transparent retrieval; B for no-custom-code GPU-heavy deployments with pre-built NVIDIA RAG server and built-in multimodal/reranking capabilities; C for agent-pipeline context enrichment from curated PDF knowledge bases with minimal GPU requirements (TEI only); D for minimal-complexity frontend-only demos where RAG is a supporting feature alongside other capabilities like guardrails; E for curated text knowledge bases bundled with the application or ConfigMap-mounted, requiring automatic startup ingestion and per-agent knowledge base assignment without user-facing document management; F for self-contained RAG chatbots needing automated multi-source ingestion (GitHub/S3/URL), dual retrieval modes (Direct control vs Agent-based transparency), standard OpenAI-compatible document management without direct database access, and optional local development support; G for zero-custom-code CPU-only deployments needing two independent UIs (AnythingLLM workbench for daily use + RHOAI Playground for exploration) with deploy-time document seeding from web URLs and no GPU requirements; H for regulated-industry RAG needing hierarchical authority ranking with tier-based boosting, cross-source conflict detection with audit trail, direct pgvector control without LlamaStack, and curated markdown knowledge bases organized by authority tier. Critical config: A requires update_vector_store_ids() to sync dual metadata (PostgreSQL + LlamaStack); B needs cross-chart ConfigMap (ingestor-server-prompt) installed before rag-server, anyuid SCC for three service accounts, and NV-Ingest MESSAGE_CLIENT_HOST hardcoded to ingest-redis-master; C requires TEI connection pooling and FAISS index files on disk (faiss.read_index needs file paths not buffers); D hardcodes embedding dimension 384 and uses direct pgvector queries with vs_{id.replace('-','_')} table naming; E requires extra_body={\"provider_id\": \"pgvector\"} for LlamaStack 0.3.3+ vector store creation and creates new UUID-suffixed vector stores each restart; F uses legacy vector_dbs.register() in ingestion service but vector_stores.create() in UI, Docling HybridChunker discards tables/images, and vector_stores.search response format varies across LlamaStack versions (data/chunks/results fallback); G's rag-seed Job uses llama-stack-client SDK with SHA-256-hashed admin username for vector store naming matching RHOAI Playground auto-provisioning, inline Milvus stores data in SQLite at pod-local path requiring PVC for persistence, and AnythingLLM uses native embedding engine separate from vLLM inference endpoint; H's search fetches 3x top_k candidates then applies tier boost factors (_TIER_BOOST {1:1.5, 2:1.2, 3:1.0}) before re-sorting with _MIN_SIMILARITY=0.3 floor, uses separate COMPLIANCE_DATABASE_URL for HMDA data isolation while KB tables (kb_chunks, kb_documents) live in main schema, and ingestion is idempotent via clear_kb_content() that deletes all before re-ingesting from disk. Common gotchas: A's dual metadata can desync if update_vector_store_ids fails and RAG only works with LlamaStack runner (not LangGraph/CrewAI); B depends on NVIDIA cloud NIMs for OCR/table/graphic detection (external network dependency) and embedding proxy strips input_type losing query-vs-passage distinction; C's FAISS index must fit entirely in RAM and RAGHandler singleton silently returns empty strings if RAG is disabled; D bypasses LlamaStack for document management via direct pgvector access that breaks if LlamaStack changes its internal schema; E accumulates stale vector stores across restarts (_get_vector_store_id selects latest by created_at) and only supports .txt files (no PDF/DOCX); F's search_vector_stores_fallback() must explicitly re-search after streaming because Responses API stream doesn't consistently include file_search results, file citation stripping handles partial markers during streaming to prevent UI flicker, and ingestion service uses rag_tool.insert (pre-chunked via Docling) while UI uses files.create (server-side chunking via LlamaStack pypdf provider); G's inline Milvus (SQLite-backed) loses all indexed documents on pod restart without a PVC, the RHOAI Playground auto-provisioning vector store hash must match the seed Job's naming convention, and AnythingLLM's hardcoded API key (sk-automation-workspace-setup) is injected via SQLite sidecar that runs indefinitely; H's conflict detection is heuristic-based (regex for percentages and must/must-not directives) missing subtler regulatory interpretation conflicts, chunks stored without embeddings on embedding failure are silently excluded from search (WHERE c.embedding IS NOT NULL), and _parse_frontmatter uses simple string splitting on first colon that fails if values contain colons."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, llamastack, python, vllm, nvidia-rag-blueprint, langchain, langgraph, gradio, streamlit, cloudevents, docling, deepeval, anythingllm]
+  tech_stack: [fastapi, llamastack, python, vllm, nvidia-rag-blueprint, langchain, langgraph, gradio, streamlit, cloudevents, docling, deepeval, anythingllm, sentence-transformers]
   ai_pattern: [rag, embeddings, vector-search, reranking, multimodal, evaluation]
   platform: [llamastack, rhoai, openshift, kubernetes, kserve, vllm, tei, ollama, kubeflow-pipelines]
   data_layer: [pgvector, milvus, faiss, minio, lancedb]
@@ -42,6 +42,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/llm-cpu-serving"
     notes: "Helm-only dual-frontend RAG with AnythingLLM (LanceDB + native embeddings + LocalAI provider) and Llama Stack Distribution CR (inline Milvus + sentence-transformers + remote::vllm), no custom code, document seeding via Kubernetes Jobs"
     approach: "G"
+  - quickstart: "multi-agent-loan-origination"
+    repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
+    notes: "Domain-specific compliance RAG using pgvector with three-tier boosting (federal > agency > internal), markdown-aware chunking with paragraph-boundary splitting and overlap, conflict detection across sources, and audit-logged search as a LangGraph agent tool"
+    approach: "H"
 ---
 
 # RAG Pipeline
@@ -1464,21 +1468,186 @@ Both RAG systems handle context injection internally -- neither requires custom 
 
 ---
 
+## Approach H: Domain-Specific Compliance RAG with Tier-Based Boosting (from multi-agent-loan-origination)
+
+### When to Use
+
+Use Approach H when building domain-specific RAG for regulated industries where retrieved content has hierarchical authority (e.g., federal regulations outrank agency guidelines, which outrank internal policies). Best suited for applications where RAG is a supporting capability consumed as a LangGraph tool rather than the primary user-facing feature, and where conflict detection across sources is required. No LlamaStack dependency -- uses direct pgvector queries for full control over search ranking and boosting.
+
+### Differences from Approach A
+
+- **No LlamaStack**: Retrieval uses direct SQL queries against pgvector (`1 - (c.embedding <=> :query_vec) AS similarity`) rather than LlamaStack vector stores or file_search tool.
+- **Tier-based boosting**: Raw cosine similarity is multiplied by tier boost factors (federal=1.5x, agency=1.2x, internal=1.0x) to prioritize higher-authority sources.
+- **Conflict detection**: A pattern-based conflict detector finds numeric threshold disagreements and contradictory directives (e.g., "must" vs "must not") across sources from different tiers.
+- **Agent tool integration**: RAG is exposed as a `kb_search` LangGraph tool with `InjectedState`, not as a transparent file_search mechanism.
+- **Custom ingestion**: Markdown files with YAML frontmatter are parsed, chunked by `##` section headers with paragraph-boundary splitting, and embedded via a configurable embedding provider.
+- **Audit logging**: Every search and conflict detection is logged as an audit event with hash-chain integrity.
+
+### Data Flow
+
+1. At startup (or seed), markdown files from `data/compliance-kb/{tier1-federal,tier2-agency,tier3-internal}/` are read, YAML frontmatter is parsed for metadata (title, tier, effective_date), and the body is chunked
+2. Each chunk is embedded via the configurable embedding provider (local sentence-transformers or remote OpenAI-compatible endpoint) and stored in the `kb_chunks` table with the embedding vector
+3. At query time, the `kb_search` LangGraph tool receives a user query, embeds it via `get_embeddings()`, and runs a cosine similarity search against pgvector
+4. The search fetches 3x the requested top_k results, applies tier boost factors (federal=1.5, agency=1.2, internal=1.0), filters by minimum similarity (0.3), re-sorts by boosted similarity, and truncates to top_k
+5. The conflict detector runs pairwise analysis on results: checking for numeric threshold differences across tiers, contradictory regulatory directives, and same-tier value divergence
+6. Results are formatted with citation metadata (source, section, tier label, effective date) and conflict warnings, then returned to the agent as tool output
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| LangGraph kb_search tool | Embedding provider | HTTP or local | Embed query text |
+| LangGraph kb_search tool | PostgreSQL (pgvector) | SQLAlchemy async | Cosine similarity search with tier boosting |
+| LangGraph kb_search tool | Conflict detector | Python method call | Pairwise conflict analysis on results |
+| LangGraph kb_search tool | Audit service | SQLAlchemy async | Log search events and conflict detections |
+| Ingestion pipeline | Markdown files | Filesystem read | Parse frontmatter, chunk by sections |
+| Ingestion pipeline | Embedding provider | HTTP or local | Embed chunks for storage |
+| Ingestion pipeline | PostgreSQL | SQLAlchemy async | Store documents and chunks with embeddings |
+
+### Key Integration Points
+
+#### Vector Search with Tier-Based Boosting
+
+The search queries pgvector directly using the `<=>` cosine distance operator, fetches 3x candidates, applies tier boost factors, and re-sorts.
+
+```python
+# packages/api/src/services/compliance/knowledge_base/search.py (lines 22-108)
+_TIER_BOOST = {1: 1.5, 2: 1.2, 3: 1.0}
+_MIN_SIMILARITY = 0.3
+
+async def search_kb(session, query, top_k=5):
+    embeddings = await get_embeddings([query])
+    query_vec = embeddings[0]
+    fetch_limit = top_k * 3
+
+    sql = text("""
+        SELECT c.id, c.chunk_text, c.section_ref, d.title, d.tier,
+               d.effective_date,
+               1 - (c.embedding <=> :query_vec) AS similarity
+        FROM kb_chunks c
+        JOIN kb_documents d ON c.document_id = d.id
+        WHERE c.embedding IS NOT NULL
+        ORDER BY c.embedding <=> :query_vec
+        LIMIT :fetch_limit
+    """)
+    result = await session.execute(sql, {"query_vec": str(query_vec), "fetch_limit": fetch_limit})
+
+    results = []
+    for row in result.fetchall():
+        similarity = float(row.similarity)
+        if similarity < _MIN_SIMILARITY:
+            continue
+        boost = _TIER_BOOST.get(row.tier, 1.0)
+        results.append(KBSearchResult(
+            chunk_text=row.chunk_text, source_document=row.title,
+            section_ref=row.section_ref, tier=row.tier,
+            tier_label=_TIER_LABELS.get(row.tier, f"Tier {row.tier}"),
+            similarity=similarity, boosted_similarity=similarity * boost,
+            effective_date=str(row.effective_date) if row.effective_date else None,
+        ))
+    results.sort(key=lambda r: r.boosted_similarity, reverse=True)
+    return results[:top_k]
+```
+
+#### Markdown Chunking with Paragraph-Boundary Splitting
+
+Documents are split by `##` section headers. Long sections are further split at paragraph boundaries with a target of ~512 tokens per chunk and ~64 token overlap.
+
+```python
+# packages/api/src/services/compliance/knowledge_base/ingestion.py (lines 24-27, 67-138)
+_TARGET_CHUNK_CHARS = 512 * 4  # ~512 tokens
+_OVERLAP_CHARS = 64 * 4        # ~64 tokens
+
+def _chunk_markdown(body):
+    sections = []
+    for line in body.split("\n"):
+        if line.startswith("## "):
+            if current_lines:
+                sections.append((current_header, "\n".join(current_lines).strip()))
+            current_header = line[3:].strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    chunks = []
+    for header, text in sections:
+        if len(text) <= _TARGET_CHUNK_CHARS:
+            chunks.append({"text": text, "section_ref": header or None})
+        else:
+            paragraphs = re.split(r"\n\n+", text)
+            # Split at paragraph boundaries, keeping last paragraph as overlap
+            for para in paragraphs:
+                if current_len + para_len > _TARGET_CHUNK_CHARS and current_chunk:
+                    chunks.append({"text": "\n\n".join(current_chunk), "section_ref": header})
+                    if len(current_chunk[-1]) <= _OVERLAP_CHARS:
+                        current_chunk = [current_chunk[-1]]  # overlap
+    return chunks
+```
+
+#### Conflict Detection Across Sources
+
+The conflict detector checks all result pairs for three types of conflicts: numeric threshold disagreements across tiers, contradictory regulatory directives, and same-tier value divergence.
+
+```python
+# packages/api/src/services/compliance/knowledge_base/conflict.py (lines 50-131)
+def detect_conflicts(results):
+    conflicts = []
+    for i, a in enumerate(results):
+        for j, b in enumerate(results):
+            if i >= j:
+                continue
+            pcts_a = _extract_percentages(a.chunk_text)
+            pcts_b = _extract_percentages(b.chunk_text)
+            # Rule 1: Numeric threshold conflicts across tiers
+            if pcts_a and pcts_b and a.tier != b.tier:
+                if set(pcts_a) - set(pcts_b):
+                    conflicts.append(Conflict(result_a=a, result_b=b,
+                        conflict_type="numeric_threshold",
+                        description=f"{a.tier_label} cites {pcts_a[0]}% while {b.tier_label} cites {pcts_b[0]}%"))
+            # Rule 2: Contradictory directives ("must" vs "must not")
+            dirs_a = _extract_directives(a.chunk_text)
+            dirs_b = _extract_directives(b.chunk_text)
+            if _is_contradictory_pair(dirs_a, dirs_b):
+                conflicts.append(Conflict(..., conflict_type="contradictory_directive"))
+    return conflicts
+```
+
+### Prompt / Chain Patterns
+
+The `kb_search` tool is invoked by the LLM as a standard LangGraph tool when the agent needs regulatory or compliance guidance. The tool formats results with citation metadata (source document, section reference, tier label, effective date) and appends a disclaimer: "This content is simulated for demonstration purposes and does not constitute legal or regulatory advice." The agent's system prompt instructs it to "ALWAYS use the kb_search tool to look up the answer. Do NOT answer compliance questions from memory -- the knowledge base is the authoritative source."
+
+### Gotchas
+
+- The embedding provider is configurable between local (`sentence-transformers` with `nomic-ai/nomic-embed-text-v1.5`) and remote (`openai_compatible` with any OpenAI-compatible embedding endpoint), selected via `EMBEDDING_PROVIDER` env var and `config/models.yaml`. When embeddings fail during ingestion, chunks are stored without embeddings (line 208-214 of `ingestion.py`) and will not appear in search results because the query filters `WHERE c.embedding IS NOT NULL`.
+- The compliance database uses a separate schema and connection string (`COMPLIANCE_DATABASE_URL`) from the main application database for HMDA data isolation. The `kb_search` tool uses the main `SessionLocal`, not the compliance session, because the KB tables (`kb_chunks`, `kb_documents`) are in the main schema.
+- Ingestion is idempotent: `clear_kb_content()` deletes all KB chunks and documents before re-ingesting. There is no incremental update -- the entire knowledge base is rebuilt from files on disk each time.
+- The `_parse_frontmatter()` function uses simple string parsing (not a YAML library) to extract metadata from the markdown frontmatter (lines 38-64 of `ingestion.py`). It splits on the first `:` in each line, which can fail if values contain colons.
+- The minimum similarity threshold (`_MIN_SIMILARITY = 0.3`) is hardcoded in the search module. Results below this threshold are discarded before tier boosting is applied.
+- The fetch limit is `top_k * 3` to ensure enough candidates survive the minimum similarity filter and tier boosting re-ranking (line 63 of `search.py`). If the KB is small, this may return fewer than `top_k` results.
+- The conflict detection is heuristic-based (regex pattern matching for percentages and regulatory directive keywords), not semantic. It catches explicit numeric disagreements and "must" vs "must not" contradictions but cannot detect subtler conflicts in regulatory interpretation.
+
+### Related Architectures
+
+- [agent-orchestration](agent-orchestration.md) -- The compliance KB search is one of many tools available to the underwriter and loan officer LangGraph agents
+- [guardrails-layer](guardrails-layer.md) -- Safety shields in the graph run independently of RAG, checking user input and agent output for policy violations
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach C (FAISS Microservice) | Approach D (Frontend-Driven) | Approach E (Startup Ingestion) | Approach F (Dual-Mode + Docling) | Approach G (Helm-Only Dual-Frontend) |
-|----------|------------------------|-----------------------------------|-------------------------------|------------------------------|-------------------------------|-------------------------------|-------------------------------|
-| Custom backend logic needed | Yes -- build your own RAG pipeline with FastAPI | No -- use pre-built NVIDIA RAG server | Yes -- standalone RAG service + init pipeline | No -- frontend handles all RAG orchestration | Minimal -- startup ingestion code in KnowledgeBaseManager | Minimal -- Streamlit frontend + separate Docling ingestion service | No -- pure Helm templates and Kubernetes Jobs |
-| RAG retrieval integration | Transparent via file_search tool (LlamaStack handles internally) | Explicit via prompt template context injection | HTTP API consumed by agent graph node | Manual context prepend in frontend code | Transparent via file_search tool (LlamaStack handles internally) | Both: Direct mode uses vector_stores.search + manual context prepend; Agent mode uses transparent file_search | Transparent via both AnythingLLM built-in RAG and RHOAI Playground file_search |
-| Vector database | pgvector (integrated with LlamaStack) | GPU-accelerated Milvus (GPU_CAGRA index) | FAISS in-memory (loaded from MinIO) | pgvector (integrated with LlamaStack) | pgvector (integrated with LlamaStack, explicit provider_id) | pgvector (integrated with LlamaStack, no explicit provider_id for UI creation) | Inline Milvus (SQLite-backed) for Llama Stack; LanceDB (built-in) for AnythingLLM |
-| Document processing | External ingestion pipeline via HTTP API | NV-Ingest with cloud NIMs (OCR, table/graphic detection) | Custom PDF parser (PyPDF-based) | LlamaStack rag_tool.insert (base64 data URL) | Direct files.create + vector_stores.files.create (text files only) | Docling (DocumentConverter + HybridChunker) for pipeline; LlamaStack pypdf provider for UI uploads | Web page fetch + HTML stripping (rag-seed Job); URL upload-link (AnythingLLM seed Job) |
-| Model serving | LlamaStack server | vLLM via KServe with MIG-sliced GPUs | TEI for embeddings, separate LLM for inference | LlamaStack server + vLLM via KServe | LlamaStack server + vLLM via KServe | LlamaStack server + vLLM via KServe (GPU/CPU/HPU/Xeon) or Ollama for local dev | vLLM CPU via KServe (shared by both frontends, no GPU) |
-| Multimodal support | Not built in | Built-in VLM inference for image captioning | Not built in | Not built in | Not built in | Not built in | Not built in |
-| GPU requirements | Lower (LlamaStack manages inference) | Higher (4-5 GPUs or MIG-partitioned) | Minimal (TEI for embeddings, no GPU for FAISS) | Lower (LlamaStack manages inference) | Lower (LlamaStack manages inference) | Configurable (GPU, CPU, HPU, Xeon via device flag in Helm values) | None (CPU-only, designed for GPU-less environments) |
-| External dependencies | Minimal (self-contained LlamaStack) | NVIDIA NGC cloud NIMs | MinIO for index storage, TEI for embeddings | Minimal (LlamaStack + pgvector) | Minimal (LlamaStack + pgvector) | Minimal (LlamaStack + pgvector); optional MinIO for configure-pipeline | Minimal (seed document URLs must be reachable from cluster) |
-| Retrieval consumer | User-facing agent response | User-facing frontend | Internal agent pipeline (context enrichment) | User-facing frontend (dual-panel comparison) | Agent state machine via LlamaStack Responses API | User-facing frontend (selectable Direct or Agent mode) | Two independent UIs: AnythingLLM workbench + RHOAI Playground |
-| Index lifecycle | Managed by LlamaStack API (with dual metadata) | Managed by Milvus | Init job + MinIO pointer file + polling | Managed by LlamaStack API (via frontend) | Created at startup, accumulates across restarts | Managed by LlamaStack API (via ingestion service and frontend) | Seeded at deploy time by Kubernetes Jobs; no lifecycle management |
-| Knowledge base type | Dynamic (user-uploaded documents) | Dynamic (user-uploaded documents) | Static (curated PDFs bundled with deployment) | Dynamic (user-uploaded via Streamlit UI) | Static (curated text files bundled or ConfigMap-mounted) | Hybrid: automated from GitHub/S3/URLs at deploy time + dynamic user uploads via UI | Static (web URLs in values.yaml, seeded at deploy time); AnythingLLM allows post-deploy uploads via UI |
-| Document management | FastAPI CRUD API + PostgreSQL metadata | Frontend + NV-Ingest APIs | Init job (static) | Streamlit UI + direct pgvector access | None (files deployed with application or via ConfigMap) | Streamlit UI + OpenAI-compatible vector_stores.files API (no direct DB access) | None (seed jobs only); AnythingLLM UI available post-deploy |
-| Data sources | User-uploaded documents | User-uploaded documents | Curated PDFs | User-uploaded via UI | Curated text files | GitHub repos, S3/MinIO, URLs (automated) + user uploads via UI | Web URLs (defined in values.yaml) |
-| Local development | Not supported | Not supported | Not supported | Not supported | Not supported | Podman Compose with Ollama on host | Not supported |
+| Criteria | Approach A (LlamaStack) | Approach B (NVIDIA RAG Blueprint) | Approach C (FAISS Microservice) | Approach D (Frontend-Driven) | Approach E (Startup Ingestion) | Approach F (Dual-Mode + Docling) | Approach G (Helm-Only Dual-Frontend) | Approach H (Compliance RAG + Tier Boosting) |
+|----------|------------------------|-----------------------------------|-------------------------------|------------------------------|-------------------------------|-------------------------------|-------------------------------|----------------------------------------------|
+| Custom backend logic needed | Yes -- build your own RAG pipeline with FastAPI | No -- use pre-built NVIDIA RAG server | Yes -- standalone RAG service + init pipeline | No -- frontend handles all RAG orchestration | Minimal -- startup ingestion code in KnowledgeBaseManager | Minimal -- Streamlit frontend + separate Docling ingestion service | No -- pure Helm templates and Kubernetes Jobs | Yes -- custom ingestion, search with tier boosting, and conflict detection |
+| RAG retrieval integration | Transparent via file_search tool (LlamaStack handles internally) | Explicit via prompt template context injection | HTTP API consumed by agent graph node | Manual context prepend in frontend code | Transparent via file_search tool (LlamaStack handles internally) | Both: Direct mode uses vector_stores.search + manual context prepend; Agent mode uses transparent file_search | Transparent via both AnythingLLM built-in RAG and RHOAI Playground file_search | LangGraph tool returning formatted results with citations to the agent |
+| Vector database | pgvector (integrated with LlamaStack) | GPU-accelerated Milvus (GPU_CAGRA index) | FAISS in-memory (loaded from MinIO) | pgvector (integrated with LlamaStack) | pgvector (integrated with LlamaStack, explicit provider_id) | pgvector (integrated with LlamaStack, no explicit provider_id for UI creation) | Inline Milvus (SQLite-backed) for Llama Stack; LanceDB (built-in) for AnythingLLM | pgvector (direct SQL, no LlamaStack) |
+| Document processing | External ingestion pipeline via HTTP API | NV-Ingest with cloud NIMs (OCR, table/graphic detection) | Custom PDF parser (PyPDF-based) | LlamaStack rag_tool.insert (base64 data URL) | Direct files.create + vector_stores.files.create (text files only) | Docling (DocumentConverter + HybridChunker) for pipeline; LlamaStack pypdf provider for UI uploads | Web page fetch + HTML stripping (rag-seed Job); URL upload-link (AnythingLLM seed Job) | Custom markdown parser with YAML frontmatter and section-header chunking |
+| Model serving | LlamaStack server | vLLM via KServe with MIG-sliced GPUs | TEI for embeddings, separate LLM for inference | LlamaStack server + vLLM via KServe | LlamaStack server + vLLM via KServe | LlamaStack server + vLLM via KServe (GPU/CPU/HPU/Xeon) or Ollama for local dev | vLLM CPU via KServe (shared by both frontends, no GPU) | Any OpenAI-compatible endpoint; embeddings via local sentence-transformers or remote |
+| Multimodal support | Not built in | Built-in VLM inference for image captioning | Not built in | Not built in | Not built in | Not built in | Not built in | Not built in |
+| GPU requirements | Lower (LlamaStack manages inference) | Higher (4-5 GPUs or MIG-partitioned) | Minimal (TEI for embeddings, no GPU for FAISS) | Lower (LlamaStack manages inference) | Lower (LlamaStack manages inference) | Configurable (GPU, CPU, HPU, Xeon via device flag in Helm values) | None (CPU-only, designed for GPU-less environments) | Minimal (embedding can run locally on CPU with sentence-transformers) |
+| External dependencies | Minimal (self-contained LlamaStack) | NVIDIA NGC cloud NIMs | MinIO for index storage, TEI for embeddings | Minimal (LlamaStack + pgvector) | Minimal (LlamaStack + pgvector) | Minimal (LlamaStack + pgvector); optional MinIO for configure-pipeline | Minimal (seed document URLs must be reachable from cluster) | None (pgvector in same database, no LlamaStack needed) |
+| Retrieval consumer | User-facing agent response | User-facing frontend | Internal agent pipeline (context enrichment) | User-facing frontend (dual-panel comparison) | Agent state machine via LlamaStack Responses API | User-facing frontend (selectable Direct or Agent mode) | Two independent UIs: AnythingLLM workbench + RHOAI Playground | Agent tool output with citations and conflict warnings |
+| Index lifecycle | Managed by LlamaStack API (with dual metadata) | Managed by Milvus | Init job + MinIO pointer file + polling | Managed by LlamaStack API (via frontend) | Created at startup, accumulates across restarts | Managed by LlamaStack API (via ingestion service and frontend) | Seeded at deploy time by Kubernetes Jobs; no lifecycle management | Idempotent rebuild from files on disk (clear + re-ingest) |
+| Knowledge base type | Dynamic (user-uploaded documents) | Dynamic (user-uploaded documents) | Static (curated PDFs bundled with deployment) | Dynamic (user-uploaded via Streamlit UI) | Static (curated text files bundled or ConfigMap-mounted) | Hybrid: automated from GitHub/S3/URLs at deploy time + dynamic user uploads via UI | Static (web URLs in values.yaml, seeded at deploy time); AnythingLLM allows post-deploy uploads via UI | Static (curated markdown files with tiered authority bundled with deployment) |
+| Document management | FastAPI CRUD API + PostgreSQL metadata | Frontend + NV-Ingest APIs | Init job (static) | Streamlit UI + direct pgvector access | None (files deployed with application or via ConfigMap) | Streamlit UI + OpenAI-compatible vector_stores.files API (no direct DB access) | None (seed jobs only); AnythingLLM UI available post-deploy | None (files bundled in data/compliance-kb/ directory structure) |
+| Data sources | User-uploaded documents | User-uploaded documents | Curated PDFs | User-uploaded via UI | Curated text files | GitHub repos, S3/MinIO, URLs (automated) + user uploads via UI | Web URLs (defined in values.yaml) | Curated markdown files with YAML frontmatter organized by authority tier |
+| Local development | Not supported | Not supported | Not supported | Not supported | Not supported | Podman Compose with Ollama on host | Not supported | Supported (local sentence-transformers embeddings, same PostgreSQL) |

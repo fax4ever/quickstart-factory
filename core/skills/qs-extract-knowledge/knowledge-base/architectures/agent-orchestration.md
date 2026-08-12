@@ -1,14 +1,14 @@
 ---
 name: agent-orchestration
 description: Agent orchestration patterns from multi-runner dispatch to LangGraph DAGs to dual-provider factory
-summary: "Provides four agent orchestration patterns for AI quickstarts: (A) FastAPI ChatService dispatches to LlamaStack, LangGraph, or CrewAI runners based on VirtualAgent.runner_type in PostgreSQL, producing normalized SSE events for a React/PatternFly frontend; (B) hierarchical LangGraph DAG for automated event-driven processing with SentenceTransformer + DBSCAN/HDBSCAN clustering and nested subgraphs; (C) dual-provider factory selecting MCP-Direct or Llama Stack behind a single MCP tool server; (D) YAML-driven state machine with multi-agent routing via CloudEvents/Knative, LlamaStack Responses API with native MCP tools + file_search, and NeMo Guardrails. Use Approach A for interactive chat needing pluggable frameworks (LlamaStack default with AsyncLlamaStackClient auto-retry tool exclusion, LangGraph dual-mode switching on graph_config presence for create_react_agent vs declarative StateGraph DAG with typed nodes and MultiServerMCPClient, CrewAI with LiteLLM and _StreamDeduplicator for ReAct noise); Approach B for batch event-driven pipelines with Command(goto=...) routing, dual LLM endpoints, closure-bound Loki tools with result_id caching, and stream_with_fallback for partial content on interruption; Approach C (COPILOT_PROVIDER_MODE env var) for interactive copilots where MCP-Direct gives backend-managed agentic loop (100-iteration while loop, Nemotron TOOLCALL tag auto-detection with 11-char streaming buffer, hard-coded allowlist + Pydantic tool validation, appends \"/mcp\") and Llama Stack delegates orchestration via toolgroup registration (per-conversation sessions, appends \"/sse\"); Approach D for multi-agent IT service automation with 5 YAML state types (waiting, llm_processor, intent_classifier, llm_validator, terminal), dynamic LangGraph StateGraph construction, AsyncPostgresSaver checkpointing with __resume_dispatcher__ for pod restart resilience, response_analysis with trigger_phrases driving set_field/transition actions, and per-agent MCP+knowledge base configuration. All Approach A runners implement BaseRunner.stream() yielding SSE strings terminated by [DONE]; VirtualAgent model stores runner_type, model_name, prompt, tools, knowledge_base_ids, vector_store_ids, shields, and graph_config; Approach B graphs compile at module load with shared module-level LLM instance; Approach C's factory creates MCPDirectProvider or LlamaStackProvider with runtime governance policy injection (Llama Stack requires full agent recreation clearing sessions); Approach D dynamically creates AgentState TypedDict from YAML state_schema.business_fields, routes between specialist agents via routing_decision state field, and uses LlamaStack Responses API create_response_with_retry with exponential backoff (1s-16s) for empty responses. Runners are lazily imported with _check_langgraph()/CREWAI_AVAILABLE guards; LangGraph InMemorySaver must swap to PostgresSaver for multi-worker; both LangGraph and CrewAI use LLM-based _extract_input_fields for structured field parsing from natural language; Approach B's offline pipeline separates preparation (clustering) from processing to wait for RAG readiness; Approach C's tool validation only applies in MCP-Direct mode (Llama Stack has no equivalent security layer) and conversation_store is in-memory (lost on pod restart); Approach D's _consumed_this_invoke flag prevents multiple waiting states from consuming the same HumanMessage, session locks (180s timeout) prevent concurrent CloudEvent processing, and FaultInjectingAsyncLlamaStackClient exempts vector_stores namespace from fault injection."
+summary: "Provides five agent orchestration patterns for AI quickstarts: (A) FastAPI ChatService dispatches to LlamaStack, LangGraph, or CrewAI runners based on VirtualAgent.runner_type in PostgreSQL, producing normalized SSE events for a React/PatternFly frontend; (B) hierarchical LangGraph DAG for automated event-driven processing with SentenceTransformer + DBSCAN/HDBSCAN clustering and nested subgraphs; (C) dual-provider factory selecting MCP-Direct or Llama Stack behind a single MCP tool server; (D) YAML-driven state machine with multi-agent routing via CloudEvents/Knative, LlamaStack Responses API with native MCP tools + file_search, and NeMo Guardrails; (E) multi-persona LangGraph agents with per-tool RBAC authorization graph node, NeMo Guardrails as StateGraph nodes (input_shield/output_shield), YAML-driven config with registry hot-reloading, WebSocket buffered response, and A2A protocol via Kagenti. Use Approach A for interactive chat needing pluggable frameworks (LlamaStack default with AsyncLlamaStackClient auto-retry tool exclusion, LangGraph dual-mode switching on graph_config presence for create_react_agent vs declarative StateGraph DAG with typed nodes and MultiServerMCPClient, CrewAI with LiteLLM and _StreamDeduplicator for ReAct noise); Approach B for batch event-driven pipelines with Command(goto=...) routing, dual LLM endpoints, closure-bound Loki tools with result_id caching, and stream_with_fallback for partial content on interruption; Approach C (COPILOT_PROVIDER_MODE env var) for interactive copilots where MCP-Direct gives backend-managed agentic loop (100-iteration while loop, Nemotron TOOLCALL tag auto-detection with 11-char streaming buffer, hard-coded allowlist + Pydantic tool validation, appends \"/mcp\") and Llama Stack delegates orchestration via toolgroup registration (per-conversation sessions, appends \"/sse\"); Approach D for multi-agent IT service automation with 5 YAML state types (waiting, llm_processor, intent_classifier, llm_validator, terminal), dynamic LangGraph StateGraph construction, AsyncPostgresSaver checkpointing with __resume_dispatcher__ for pod restart resilience, response_analysis with trigger_phrases driving set_field/transition actions, and per-agent MCP+knowledge base configuration; Approach E for regulated-industry multi-persona apps with build_agent_graph factory creating input_shield -> agent -> tool_auth -> tools -> output_shield -> END graph, YAML-configured allowed_roles per tool checked by tool_auth node, deterministic thread IDs (user:{user_id}:agent:{agent_name}), and optional Kagenti A2A agent-to-agent invocation on sequential ports. All Approach A runners implement BaseRunner.stream() yielding SSE strings terminated by [DONE]; VirtualAgent model stores runner_type, model_name, prompt, tools, knowledge_base_ids, vector_store_ids, shields, and graph_config; Approach B graphs compile at module load with shared module-level LLM instance; Approach C's factory creates MCPDirectProvider or LlamaStackProvider with runtime governance policy injection (Llama Stack requires full agent recreation clearing sessions); Approach D dynamically creates AgentState TypedDict from YAML state_schema.business_fields, routes between specialist agents via routing_decision state field, and uses LlamaStack Responses API create_response_with_retry with exponential backoff (1s-16s) for empty responses; Approach E's registry caches compiled graphs with 5-second mtime check interval for hot-reloading, WebSocket handler buffers full response then strips think tags before sending single done message, and agent configs support nested env var substitution (${VAR:-${FALLBACK:-default}}) with up to 3 resolution passes. Runners are lazily imported with _check_langgraph()/CREWAI_AVAILABLE guards; LangGraph InMemorySaver must swap to PostgresSaver for multi-worker; both LangGraph and CrewAI use LLM-based _extract_input_fields for structured field parsing from natural language; Approach B's offline pipeline separates preparation (clustering) from processing to wait for RAG readiness; Approach C's tool validation only applies in MCP-Direct mode (Llama Stack has no equivalent security layer) and conversation_store is in-memory (lost on pod restart); Approach D's _consumed_this_invoke flag prevents multiple waiting states from consuming the same HumanMessage, session locks (180s timeout) prevent concurrent CloudEvent processing, and FaultInjectingAsyncLlamaStackClient exempts vector_stores namespace from fault injection; Approach E's tool_auth node uses graph-level defaults only to prevent state injection attacks, output_shield NeMo Guardrails check can exceed httpx 30s timeout (OUTPUT_SHIELD_DISABLED workaround exists), and A2A integration uses in-memory MemorySaver (conversation state lost on pod restart)."
 metadata:
   type: architecture
 tags:
-  tech_stack: [fastapi, langchain, langgraph, crewai, llamastack, python, gradio, sentence-transformers, scikit-learn, sveltekit, openai-sdk, vega-lite, cloudevents, nemo-guardrails, zammad]
-  ai_pattern: [agents, prompt-chaining, model-serving, embeddings, data-governance, guardrails]
+  tech_stack: [fastapi, langchain, langgraph, crewai, llamastack, python, gradio, sentence-transformers, scikit-learn, sveltekit, openai-sdk, vega-lite, cloudevents, nemo-guardrails, zammad, react, tailwindcss, tanstack-router, keycloak, a2a-protocol, kagenti]
+  ai_pattern: [agents, prompt-chaining, model-serving, embeddings, data-governance, guardrails, rag]
   platform: [llamastack, vllm, rhoai, openshift, kserve, knative]
-  data_layer: [postgresql, pgvector]
+  data_layer: [postgresql, pgvector, minio]
 source_examples:
   - quickstart: "ai-virtual-agent"
     repo: "https://github.com/rh-ai-quickstart/ai-virtual-agent"
@@ -26,6 +26,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/it-self-service-agent"
     notes: "YAML-driven configurable state machine with LangGraph, multi-agent routing via CloudEvents, LlamaStack Responses API, and NeMo guardrails integration"
     approach: "D"
+  - quickstart: "multi-agent-loan-origination"
+    repo: "https://github.com/rh-ai-quickstart/multi-agent-loan-origination"
+    notes: "Five persona-specific LangGraph agents with YAML-driven configs, registry-based hot-reloading, per-tool RBAC authorization node, NeMo Guardrails graph nodes, WebSocket streaming, and A2A protocol integration via Kagenti"
+    approach: "E"
 ---
 
 # Agent Orchestration
@@ -853,21 +857,250 @@ The `response_analysis` section in YAML-configured states enables conditional tr
 
 ---
 
+## Approach E: Multi-Persona LangGraph Agents with RBAC Tool Authorization (from multi-agent-loan-origination)
+
+### When to Use
+
+Use Approach E when you need multiple persona-specific agents in a single backend application, each with its own tool set, RBAC rules, and system prompt, all sharing a common LangGraph graph structure with safety shields and tool authorization built into the graph itself. Best suited for regulated-industry applications where tool access must be scoped by user role and safety checks must be enforced at the graph level rather than as external middleware.
+
+### Differences from Approach A
+
+- **No framework abstraction layer**: All agents use LangGraph exclusively via a shared `build_agent_graph` factory function, rather than dispatching across multiple frameworks (LlamaStack, LangGraph, CrewAI).
+- **YAML config drives tools and RBAC, not runner selection**: Each agent's YAML config specifies a system prompt, tool list with `allowed_roles` per tool, and model routing strategy -- not which framework to use.
+- **Graph-level safety**: NeMo Guardrails are embedded as LangGraph StateGraph nodes (`input_shield`, `output_shield`) with conditional edges, rather than executed in runner code.
+- **Tool-level RBAC as a graph node**: A `tool_auth` authorization node checks each pending tool call against the user's role before execution, injecting a denial message back to the agent when blocked.
+- **WebSocket streaming with buffered response**: The full response is buffered during graph execution and sent as a single `done` message, rather than streaming token-by-token SSE events.
+- **Registry with hot-reloading**: Agent graphs are cached and rebuilt when their YAML config file's mtime changes, checked at most every 5 seconds.
+- **A2A protocol**: Agents are optionally exposed as A2A-compatible endpoints via Kagenti for agent-to-agent discovery and invocation.
+
+### Data Flow
+
+1. User connects via WebSocket at a persona-specific path (e.g., `/api/borrower/chat`, `/api/underwriter/chat`)
+2. JWT authentication resolves the user's role (borrower, loan_officer, underwriter, ceo) or the public endpoint accepts unauthenticated users
+3. The `create_authenticated_chat_router` factory builds a WebSocket handler that loads the appropriate agent graph via `get_agent(agent_name, checkpointer=checkpointer)`
+4. The registry loads the agent's YAML config from `config/agents/<name>.yaml`, resolves `${ENV_VAR:-default}` placeholders, and calls the agent module's `build_graph()` function
+5. Each agent module assembles its tool list (native tools + optional MCP tools) and calls `build_agent_graph(config, tools)` which creates a compiled LangGraph StateGraph: `input_shield -> agent -> tools <-> agent -> output_shield -> END`
+6. The graph streams events via `astream_events(v2)`, the handler buffers the full response, strips think tags and markdown artifacts, and sends a single `{"type": "done", "content": ...}` WebSocket message
+7. Conversation state is persisted via `langgraph-checkpoint-postgres` AsyncPostgresSaver with deterministic thread IDs (`user:{user_id}:agent:{agent_name}[:app:{app_id}]`)
+
+### Component Wiring
+
+| From | To | Protocol | Purpose |
+|------|----|----------|---------|
+| React frontend | FastAPI backend | WebSocket | Chat messages in, JSON events out |
+| Chat handler | Agent registry | Python method call | Load/cache compiled LangGraph graph by agent name |
+| Agent registry | YAML config files | Filesystem read | Load system prompt, tool config, RBAC rules with env var substitution |
+| LangGraph agent node | vLLM/OpenAI-compatible endpoint | HTTP (ChatOpenAI) | LLM inference with tool binding |
+| LangGraph input/output shield nodes | NeMo Guardrails server | HTTP (httpx) | Safety rail checks via `/v1/guardrail/checks` |
+| LangGraph tools node | LangChain ToolNode | Python method call | Execute native tools and MCP tools |
+| LangGraph tool_auth node | AgentState | Python method call | Check tool calls against `tool_allowed_roles` map |
+| Chat handler | AsyncPostgresSaver | psycopg3 | Conversation checkpoint persistence |
+| Chat handler | Audit service | SQLAlchemy async | Hash-chained audit event logging |
+| A2A server (optional) | Agent registry | Python method call | Kagenti agent-to-agent invocation |
+
+### Key Integration Points
+
+#### Agent Registry with Hot-Reloading
+
+The registry caches compiled graphs and rebuilds them when the YAML config file changes, with a 5-second mtime check interval to avoid excessive filesystem stat() calls.
+
+```python
+# packages/api/src/agents/registry.py (lines 43-49, 65-109)
+_AGENT_MODULES: dict[str, str] = {
+    "public-assistant": ".public_assistant",
+    "borrower-assistant": ".borrower_assistant",
+    "loan-officer-assistant": ".loan_officer_assistant",
+    "underwriter-assistant": ".underwriter_assistant",
+    "ceo-assistant": ".ceo_assistant",
+}
+
+def get_agent(agent_name: str, checkpointer=None):
+    config_path = _AGENTS_CONFIG_DIR / f"{agent_name}.yaml"
+    now = time.monotonic()
+    if agent_name in _graphs and now - _last_check.get(agent_name, 0) < _MTIME_CHECK_INTERVAL:
+        return _graphs[agent_name][0]
+    _last_check[agent_name] = now
+    current_mtime = config_path.stat().st_mtime
+    if agent_name in _graphs:
+        cached_graph, cached_mtime = _graphs[agent_name]
+        if current_mtime <= cached_mtime:
+            return cached_graph
+    config = load_agent_config(agent_name)
+    graph = _build_graph(agent_name, config, checkpointer=checkpointer)
+    _graphs[agent_name] = (graph, current_mtime)
+    return graph
+```
+
+#### LangGraph Graph with Safety Shields and RBAC Tool Authorization
+
+The shared factory builds a StateGraph with safety shields as nodes and an optional `tool_auth` node that checks each tool call against the user's role before execution.
+
+```python
+# packages/api/src/agents/base.py (lines 107-133, 170-175, 177-219, 301-333)
+def build_agent_graph_compiled(
+    *, system_prompt, tools, llm, tool_allowed_roles=None, checkpointer=None,
+):
+    async def input_shield(state: AgentState) -> dict:
+        checker = get_safety_checker()
+        if not checker:
+            return {"safety_blocked": False}
+        result = await checker.check_input(last_msg.content)
+        if not result.is_safe:
+            return {"safety_blocked": True, "messages": [AIMessage(content=SAFETY_REFUSAL_MESSAGE)]}
+        return {"safety_blocked": False}
+
+    def should_continue(state: AgentState) -> str:
+        last = state["messages"][-1]
+        if isinstance(last, AIMessage) and last.tool_calls:
+            return "tool_auth" if tool_allowed_roles else "tools"
+        return "output_shield"
+
+    async def tool_auth(state: AgentState) -> dict:
+        user_role = state.get("user_role", "")
+        roles_map = dict(tool_allowed_roles or {})
+        blocked = [tc["name"] for tc in last.tool_calls
+                   if roles_map.get(tc["name"]) is not None and user_role not in roles_map.get(tc["name"])]
+        if not blocked:
+            return {}
+        return {"messages": [AIMessage(content=f"Tool authorization denied: ...")]}
+
+    graph = StateGraph(AgentState)
+    graph.add_node("input_shield", input_shield)
+    graph.add_node("agent", agent)
+    graph.add_node("tools", tools_with_metrics)
+    graph.add_node("output_shield", output_shield)
+    graph.set_entry_point("input_shield")
+    graph.add_conditional_edges("input_shield", after_input_shield, {END: END, "agent": "agent"})
+    if tool_allowed_roles:
+        graph.add_node("tool_auth", tool_auth)
+        graph.add_conditional_edges("agent", should_continue,
+            {"tool_auth": "tool_auth", "output_shield": "output_shield"})
+        graph.add_conditional_edges("tool_auth", after_tool_auth,
+            {"tools": "tools", "output_shield": "output_shield"})
+    graph.add_edge("tools", "agent")
+    graph.add_edge("output_shield", END)
+    return graph.compile(checkpointer=checkpointer)
+```
+
+#### YAML-Driven Tool RBAC Configuration
+
+Tool access is defined per-agent in YAML with `allowed_roles` lists. The `build_agent_graph` factory extracts these into a `tool_allowed_roles` dict that the `tool_auth` graph node uses at runtime.
+
+```yaml
+# config/agents/underwriter-assistant.yaml (lines 293-371)
+tools:
+  - name: current_date
+    description: "Get today's date for due date calculations"
+    allowed_roles: [borrower, loan_officer, underwriter, ceo, admin]
+  - name: uw_queue_view
+    description: "View the underwriting queue sorted by urgency"
+    allowed_roles: [underwriter, admin]
+  - name: calculate_dti
+    description: "Calculate Debt-to-Income ratio"
+    allowed_roles: [underwriter, admin]
+  - name: kb_search
+    description: "Search the compliance knowledge base"
+    allowed_roles: [loan_officer, underwriter, admin]
+```
+
+#### WebSocket Chat Handler with Buffered Response
+
+The chat handler buffers the full agent response during graph execution and sends a single `done` message, racing the agent task against a disconnect sentinel to cancel immediately if the client disconnects.
+
+```python
+# packages/api/src/routes/_chat_handler.py (lines 98-112, 161-207, 301-363)
+async def run_agent_stream(ws, graph, *, thread_id, session_id, user_role, ...):
+    async def _run_agent(user_text, input_messages):
+        full_response = ""
+        async for event in graph.astream_events(
+            {"messages": input_messages, "user_role": user_role, "user_id": user_id, ...},
+            config={"configurable": {"thread_id": thread_id}, "recursion_limit": 50},
+            version="v2",
+        ):
+            kind = event.get("event")
+            node = event.get("metadata", {}).get("langgraph_node")
+            if kind == "on_chat_model_stream" and node in ("agent", "agent_fast", "agent_capable"):
+                chunk = event.get("data", {}).get("chunk")
+                if isinstance(chunk, AIMessageChunk) and chunk.content:
+                    full_response += chunk.content
+        return full_response
+
+    agent_task = asyncio.create_task(_run_agent(user_text, input_messages))
+    disconnect_task = asyncio.create_task(_wait_disconnect())
+    done, pending = await asyncio.wait({agent_task, disconnect_task}, return_when=asyncio.FIRST_COMPLETED)
+    if disconnect_task in done:
+        agent_task.cancel()
+        return
+    full_response = re.sub(r"<think>.*?</think>", "", full_response, flags=re.DOTALL)
+    await _send({"type": "done", "content": full_response})
+```
+
+#### A2A Protocol Integration via Kagenti
+
+When `KAGENTI_ENABLED=true`, each agent is exposed as an A2A-compatible endpoint on sequential ports (8080+), enabling Kagenti to discover and invoke agents. Each `LoanAgentExecutor` bridges A2A requests to the existing LangGraph graph.
+
+```python
+# packages/api/src/a2a_server.py (lines 352-373, 470-501)
+class LoanAgentExecutor(AgentExecutor):
+    def __init__(self, agent_name: str) -> None:
+        self._agent_name = agent_name
+        self._checkpointer = MemorySaver()
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        query = context.get_user_input()
+        graph = get_agent(self._agent_name, checkpointer=self._checkpointer)
+        config = {"configurable": {"thread_id": context.context_id}}
+        inputs = {"messages": [HumanMessage(content=query)], "user_role": default_role}
+        result = await graph.ainvoke(inputs, config)
+        response_text = self._extract_response(result)
+        await updater.add_artifact([Part(text=response_text)], name="agent_response")
+        await updater.complete()
+
+async def run_all_a2a_servers(host="0.0.0.0"):
+    for agent_name, config in AGENT_A2A_CONFIG.items():
+        tasks.append(asyncio.create_task(run_a2a_server(agent_name, host, config["port"])))
+    await asyncio.gather(*tasks)
+```
+
+### Prompt / Chain Patterns
+
+Each agent's system prompt is defined in its YAML config file and supports `${ENV_VAR:-default}` placeholder substitution. The `AGENT_NAME` environment variable is optionally prepended as identity awareness. Prompts are domain-specific and contain structured workflow instructions -- for example, the underwriter assistant's system prompt defines a 5-step risk assessment workflow (application detail, five risk tools, ML prediction, recommendation generation, assessment persistence) that the agent must execute sequentially without intermediate responses.
+
+### Gotchas
+
+- The WebSocket handler buffers the entire response before sending, meaning the user sees no incremental output during agent execution. The `_run_agent` function accumulates tokens from `on_chat_model_stream` events for `agent`/`agent_fast`/`agent_capable` nodes, then sends a single `done` message. This simplifies the protocol but increases perceived latency for long responses.
+- Think tags from reasoning models (e.g., `<think>...</think>`) and markdown bold markers (`**`) are stripped from the response via regex before sending to the client (lines 354-357 of `_chat_handler.py`). Stray inline tool-call text from small models is also removed.
+- The `tool_auth` node uses graph-level `tool_allowed_roles` defaults only -- it never reads roles from the state to prevent state injection attacks (line 191 of `base.py`: "Use graph-level defaults only -- never allow state to override roles").
+- Conversation thread IDs are deterministic (`user:{user_id}:agent:{agent_name}[:app:{app_id}]`) for authenticated users, enabling conversation resumption across sessions. The `verify_thread_ownership` check (line 135-150 of `conversation.py`) prevents users from reading other users' conversations by checking that the thread_id starts with the correct user prefix.
+- The `output_shield` node re-sends the full assistant response as a new user message to NeMo Guardrails for evaluation, triggering a full LLM call (~32s+) that can exceed the httpx 30s timeout. The `OUTPUT_SHIELD_DISABLED` setting (lines 237-240 of `base.py`) exists as a workaround for this latency issue.
+- Agent YAML configs support env var substitution with nested references: `${VISION_BASE_URL:-${LLM_BASE_URL:-default}}` is resolved via up to 3 substitution passes (lines 52-66 of `inference/config.py`).
+- If a YAML config reload fails (bad YAML, missing fields), the registry keeps the last valid graph and logs a warning (lines 99-109 of `registry.py`), preventing a config typo from breaking a running system.
+- The A2A integration uses in-memory `MemorySaver` for checkpointing (line 358 of `a2a_server.py`), not the PostgreSQL-backed AsyncPostgresSaver used by the WebSocket handler. A2A conversation state is lost on pod restart.
+- PII masking is applied at the WebSocket level via the `pii_mask` parameter (controlled by user role data scope), not in the graph. The CEO assistant has `pii_mask=True` to redact PII from all responses, applied via the `PIIMaskingMiddleware` and a recursive JSON masking function.
+
+### Related Architectures
+
+- [guardrails-layer](guardrails-layer.md) -- NeMo Guardrails integrated as LangGraph StateGraph nodes for input/output safety checks
+- [rag-pipeline](rag-pipeline.md) -- Compliance knowledge base with pgvector tier-based boosting, used as a LangGraph tool
+- [mcp-tool-integration](mcp-tool-integration.md) -- MCP risk assessment tools loaded at startup via langchain-mcp-adapters and injected into the underwriter agent
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Multi-Runner Dispatch) | Approach B (Hierarchical LangGraph DAG) | Approach C (Dual-Provider Factory) | Approach D (YAML State Machine) |
-|----------|-----------------------------------|----------------------------------------|-----------------------------------|---------------------------------|
-| Use case | Interactive chat with configurable AI agents | Automated event-driven data processing pipeline | Interactive copilot with deployment-mode flexibility | Multi-agent IT service automation with structured conversational workflows |
-| User interaction | Real-time chat with SSE streaming | No user interaction during processing; results viewed after | Real-time chat with SSE streaming | Real-time chat via web, CLI, Slack, or ticketing system |
-| Agent framework | Pluggable (LlamaStack, LangGraph, CrewAI) | LangGraph only, with LangChain tool-calling agent | MCP-Direct (custom loop) or Llama Stack (delegated) | LangGraph (execution engine) + LlamaStack Responses API (inference + tools) |
-| Graph definition | Configurable via database (runner_type, graph_config) | Fixed Python code, compiled at module load | Not applicable (simple tool-calling loop, no graph) | YAML configuration files with typed states and declarative transitions |
-| Framework selection | Runtime (per-agent, stored in database) | Hardcoded | Deployment-time (environment variable) | Startup (per-agent YAML config files, overridable via env vars) |
-| Context retrieval | RAG via file_search tool (transparent to prompt) | RAG as explicit graph node + Loki log retrieval subgraph | Not applicable (tools query database directly) | RAG via file_search tool (transparent to prompt, knowledge bases in YAML) |
-| Processing model | One request at a time per chat session | Batch processing with log clustering for deduplication | One request at a time per chat session | One request at a time per session, with session lock preventing concurrent processing |
-| LLM routing | Not used (dispatch is by runner_type config) | LLM structured output drives conditional graph edges | Not applicable (single sequential loop) | LLM intent classification drives `routing_decision` field, session manager dispatches to specialist |
-| Tool security | Framework-managed tool registration | No explicit validation | Hard-coded allowlist + Pydantic schema validation (MCP-Direct only) | LlamaStack-managed MCP tool execution with per-request AUTHORITATIVE_USER_ID header |
-| Model format support | Standard OpenAI tool calling | Standard OpenAI tool calling | Auto-detects Nemotron TOOLCALL tags vs OpenAI format | Standard OpenAI tool calling via LlamaStack Responses API |
-| Policy management | Per-agent shields via LlamaStack safety API | Not applicable | Runtime policy injection into system prompt | NeMo Guardrails service with custom Colang flows and jailbreak detection NIM |
-| Multi-agent support | Not built in (single agent per session) | Not applicable | Not applicable | Built-in routing agent + specialist agent dispatch with session state handoff |
-| Communication model | Direct REST/SSE | Direct Python method calls | Direct REST/SSE | CloudEvent-driven microservices via Knative broker |
-| Complexity | Higher (multi-framework, SSE normalization) | Moderate (single framework, hierarchical subgraphs) | Moderate (two providers, shared interface) | Higher (multi-service, CloudEvents, YAML state machines, multi-agent routing) |
+| Criteria | Approach A (Multi-Runner Dispatch) | Approach B (Hierarchical LangGraph DAG) | Approach C (Dual-Provider Factory) | Approach D (YAML State Machine) | Approach E (Multi-Persona RBAC Agents) |
+|----------|-----------------------------------|----------------------------------------|-----------------------------------|---------------------------------|----------------------------------------|
+| Use case | Interactive chat with configurable AI agents | Automated event-driven data processing pipeline | Interactive copilot with deployment-mode flexibility | Multi-agent IT service automation with structured conversational workflows | Multi-persona regulated-industry application with per-tool RBAC |
+| User interaction | Real-time chat with SSE streaming | No user interaction during processing; results viewed after | Real-time chat with SSE streaming | Real-time chat via web, CLI, Slack, or ticketing system | Real-time chat via WebSocket with buffered response |
+| Agent framework | Pluggable (LlamaStack, LangGraph, CrewAI) | LangGraph only, with LangChain tool-calling agent | MCP-Direct (custom loop) or Llama Stack (delegated) | LangGraph (execution engine) + LlamaStack Responses API (inference + tools) | LangGraph only via shared build_agent_graph factory |
+| Graph definition | Configurable via database (runner_type, graph_config) | Fixed Python code, compiled at module load | Not applicable (simple tool-calling loop, no graph) | YAML configuration files with typed states and declarative transitions | Shared graph structure per-agent, tools and RBAC from YAML config |
+| Framework selection | Runtime (per-agent, stored in database) | Hardcoded | Deployment-time (environment variable) | Startup (per-agent YAML config files, overridable via env vars) | Startup (per-agent YAML config, mtime-based hot-reload) |
+| Context retrieval | RAG via file_search tool (transparent to prompt) | RAG as explicit graph node + Loki log retrieval subgraph | Not applicable (tools query database directly) | RAG via file_search tool (transparent to prompt, knowledge bases in YAML) | RAG via pgvector compliance KB search tool (direct SQL, no LlamaStack) |
+| Processing model | One request at a time per chat session | Batch processing with log clustering for deduplication | One request at a time per chat session | One request at a time per session, with session lock preventing concurrent processing | One request at a time per WebSocket, with asyncio.wait disconnect cancellation |
+| LLM routing | Not used (dispatch is by runner_type config) | LLM structured output drives conditional graph edges | Not applicable (single sequential loop) | LLM intent classification drives `routing_decision` field, session manager dispatches to specialist | Not used (single agent per persona, WebSocket path selects agent) |
+| Tool security | Framework-managed tool registration | No explicit validation | Hard-coded allowlist + Pydantic schema validation (MCP-Direct only) | LlamaStack-managed MCP tool execution with per-request AUTHORITATIVE_USER_ID header | YAML-configured per-tool allowed_roles checked by tool_auth graph node |
+| Model format support | Standard OpenAI tool calling | Standard OpenAI tool calling | Auto-detects Nemotron TOOLCALL tags vs OpenAI format | Standard OpenAI tool calling via LlamaStack Responses API | Standard OpenAI tool calling via ChatOpenAI |
+| Policy management | Per-agent shields via LlamaStack safety API | Not applicable | Runtime policy injection into system prompt | NeMo Guardrails service with custom Colang flows and jailbreak detection NIM | NeMo Guardrails as LangGraph graph nodes (input_shield, output_shield) |
+| Multi-agent support | Not built in (single agent per session) | Not applicable | Not applicable | Built-in routing agent + specialist agent dispatch with session state handoff | Five independent agents, each on its own WebSocket path; A2A protocol for cross-agent invocation |
+| Communication model | Direct REST/SSE | Direct Python method calls | Direct REST/SSE | CloudEvent-driven microservices via Knative broker | Direct WebSocket with optional A2A (JSON-RPC) |
+| Complexity | Higher (multi-framework, SSE normalization) | Moderate (single framework, hierarchical subgraphs) | Moderate (two providers, shared interface) | Higher (multi-service, CloudEvents, YAML state machines, multi-agent routing) | Moderate (single framework, shared graph factory, YAML-driven config) |
