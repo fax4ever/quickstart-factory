@@ -1,11 +1,11 @@
 ---
 name: keycloak
 description: Keycloak OIDC identity provider deployed via operator CR or raw container with realm import and JWT validation
-summary: "Keycloak provides SSO/OIDC identity management for OpenShift quickstarts via three approaches: (A) Operator CR (k8s.keycloak.org/v2alpha1) with CNPG PostgreSQL for cluster-level OAuth SSO using KeycloakRealmImport CR, bulk templated users, automated post-install OAuth patching, TLS re-encryption Route, openid-client-secret in openshift-config namespace, and optional kubeadmin removal; (B) raw quay.io/keycloak/keycloak:26.0 container in dev mode for application-level OIDC with domain-specific roles (borrower/loan_officer/underwriter/ceo) driving DataScope-based data visibility, PyJWT/JWKS validation with configurable cache TTL, keycloak-js with PKCE S256, and AUTH_DISABLED dev bypass with X-Dev-Role header; (C) Operator CR with standalone PostgreSQL StatefulSet for production app-level OIDC using namespace-scoped rhbk-operator subscription, KeycloakRealmImport CR (PKCE intentionally disabled), cross-chart keycloak-client-secret sharing via post-install sync Job with Helm lookup for idempotent upgrades, pre-delete cleanup hook, and Route edge termination. Choose A for cluster-wide SSO with OpenShift groups/RBAC mapping (requires cluster-admin), B for per-application persona-based RBAC without operator dependency (fastest dev loop via AUTH_DISABLED=true and X-Dev-Role header, activated with compose --profile auth), or C for production app-level OIDC with persistent state and umbrella chart integration (no cluster privileges needed). Set KEYCLOAK_ISSUER when Keycloak is behind an OpenShift Route to avoid issuer mismatch causing InvalidTokenError; A's CNPG host defaults to <cluster-name>-rw; C requires postgres.password and realm.testUser.password at install with no defaults; B activates Keycloak only with compose --profile auth. A's OAuth patching Job runs in openshift-authentication namespace with cluster-admin; B's directAccessGrantsEnabled enables deprecated ROPC flow (OAuth 2.1); C's sync Job polls 120s for keycloak-client-secret and uses hostname.strict: false disabling hostname verification; JWKS cache-bust on kid mismatch forces refresh for all coroutines across B."
+summary: "Keycloak provides SSO/OIDC identity management for OpenShift quickstarts via four approaches: (A) Operator CR (k8s.keycloak.org/v2alpha1) with CNPG PostgreSQL for cluster-level OAuth SSO using KeycloakRealmImport CR, bulk templated users, automated post-install OAuth patching, TLS re-encryption Route, and openid-client-secret in openshift-config namespace; (B) raw quay.io/keycloak/keycloak:26.0 container in dev mode for app-level OIDC with domain-specific roles (borrower/loan_officer/underwriter/ceo) driving DataScope-based data visibility, PyJWT/JWKS validation with configurable cache TTL, keycloak-js PKCE S256, and AUTH_DISABLED dev bypass with X-Dev-Role header; (C) Operator CR with standalone PostgreSQL StatefulSet for production app-level OIDC using namespace-scoped rhbk-operator, KeycloakRealmImport CR (PKCE intentionally disabled), cross-chart keycloak-client-secret sharing via sync Job with Helm lookup for idempotent upgrades, pre-delete cleanup hook, hostname.strict: false, and Route edge termination; (D) Keycloak 26.0.7 production container as standalone Helm subchart with programmatic realm setup via Admin REST API, shared PostgreSQL database, DB-to-Keycloak user sync via psycopg2, python-jose JWT validation with dual-URL OIDC discovery (internal KEYCLOAK_URL for JWKS vs external KEYCLOAK_FRONTEND_URL as issuer), oidc-client-ts/react-oidc-context frontend, health probes on management port 9000, Makefile-driven URL computation, and BYPASS_AUTH dev bypass with X-Test-User-Email header. Choose A for cluster-wide SSO with OpenShift groups/RBAC mapping (requires cluster-admin), B for per-application persona-based RBAC without operator dependency (fastest dev loop via AUTH_DISABLED=true and X-Dev-Role header, activated with compose --profile auth), C for production app-level OIDC with persistent state and umbrella chart integration using Helm lookup (no cluster privileges needed), or D for production app-level OIDC with dynamic realm config, DB user sync, and no operator dependency (BYPASS_AUTH=true with X-Test-User-Email header). A creates openid-client-secret in openshift-config namespace with CNPG host defaulting to <cluster-name>-rw and TLS re-encryption; B validates JWTs via PyJWT/JWKS with configurable JWKS_CACHE_TTL and keycloak-js PKCE S256; C requires postgres.password and realm.testUser.password at install (no defaults) with sync Job polling 120s for keycloak-client-secret; D uses dual-URL OIDC discovery overriding issuer to match KEYCLOAK_FRONTEND_URL with health probes on port 9000 (initialDelaySeconds: 120). Set KEYCLOAK_ISSUER (B) or use dual-URL pattern with KEYCLOAK_FRONTEND_URL (D) to avoid issuer mismatch causing InvalidTokenError/JWTError when Keycloak is behind an OpenShift Route; A's OAuth patching Job runs in openshift-authentication namespace with cluster-admin; B's directAccessGrantsEnabled enables deprecated ROPC flow (OAuth 2.1) and JWKS cache-bust on kid mismatch forces refresh for all coroutines; C's PKCE is intentionally disabled pending app support; D's start command (non-optimized) auto-build adds ~30s to startup and JWT_CLOCK_SKEW_LEEWAY defaults to 120s."
 metadata:
   type: component
 tags:
-  tech_stack: [keycloak, postgresql, helm, fastapi, react, python, nodejs]
+  tech_stack: [keycloak, postgresql, helm, fastapi, react, python, nodejs, python-jose, oidc-client-ts]
   ai_pattern: [agents]
   platform: [openshift, kubernetes]
   data_layer: [postgresql]
@@ -22,6 +22,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/peoplemesh"
     notes: "Keycloak via operator CR with standalone PostgreSQL StatefulSet, application-level OIDC via KeycloakRealmImport CR, cross-chart secret sharing via sync Job, and namespace-scoped rhbk-operator subscription"
     approach: "C"
+  - quickstart: "spending-transaction-monitor"
+    repo: "https://github.com/rh-ai-quickstart/spending-transaction-monitor"
+    notes: "Keycloak 26.0.7 production container as standalone Helm subchart with programmatic realm setup via Admin REST API, shared PostgreSQL database, DB-to-Keycloak user sync, python-jose JWT validation with dual-URL OIDC discovery, and oidc-client-ts frontend"
+    approach: "D"
 ---
 
 # Keycloak
@@ -661,19 +665,292 @@ oc delete keycloakrealmimport peoplemesh-realm \
 
 ---
 
+## Approach D: Production Container with Programmatic Realm Setup (from spending-transaction-monitor)
+
+### When to Use
+
+When the quickstart needs a production-grade Keycloak container (not dev mode, not operator-managed) with application-level OIDC, where realm/client/role configuration is managed programmatically via the Keycloak Admin REST API rather than static JSON or CRs. Suitable when the application has its own user database and needs to sync users bidirectionally between the database and Keycloak.
+
+### Differences from Approach A
+
+- **No operator dependency** -- raw container Deployment, no Keycloak Operator or CNPG
+- **No cluster-level changes** -- application-level OIDC only, no OpenShift OAuth patching
+- **Shared database** -- uses the main app's PostgreSQL instance (separate `keycloak` database created by init script), not a dedicated CNPG cluster
+
+### Differences from Approach B
+
+- **Production mode** -- runs `start` (not `start-dev`), builds config on startup; health probes on management port 9000
+- **Programmatic realm setup** -- Python package (`packages/auth/`) provisions realm, client, roles via Admin REST API; no static JSON volume mount
+- **Shared database** -- uses main app PostgreSQL (not embedded H2)
+- **python-jose** for JWT validation (not PyJWT) with OIDC auto-discovery and manual issuer override
+- **oidc-client-ts / react-oidc-context** on frontend (not keycloak-js)
+- **DB-to-Keycloak user sync** -- dedicated `UserManager.sync_from_database()` reads the application database and creates matching Keycloak users
+- **Dev bypass** -- `BYPASS_AUTH=true` with `X-Test-User-Email` header to impersonate specific DB users (not `X-Dev-Role` for role simulation)
+- **Standalone Helm subchart** -- dedicated `deploy/helm/keycloak/` chart referenced as `file://../keycloak` dependency (not inline templates)
+
+### Differences from Approach C
+
+- **No operator** -- raw container Deployment, not `k8s.keycloak.org/v2alpha1` CR
+- **Shared database** -- Keycloak uses the main app's PostgreSQL (credentials from `spending-monitor-secret`), not a dedicated StatefulSet with PVC
+- **Programmatic realm** -- Python Admin REST API calls, not `KeycloakRealmImport` CR
+- **No cross-chart secret sharing** -- Keycloak credentials are passed via Makefile environment variables to the parent chart's `--set` flags
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Keycloak 26.0.7 in production mode (`start`)
+- **Container image:** `quay.io/keycloak/keycloak:26.0.7`
+- **Key dependencies:** python-jose[cryptography] (backend JWT validation), oidc-client-ts + react-oidc-context (frontend OIDC), requests (Keycloak Admin API client), psycopg2 (DB user sync)
+- **Helm subchart:** Standalone subchart at `deploy/helm/keycloak/` (v1.0.0), referenced via `file://../keycloak` in the parent chart
+
+### Key Patterns
+
+#### Standalone Helm Subchart with Shared Database
+
+The keycloak chart deploys a standard Kubernetes Deployment using the official Keycloak image in production mode. Database credentials are sourced from the main application's shared secret, with a separate `keycloak` database name configured via values.
+
+```yaml
+# deploy/helm/keycloak/values.yaml
+image:
+  registry: quay.io
+  repository: keycloak/keycloak
+  tag: "26.0.7"
+database:
+  vendor: postgres
+  secretName: spending-monitor-secret  # Main app secret for DB credentials
+  dbname: keycloak  # Keycloak database (created by init script)
+```
+
+```yaml
+# deploy/helm/keycloak/templates/deployment.yaml (args)
+args:
+  - start
+  # Note: Not using --optimized flag to allow auto-build on startup
+  # This adds ~30s to first startup but is more reliable
+```
+
+#### Programmatic Realm Setup via Admin REST API
+
+Instead of static realm JSON or `KeycloakRealmImport` CRs, the `packages/auth/` Python package provisions realm, client, and roles programmatically using the Keycloak Admin REST API. This runs as part of the migration Job.
+
+```python
+# packages/auth/src/keycloak/realm.py
+class RealmManager(KeycloakClient):
+    def create_realm(self) -> bool:
+        realm_data = {
+            'realm': self.app_realm,
+            'enabled': True,
+            'displayName': 'Spending Monitor',
+            'accessTokenLifespan': _DEFAULT_ACCESS_TOKEN_LIFESPAN_SECONDS,
+        }
+        response = self.post('/admin/realms', json=realm_data)
+        if response.status_code == 201:
+            return True
+        elif response.status_code == 409:  # Already exists
+            return True
+
+    def create_client(self) -> bool:
+        client_data = {
+            'clientId': self.client_id,
+            'publicClient': True,
+            'standardFlowEnabled': True,
+            'redirectUris': self._get_redirect_uris(),
+            'attributes': {'pkce.code.challenge.method': 'S256'},
+        }
+        # Check if exists, update or create accordingly
+```
+
+The client configuration supports dynamic redirect URIs and web origins from environment variables, allowing the same code to work across local dev and OpenShift deployments.
+
+#### Database-to-Keycloak User Sync
+
+A `UserManager` class reads users from the application's PostgreSQL database and creates matching Keycloak users. The sync uses psycopg2 for direct database access and the Keycloak Admin REST API for user creation with role assignment.
+
+```python
+# packages/auth/src/keycloak/users.py
+def sync_from_database(self) -> bool:
+    conn = psycopg2.connect(...)
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, email, first_name, last_name FROM users')
+    db_users = cursor.fetchall()
+    for user_id, email, first_name, last_name in db_users:
+        self.create_user(
+            username=user_id,
+            email=email or f'{username}@example.com',
+            password=self.default_password,
+            roles=['user'],
+        )
+```
+
+The backend also performs a reverse lookup: when a JWT arrives with a `keycloak_id` (the `sub` claim), it looks up the corresponding database user. If not found by `keycloak_id`, it falls back to email lookup and backfills the `keycloak_id` column for future fast lookups.
+
+#### Dual-URL OIDC Discovery with Issuer Override
+
+The backend maintains two Keycloak URLs: an internal `KEYCLOAK_URL` (for API-to-Keycloak communication within the cluster) and an external `KEYCLOAK_FRONTEND_URL` (the browser-facing URL that appears as the JWT issuer). OIDC discovery fetches config from the internal URL but overrides the issuer to match the external URL.
+
+```python
+# packages/api/src/auth/middleware.py
+oidc_config = response.json()
+# IMPORTANT: Override the issuer to use KEYCLOAK_FRONTEND_URL
+# Keycloak returns the issuer based on the URL used to access it
+# But tokens are issued with KEYCLOAK_FRONTEND_URL (browser access)
+_oidc_config_cache['issuer'] = f'{KEYCLOAK_FRONTEND_URL}/realms/{REALM}'
+
+# JWKS URI is also fixed to use internal URL
+parsed = urlparse(jwks_uri)
+jwks_uri = f'{KEYCLOAK_URL}{parsed.path}'
+```
+
+When OIDC discovery fails (e.g., Keycloak not yet ready), the middleware falls back to hardcoded endpoints constructed from the two URLs.
+
+#### Health Probes on Management Port 9000
+
+Keycloak 26.x exposes health endpoints on a separate management port (9000), not the main HTTP port (8080). The chart configures probes accordingly with generous initial delays to account for startup build time.
+
+```yaml
+# deploy/helm/keycloak/values.yaml
+livenessProbe:
+  httpGet:
+    path: /health/live
+    port: 9000
+  initialDelaySeconds: 120
+readinessProbe:
+  httpGet:
+    path: /health/ready
+    port: 9000
+  initialDelaySeconds: 60
+```
+
+#### Frontend OIDC with oidc-client-ts
+
+The React frontend uses `oidc-client-ts` and `react-oidc-context` (standard OIDC libraries) instead of the Keycloak-specific `keycloak-js` SDK. Configuration supports both build-time Vite env vars and runtime window.ENV injection.
+
+```typescript
+// packages/ui/src/config/auth.ts
+const getKeycloakAuthority = (): string => {
+  const keycloakUrl =
+    import.meta.env.VITE_KEYCLOAK_URL ||
+    (typeof window !== 'undefined' && window.ENV?.KEYCLOAK_URL) ||
+    'http://localhost:8080';
+  const realm =
+    import.meta.env.VITE_KEYCLOAK_REALM ||
+    (typeof window !== 'undefined' && window.ENV?.KEYCLOAK_REALM) ||
+    'spending-monitor';
+  if (keycloakUrl.includes('/realms/')) return keycloakUrl;
+  return `${keycloakUrl}/realms/${realm}`;
+};
+```
+
+#### Migration Job with Keycloak Readiness Check
+
+The Helm post-install migration Job includes an init container that waits for Keycloak's health endpoint before running realm setup and DB migrations. If Keycloak does not become ready within 3 minutes, the Job continues anyway and the sync script handles unavailability gracefully.
+
+```yaml
+# deploy/helm/spending-monitor/templates/migration-job.yaml
+{{- if and (not (eq (.Values.secrets.BYPASS_AUTH | toString) "true")) .Values.keycloak.enabled }}
+- name: wait-for-keycloak
+  image: curlimages/curl:latest
+  command:
+    - /bin/sh
+    - -c
+    - |
+      MAX_ATTEMPTS=36
+      while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+        if curl -s -f "http://{{ .Release.Name }}-keycloak:8080/health/ready" > /dev/null 2>&1; then
+          echo "Keycloak is ready!"
+          exit 0
+        fi
+        sleep 5
+      done
+      echo "Continuing anyway - sync script will check availability and skip if needed"
+      exit 0
+{{- end }}
+```
+
+#### Makefile-Driven Keycloak URL Computation
+
+The Makefile dynamically computes both internal and external Keycloak URLs from the project name, namespace, and cluster domain, then passes them to Helm via `--set` flags. The hostname is also extracted from `KEYCLOAK_FRONTEND_URL` and stripped of protocol/port for the `config.hostname` value.
+
+```makefile
+# Makefile
+KEYCLOAK_URL_DYNAMIC := http://$(PROJECT_NAME)-keycloak:8080
+KEYCLOAK_FRONTEND_URL_DYNAMIC := https://$(PROJECT_NAME)-keycloak-$(NAMESPACE).$(CLUSTER_DOMAIN)
+# Hostname extraction for KC_HOSTNAME
+$$(if [ -n "$$KEYCLOAK_FRONTEND_URL" ]; then \
+  echo "--set keycloak.config.hostname=$$(echo "$$KEYCLOAK_FRONTEND_URL" | \
+  sed 's|http://||' | sed 's|https://||' | sed 's|/.*||' | sed 's|:[0-9]*$$||')"; fi)
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `KEYCLOAK_URL` -- Internal Keycloak URL for API-to-Keycloak communication (default: `http://spending-monitor-keycloak:8080`)
+  - `KEYCLOAK_FRONTEND_URL` -- External Keycloak URL for browser access and JWT issuer (default: `http://localhost:8080`)
+  - `KEYCLOAK_REALM` -- Realm name (default: `spending-monitor`)
+  - `KEYCLOAK_CLIENT_ID` -- OIDC client ID (default: `spending-monitor`)
+  - `KEYCLOAK_ADMIN_PASSWORD` -- Admin password (required for deployment)
+  - `KEYCLOAK_DB_PASSWORD` -- Database password for Keycloak's PostgreSQL (required)
+  - `KEYCLOAK_REDIRECT_URIS` -- Comma-separated redirect URIs (default: `http://localhost:3000/*`)
+  - `KEYCLOAK_WEB_ORIGINS` -- Comma-separated web origins (default: `http://localhost:3000`)
+  - `KEYCLOAK_DEFAULT_PASSWORD` -- Default password for synced users (default: `password123`)
+  - `BYPASS_AUTH` -- Skip JWT validation entirely (default: `true` in development)
+  - `JWT_CLOCK_SKEW_LEEWAY_SECONDS` -- Tolerance for clock drift between Keycloak and API pods (default: `120`)
+- **Config files:** None -- realm, client, and roles are created programmatically via the `packages/auth/` Python package
+- **Helm values:**
+  - `keycloak.enabled` -- Deploy Keycloak subchart (default: `true`)
+  - `keycloak.admin.username` / `keycloak.admin.password` -- Admin credentials
+  - `keycloak.database.vendor` / `keycloak.database.secretName` / `keycloak.database.dbname` -- Database config referencing main app secret
+  - `keycloak.config.proxy` -- Proxy mode (default: `edge`)
+  - `keycloak.config.proxyHeaders` -- Proxy header mode (default: `xforwarded`)
+  - `keycloak.config.hostnameStrict` -- Hostname verification (default: `false`)
+  - `keycloak.config.hostname` -- External hostname (populated from `KEYCLOAK_FRONTEND_URL` via Makefile)
+  - `keycloak.route.enabled` -- Create OpenShift Route (default: `true`)
+  - `keycloak.route.tls.termination` -- TLS termination mode (default: `edge`)
+
+### Known Gotchas
+
+- The `start` command (without `--optimized`) triggers an auto-build on every startup, adding approximately 30 seconds. This is intentional for reliability as noted in the deployment template comment: "Not using --optimized flag to allow auto-build on startup. This adds ~30s to first startup but is more reliable."
+- Keycloak 26.x health endpoints are on port 9000, NOT port 8080. The `initialDelaySeconds: 120` on the liveness probe accounts for both the auto-build and database initialization time. Insufficient delay will cause pod restarts before Keycloak finishes starting.
+- The dual-URL pattern (`KEYCLOAK_URL` vs `KEYCLOAK_FRONTEND_URL`) is critical because tokens are issued with the frontend URL as the issuer, but the API must fetch JWKS from the internal URL. The middleware explicitly overrides the OIDC discovery issuer to match the frontend URL. Without this override, issuer mismatch causes `JWTError`.
+- The `JWT_CLOCK_SKEW_LEEWAY_SECONDS` defaults to 120 seconds (2 minutes), which is unusually generous. The code comment says: "Accept tokens up to this many seconds past exp / before nbf (Keycloak vs API pod clock skew)."
+- The `KEYCLOAK_DEFAULT_PASSWORD` is hardcoded to `password123` in the migration Job template (`value: "password123"`) and is used for all database-synced users. This is not configurable via Helm values.
+- The `directAccessGrantsEnabled: true` in the programmatic client setup enables the deprecated ROPC flow, consistent with Approach B's pattern.
+- The `hostnameStrict: false` setting in the Keycloak deployment disables hostname verification, which is necessary because the Makefile dynamically computes the hostname at deploy time and it may not be known when the chart is first rendered.
+- The init container commented out in the deployment template (`wait-for-keycloak-db`) suggests the team initially tried a pg_isready check but removed it, likely because the shared PostgreSQL is already guaranteed to be ready before the keycloak chart installs (managed by the parent chart dependency order).
+- A pgvector dependency listed in `Chart.yaml` is commented out (line 8-10), with the repository pointing to `ai-architecture-charts`. The Makefile still references building keycloak chart dependencies for pgvector, suggesting a planned but currently unused dedicated database.
+
+### Testing Notes
+
+- Run API with `BYPASS_AUTH=true` (default in development) and use `X-Test-User-Email` header to impersonate specific database users
+- Verify Keycloak health at `http://localhost:8080/health/ready` (port 9000 in-cluster)
+- Manage realm via CLI: `python -m keycloak.cli setup --sync-users` (from `packages/auth/`)
+- List synced users: `make keycloak-users` (excludes test users) or `make keycloak-users-all` (includes testuser/adminuser)
+- Sync database users: `make keycloak-sync-users`
+- Test user credentials: `testuser@example.com / password123` (user role), `admin@example.com / admin123` (admin role)
+
+### Related Patterns
+
+- Makefile-driven dynamic URL computation for Helm values
+- FastAPI `Depends()` injection for auth (`require_authentication`, `require_role`, `require_any_role`)
+- oidc-client-ts with runtime config injection (window.ENV) for containerized React frontends
+- Database-to-IdP user sync via Admin REST API
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Operator CR + CNPG) | Approach B (Raw Container) | Approach C (Operator CR + StatefulSet) |
-|----------|--------------------------|----------------------------|----------------------------------------|
-| Deployment method | Keycloak Operator CR (`k8s.keycloak.org/v2alpha1`) | Raw container Deployment | Keycloak Operator CR (`k8s.keycloak.org/v2alpha1`) |
-| Database | CNPG PostgreSQL cluster | Embedded H2 (dev mode) | Standalone PostgreSQL StatefulSet with PVC |
-| Auth integration | OpenShift OAuth (cluster-level SSO) | Application-level OIDC (JWT validation) | Application-level OIDC (KeycloakRealmImport CR) |
-| Realm provisioning | `KeycloakRealmImport` CR with templated users | Static JSON file via volume mount | `KeycloakRealmImport` CR with single test user |
-| Role model | Generic SSO roles mapped to OpenShift groups | Domain-specific roles (borrower, underwriter, etc.) | Application-specific OIDC client with standard scopes |
-| User provisioning | Bulk templated users (user1..userN) | Named demo personas with fixed UUIDs | Single configurable test user |
-| TLS | OpenShift serving certs with Route re-encryption | Keycloak dev mode (HTTP), TLS at Route/proxy level | HTTP-enabled Keycloak with Route edge termination |
-| Secret sharing | `openid-client-secret` in `openshift-config` namespace | Environment variables per service | Cross-chart `keycloak-client-secret` Secret + sync Job |
-| Dev experience | Requires Keycloak Operator installed | `AUTH_DISABLED=true` bypass, no Keycloak needed | Requires rhbk-operator in namespace |
-| Cluster privileges | Requires `cluster-admin` for OAuth patching | No cluster-level changes needed | No cluster-level changes needed |
-| Operator scope | Cluster-wide operator assumed | No operator needed | Namespace-scoped operator subscription |
-| Best for | Cluster-wide SSO for all OpenShift users | Per-application auth with persona-based RBAC | Production app-level OIDC with persistent state and umbrella chart integration |
+| Criteria | Approach A (Operator CR + CNPG) | Approach B (Raw Container) | Approach C (Operator CR + StatefulSet) | Approach D (Production Container + REST API) |
+|----------|--------------------------|----------------------------|----------------------------------------|----------------------------------------------|
+| Deployment method | Keycloak Operator CR (`k8s.keycloak.org/v2alpha1`) | Raw container Deployment | Keycloak Operator CR (`k8s.keycloak.org/v2alpha1`) | Raw container Deployment (standalone Helm subchart) |
+| Database | CNPG PostgreSQL cluster | Embedded H2 (dev mode) | Standalone PostgreSQL StatefulSet with PVC | Shared main app PostgreSQL (separate `keycloak` database) |
+| Auth integration | OpenShift OAuth (cluster-level SSO) | Application-level OIDC (JWT validation) | Application-level OIDC (KeycloakRealmImport CR) | Application-level OIDC (python-jose + OIDC discovery) |
+| Realm provisioning | `KeycloakRealmImport` CR with templated users | Static JSON file via volume mount | `KeycloakRealmImport` CR with single test user | Programmatic via Keycloak Admin REST API (Python package) |
+| Role model | Generic SSO roles mapped to OpenShift groups | Domain-specific roles (borrower, underwriter, etc.) | Application-specific OIDC client with standard scopes | Simple user/admin roles with DB user sync |
+| User provisioning | Bulk templated users (user1..userN) | Named demo personas with fixed UUIDs | Single configurable test user | DB-to-Keycloak sync + test users via Admin API |
+| TLS | OpenShift serving certs with Route re-encryption | Keycloak dev mode (HTTP), TLS at Route/proxy level | HTTP-enabled Keycloak with Route edge termination | Production mode (HTTP), TLS edge at Route level |
+| Secret sharing | `openid-client-secret` in `openshift-config` namespace | Environment variables per service | Cross-chart `keycloak-client-secret` Secret + sync Job | Makefile `--set` flags from environment variables |
+| Dev experience | Requires Keycloak Operator installed | `AUTH_DISABLED=true` bypass, no Keycloak needed | Requires rhbk-operator in namespace | `BYPASS_AUTH=true` with `X-Test-User-Email` header |
+| Cluster privileges | Requires `cluster-admin` for OAuth patching | No cluster-level changes needed | No cluster-level changes needed | No cluster-level changes needed |
+| Operator scope | Cluster-wide operator assumed | No operator needed | Namespace-scoped operator subscription | No operator needed |
+| JWT library | N/A (OpenShift OAuth handles validation) | PyJWT with JWKS caching | N/A (operator-managed) | python-jose with OIDC auto-discovery + issuer override |
+| Frontend OIDC library | N/A (OpenShift console login) | keycloak-js with PKCE S256 | N/A | oidc-client-ts + react-oidc-context |
+| Best for | Cluster-wide SSO for all OpenShift users | Per-application auth with persona-based RBAC | Production app-level OIDC with persistent state and umbrella chart integration | Production app-level OIDC with dynamic realm config, DB user sync, and no operator dependency |

@@ -1,12 +1,12 @@
 ---
 name: pgvector
 description: "PostgreSQL with pgvector extension for relational data and vector search in AI Quickstarts on RHOAI"
-summary: "pgvector serves as combined relational store (SQLAlchemy/Alembic with asyncpg, SQLModel, raw psycopg2, or pgvector.sqlalchemy Vector type) and vector database (via LlamaStack vector_io provider with all-MiniLM-L6-v2 384-dim or nomic-embed-text-v1.5 768-dim embeddings, direct SQL <=> cosine operator with HNSW index, or Feast retrieve_online_documents with vector_enabled: true) for RHOAI quickstarts needing structured application state, RAG vector search, distributed session serialization via advisory locks, regulatory data isolation via dual PostgreSQL roles, curated data views with MCP read-only access, or feature-store-backed recommendation search. Use Approach A (ai-virtual-agent, f5-ai-guardrails, f5-api-security, RAG, openshift-ai-observability-summarizer) with subchart v0.5.5/v0.5.6 when a single service needs LlamaStack-managed vector search plus relational data (extraDatabases vectordb: false, DATABASE_URL assembled from pgSecret keys); Approach B (ansible-log-analysis) with bundled v0.1.0 subchart when multiple services share one PostgreSQL as relational store with pre-built namespace-qualified URI secret, SQLModel.metadata.create_all, psycopg2 sync driver swap, ConfigMap init CREATE EXTENSION VECTOR, and embeddings in MinIO; Approach C (data-governance-co-pilot, peoplemesh) with standalone chart when deploying quay.io/rh-aiservices-bu Red Hat PG15 image with Helm post-install Job seeding ~45MB CSV via OpenShift BuildConfig (bypassing ConfigMap 3MB limit), mcp_readonly SELECT-only user for MCP defense-in-depth, CERTIFIED/DEPRECATED governance views, and raw psycopg2; Approach D (it-self-service-agent) with v0.1.0 subchart when 6+ services need dual connection pools (async SQLAlchemy + psycopg_pool for LangGraph PostgresSaver), pg_try_advisory_lock polling avoiding PG BUG #17686, Alembic migration Job with wait_for_migration() gating, LlamaStack multi-store backends (metadataStore, kv_postgres, sql_postgres across rag_blueprint/llama_agents/llama_responses), max_connections=200, _env-helpers.tpl template helpers, database-level clock SELECT now(), and get_db_utc_now() for cross-pod consistency; Approach E (multi-agent-loan-origination) with inline Helm StatefulSet PG16 when needing dual PostgreSQL roles (lending_app/compliance_app) for HMDA data isolation, direct pgvector <=> cosine search with tier-based boosting (federal 1.5x, agency 1.2x, internal 1.0x), HNSW index vector_cosine_ops, Vector(768) via pgvector.sqlalchemy, per-table GRANT in Alembic migrations, database.enabled toggle for external DB support, and separate mlflow database for observability; Approach F (product-recommender-system) with v0.1.0 subchart as Feast online store with vector_enabled: true, FeatureStore CRD (feast.dev/v1alpha1) managing online/offline/registry services, 6 embedding feature views (item, user, text, CLIP, category) with vector_index=True and cosine search, and hybrid SQL deterministic + Feast retrieve_online_documents semantic search. Deployed as ai-architecture-charts subchart (v0.5.5/v0.5.6 for A, v0.1.0 bundled for B, v0.1.0 for D/F), standalone chart (C), or inline templates (E); A's DATABASE_URL assembled from pgSecret individual keys with Alembic rewriting postgresql+asyncpg:// to synchronous postgresql:// and expire_on_commit=False; B's secret embeds Release.Namespace in URI and pg_isready init containers gate startup; C's data loader connects via pod DNS (pgvector-0) assuming single replica; D's DatabaseManager creates dual pools with configurable DB_POOL_SIZE/DB_MAX_OVERFLOW and provider_id: \"pgvector\" required in extra_body for llama-stack 0.3.3+; E maintains separate SQLAlchemy session factories per role with dual DATABASE_URL/COMPLIANCE_DATABASE_URL connection strings; F's Feast config uses vector_enabled: true with env var substitution and backend rewrites postgresql:// to postgresql+asyncpg://. Common gotchas: Settings.DATABASE_URL defaults to sqlite+aiosqlite:///:memory: causing silent SQLite fallback; local dev postgres:15 lacks pgvector extension (need pgvector/pgvector:pg15 or pg17); B's chained .replace() URL normalization fragile if URI already contains \"postgresql+asyncpg://\"; A's deployment template fails if extraDatabases empty or reordered; C's readonlyPassword appears plaintext in rendered Job manifest, mcp_readonly grants don't auto-apply to future tables, and values.yaml placeholder strings cause broken deployments if --set flags omitted; D's dual statement timeout required so advisory lock polling queries aren't cancelled and connection pool budget across 6+ services approaches max_connections=200; E's lending_app/compliance_app role passwords hardcoded in init scripts need parameterization for production, per-table GRANT in migrations must be repeated for every new table, and local compose port 5433 differs from cluster port 5432; F's Base.metadata.drop_all in db-init Job destroys data on every post-upgrade run, db-init waits indefinitely if training pipeline hasn't populated model_version table, and backend initContainer requires oc CLI image with job-viewer RBAC."
+summary: "pgvector serves as combined relational store (SQLAlchemy/Alembic with asyncpg, SQLModel, raw psycopg2, or pgvector.sqlalchemy Vector type) and vector database (via LlamaStack vector_io provider with all-MiniLM-L6-v2 384-dim or nomic-embed-text-v1.5 768-dim embeddings, direct SQL <=> cosine operator with HNSW index, Feast retrieve_online_documents with vector_enabled: true, or direct <-> L2 distance for semantic category matching) for RHOAI quickstarts needing structured application state, RAG vector search, distributed session serialization via advisory locks, regulatory data isolation via dual PostgreSQL roles, curated data views with MCP read-only access, feature-store-backed recommendation search, or semantic merchant category normalization with interchangeable embedding providers. Use Approach A (ai-virtual-agent, f5-ai-guardrails, f5-api-security, RAG, openshift-ai-observability-summarizer) with subchart v0.5.5/v0.5.6 when a single service needs LlamaStack-managed vector search plus relational data (extraDatabases vectordb: false, DATABASE_URL assembled from pgSecret keys); Approach B (ansible-log-analysis) with bundled v0.1.0 subchart when multiple services share one PostgreSQL as relational store with pre-built namespace-qualified URI secret, SQLModel.metadata.create_all, psycopg2 sync driver swap, ConfigMap init CREATE EXTENSION VECTOR, and embeddings stored in MinIO; Approach C (data-governance-co-pilot, peoplemesh) with standalone chart when deploying quay.io/rh-aiservices-bu Red Hat PG15 image with Helm post-install Job seeding ~45MB CSV via OpenShift BuildConfig (bypassing ConfigMap 3MB limit), mcp_readonly SELECT-only user for MCP defense-in-depth, CERTIFIED/DEPRECATED governance views, raw psycopg2, and pre-delete cleanup Job; Approach D (it-self-service-agent) with v0.1.0 subchart when 6+ services need dual connection pools (async SQLAlchemy + psycopg_pool for LangGraph PostgresSaver), pg_try_advisory_lock polling avoiding PG BUG #17686, Alembic migration Job with wait_for_migration() gating, LlamaStack multi-store backends (metadataStore, kv_postgres, sql_postgres across rag_blueprint/llama_agents/llama_responses), max_connections=200, _env-helpers.tpl template helpers, database-level clock SELECT now(), and get_db_utc_now() for cross-pod consistency; Approach E (multi-agent-loan-origination) with inline Helm StatefulSet PG16 when needing dual PostgreSQL roles (lending_app/compliance_app) for HMDA data isolation, direct pgvector <=> cosine search with tier-based boosting (federal 1.5x, agency 1.2x, internal 1.0x), HNSW index vector_cosine_ops, Vector(768) via pgvector.sqlalchemy, per-table GRANT in Alembic migrations, database.enabled toggle for external DB support, and separate mlflow database for observability; Approach F (product-recommender-system) with v0.1.0 subchart as Feast online store with vector_enabled: true, FeatureStore CRD (feast.dev/v1alpha1) managing online/offline/registry services, 6 embedding feature views (item, user, text, CLIP, category) with vector_index=True and cosine search, hybrid SQL deterministic + Feast retrieve_online_documents semantic search, and mixed sync/async DB access; Approach G (spending-transaction-monitor) with inline Helm Deployment PG16 (quay.io/rh-ai-quickstart/pgvector:pg16) when needing pgvector for semantic merchant category normalization via Vector(384) <-> L2 distance with interchangeable embedding providers (OpenAI text-embedding-3-small 1536-dim, sentence-transformers all-MiniLM-L6-v2 384-dim, Ollama all-minilm 384-dim) that dynamically ALTER COLUMN embedding dimensions, custom PostgreSQL haversine_distance_km function and transaction_location_analysis risk-classified view via Alembic, Helm migration Job running startup.sh init pipeline (pg_isready wait -> Alembic upgrade head -> CSV seed -> optional Keycloak sync), pydantic-settings with .env file support, and pgvector extension enabled both in SQL init script (/docker-entrypoint-initdb.d) and Alembic initial migration. Deployed as ai-architecture-charts subchart (v0.5.5/v0.5.6 for A, v0.1.0 bundled for B, v0.1.0 for D/F), standalone chart (C), or inline templates (E/G); A's DATABASE_URL assembled from pgSecret individual keys with Alembic rewriting postgresql+asyncpg:// to synchronous postgresql:// and expire_on_commit=False; B's secret embeds Release.Namespace in URI and pg_isready init containers gate startup; C's data loader connects via pod DNS (pgvector-0) assuming single replica; D's DatabaseManager creates dual pools with configurable DB_POOL_SIZE/DB_MAX_OVERFLOW and provider_id: \"pgvector\" required in extra_body for llama-stack 0.3.3+; E maintains separate SQLAlchemy session factories per role with dual DATABASE_URL/COMPLIANCE_DATABASE_URL connection strings; F's Feast config uses vector_enabled: true with env var substitution and backend rewrites postgresql:// to postgresql+asyncpg://; G's Alembic env.py rewrites +asyncpg to +psycopg2 (not stripping to plain postgresql://) and DatabaseSettings uses pydantic-settings with .env file support. Common gotchas: Settings.DATABASE_URL defaults to sqlite+aiosqlite:///:memory: causing silent SQLite fallback; local dev postgres:15 lacks pgvector extension (need pgvector/pgvector:pg15 or pg17); B's chained .replace() URL normalization fragile if URI already contains \"postgresql+asyncpg://\"; A's deployment template fails if extraDatabases empty or reordered; C's readonlyPassword appears plaintext in rendered Job manifest, mcp_readonly grants don't auto-apply to future tables, and values.yaml placeholder strings cause broken deployments if --set flags omitted; D's dual statement timeout required so advisory lock polling queries aren't cancelled and connection pool budget across 6+ services approaches max_connections=200; E's lending_app/compliance_app role passwords hardcoded in init scripts need parameterization for production, per-table GRANT in migrations must be repeated for every new table, and local compose port 5433 differs from cluster port 5432; F's Base.metadata.drop_all in db-init Job destroys data on every post-upgrade run, db-init waits indefinitely if training pipeline hasn't populated model_version table, and backend initContainer requires oc CLI image with job-viewer RBAC; G's populate_embeddings.py validates 1536-dim but model column is Vector(384) causing dimension mismatch unless populate_embeddings_local.py is used, and dual pgvector extension enablement (init-script SQL + Alembic migration) is redundant but harmless."
 metadata:
   type: component
 tags:
-  tech_stack: [postgresql, fastapi, sqlalchemy, sqlmodel, alembic, asyncpg, psycopg2, psycopg, gradio, pandas, streamlit, langgraph, feast]
-  ai_pattern: [vector-search, rag, embeddings, data-pipeline, guardrails, agents, model-serving]
+  tech_stack: [postgresql, fastapi, sqlalchemy, sqlmodel, alembic, asyncpg, psycopg2, psycopg, gradio, pandas, streamlit, langgraph, feast, pydantic-settings, sentence-transformers]
+  ai_pattern: [vector-search, rag, embeddings, data-pipeline, guardrails, agents, model-serving, semantic-matching]
   platform: [openshift, rhoai, kserve]
   data_layer: [pgvector]
 source_examples:
@@ -54,6 +54,10 @@ source_examples:
     repo: "https://github.com/francescopace/peoplemesh"
     notes: "Standalone pgvector chart with same Red Hat PG15 image as Approach C; Helm hook (pre-install/pre-upgrade) secret with _helpers.tpl password lookup from existing secrets; pre-delete cleanup Job with dedicated ServiceAccount/Role/RoleBinding; GPU tolerations on StatefulSet for shared node pools; umbrella chart dependency with pgvector.enabled condition toggle; JDBC/Quarkus consumer via existingSecret reference"
     approach: "C"
+  - quickstart: "spending-transaction-monitor"
+    repo: "https://github.com/rh-ai-quickstart/spending-transaction-monitor"
+    notes: "Inline Helm Deployment (not subchart/StatefulSet) with pgvector for semantic merchant category matching; Vector(384) with all-MiniLM-L6-v2; three interchangeable embedding providers (OpenAI/sentence-transformers/Ollama) with dynamic column dimension alteration; Alembic migrations with custom haversine distance function; Helm migration Job with startup.sh init pipeline (wait -> migrate -> CSV seed -> Keycloak sync)"
+    approach: "G"
 ---
 
 # pgvector
@@ -1292,23 +1296,309 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
 
 ---
 
+## Approach G: Inline Helm Deployment with Semantic Category Matching and Interchangeable Embedding Providers (from spending-transaction-monitor)
+
+### When to Use
+
+When PostgreSQL with pgvector is deployed as an inline Helm Deployment (not a subchart or StatefulSet) within the parent chart, and pgvector is used for semantic merchant category normalization rather than RAG or compliance KB search. Use this approach when the quickstart needs to match free-text merchant names to canonical categories via vector similarity, supports multiple interchangeable embedding providers (OpenAI, sentence-transformers, Ollama) with dynamic column dimension alteration, and requires custom PostgreSQL functions (e.g., haversine distance) managed through Alembic migrations.
+
+### Differences from Approach A
+
+- **Inline Helm Deployment, not subchart:** Database Deployment, Service, PVC, ConfigMap, and migration Job templates are defined directly in the parent chart (`deploy/helm/spending-monitor/templates/database-*.yaml`), not pulled as a dependency from ai-architecture-charts.
+- **Deployment, not StatefulSet:** Uses a Kubernetes Deployment with a separate PVC (not StatefulSet volumeClaimTemplates), with `strategy.type: Recreate` to avoid dual-attach issues on the PVC.
+- **Semantic category matching, not RAG:** pgvector stores merchant category embeddings in a `MerchantCategoryEmbedding` table with `Vector(384)` columns. L2 distance (`<->`) queries match transaction merchant names to canonical categories -- this is semantic normalization, not document retrieval.
+- **Three interchangeable embedding providers:** Separate scripts populate embeddings via OpenAI (`text-embedding-3-small`, 1536 dim), sentence-transformers (`all-MiniLM-L6-v2`, 384 dim), or Ollama (`all-minilm`, 384 dim). The local/Ollama scripts dynamically ALTER the embedding column dimension before populating.
+- **Custom PostgreSQL functions via Alembic:** Alembic migrations create a `haversine_distance_km` PL/pgSQL function and a `transaction_location_analysis` view with risk-level classification (VERY_HIGH_RISK/HIGH_RISK/MEDIUM_RISK/LOW_RISK/NORMAL based on distance thresholds).
+- **Comprehensive startup.sh init pipeline:** A migration Job runs `startup.sh` that sequentially waits for PostgreSQL readiness (`pg_isready`), runs Alembic migrations, loads CSV seed data, and optionally sets up Keycloak realm/user sync.
+- **Dual pgvector extension enablement:** The vector extension is enabled both by a SQL init script in `/docker-entrypoint-initdb.d` (runs on first container start) and by the Alembic initial migration (`CREATE EXTENSION IF NOT EXISTS vector`). The `IF NOT EXISTS` clause makes the redundancy harmless.
+- **Custom container image on Quay:** The Helm chart uses `quay.io/rh-ai-quickstart/pgvector:pg16` rather than the upstream `pgvector/pgvector:pg16` or the community `postgres:16` images.
+
+### Inline Helm Deployment with PVC
+
+The database is deployed as a Deployment (not StatefulSet) with an external PVC for persistence. The `database.enabled` flag controls whether the in-cluster database is deployed.
+
+```yaml
+# deploy/helm/spending-monitor/templates/database-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.database.name }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  template:
+    spec:
+      containers:
+        - name: postgres
+          image: "{{ .Values.database.image.repository }}:{{ .Values.database.image.tag}}"
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: postgres-storage
+          persistentVolumeClaim:
+            claimName: {{ .Values.database.name }}-pvc
+```
+
+```yaml
+# deploy/helm/spending-monitor/values.yaml
+database:
+  enabled: true
+  name: spending-monitor-db
+  image:
+    repository: quay.io/rh-ai-quickstart/pgvector
+    tag: pg16
+  persistence:
+    enabled: true
+    size: 10Gi
+    accessMode: ReadWriteOnce
+```
+
+### pgvector Extension Init Script with Verification
+
+The SQL init script enables the vector extension, grants schema usage, and runs a self-test that verifies vector creation, insertion, and L2 distance search before the database is considered ready.
+
+```sql
+-- packages/db/init-scripts/01-enable-pgvector.sql
+CREATE EXTENSION IF NOT EXISTS vector;
+GRANT USAGE ON SCHEMA public TO "user";
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+        RAISE NOTICE 'pgvector extension successfully installed';
+    ELSE
+        RAISE EXCEPTION 'Failed to install pgvector extension';
+    END IF;
+END
+$$;
+```
+
+### Merchant Category Embedding Model with Vector(384)
+
+The ORM model uses `pgvector.sqlalchemy.Vector` with 384 dimensions matching the `all-MiniLM-L6-v2` model. A companion `MerchantCategorySynonym` table provides deterministic synonym-to-canonical mappings.
+
+```python
+# packages/db/src/db/models.py
+from pgvector.sqlalchemy import Vector
+
+class MerchantCategoryEmbedding(Base):
+    __tablename__ = 'merchant_category_embeddings'
+    category: Mapped[str] = mapped_column(String, primary_key=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(384))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+```
+
+### Interchangeable Embedding Providers with Dynamic Schema Alteration
+
+Three separate scripts support different embedding providers. The local and Ollama scripts dynamically alter the embedding column dimension to match the model output before populating, allowing the same database schema to work with different model dimensions.
+
+```python
+# packages/db/src/db/scripts/populate_embeddings_local.py
+MODEL_NAME = 'sentence-transformers/all-MiniLM-L6-v2'
+EXPECTED_DIMENSIONS = 384
+
+async def update_database_schema(session: AsyncSession) -> None:
+    await session.execute(
+        text('ALTER TABLE merchant_category_embeddings DROP COLUMN IF EXISTS embedding')
+    )
+    await session.execute(
+        text(f'ALTER TABLE merchant_category_embeddings ADD COLUMN embedding vector({EXPECTED_DIMENSIONS})')
+    )
+```
+
+### L2 Distance Search for Category Matching
+
+Semantic category search uses the pgvector `<->` L2 distance operator via raw SQL `text()` queries. The query embedding is serialized to PostgreSQL vector format and cast to the `vector` type.
+
+```python
+# packages/db/src/db/scripts/populate_embeddings_local.py
+vector_str = '[' + ','.join(map(str, query_embedding)) + ']'
+result = await session.execute(
+    text(f"""
+        SELECT category, embedding <-> '{vector_str}'::vector as distance
+        FROM merchant_category_embeddings
+        ORDER BY embedding <-> '{vector_str}'::vector
+        LIMIT 1
+    """)
+)
+```
+
+### Custom Haversine Distance Function via Alembic
+
+An Alembic migration creates a PL/pgSQL function for geographic distance calculation and a view that classifies transaction risk based on distance between user location and merchant location.
+
+```python
+# packages/db/alembic/versions/e35d4db01ac2_add_location_distance_function.py
+def upgrade() -> None:
+    op.execute("""
+        CREATE OR REPLACE FUNCTION haversine_distance_km(
+            lat1 DOUBLE PRECISION, lon1 DOUBLE PRECISION,
+            lat2 DOUBLE PRECISION, lon2 DOUBLE PRECISION
+        ) RETURNS DOUBLE PRECISION AS $$
+        DECLARE
+            r DOUBLE PRECISION := 6371;
+        BEGIN
+            IF lat1 IS NULL OR lon1 IS NULL OR lat2 IS NULL OR lon2 IS NULL THEN
+                RETURN NULL;
+            END IF;
+            -- Haversine formula ...
+            RETURN r * c;
+        END;
+        $$ LANGUAGE plpgsql IMMUTABLE;
+    """)
+```
+
+### Alembic Async-to-Sync URL Rewrite (asyncpg to psycopg2)
+
+Alembic migrations rewrite the async `+asyncpg` driver to the synchronous `+psycopg2` driver. Unlike Approach A which strips to plain `postgresql://`, this quickstart explicitly targets `psycopg2`.
+
+```python
+# packages/db/alembic/env.py
+if '+asyncpg' in url:
+    config.set_main_option('sqlalchemy.url', url.replace('+asyncpg', '+psycopg2'))
+```
+
+### Async SQLAlchemy Engine with pydantic-settings
+
+The database module uses `pydantic-settings` with `.env` file support for configuration. The engine is created once at module level with the `asyncpg` driver, and a `DatabaseService` class provides health check functionality.
+
+```python
+# packages/db/src/db/config.py
+class DatabaseSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_file='.env', extra='ignore')
+    DATABASE_URL: str = (
+        'postgresql+asyncpg://user:password@localhost:5432/spending-monitor'
+    )
+
+# packages/db/src/db/database.py
+engine = create_async_engine(settings.DATABASE_URL, echo=False)
+SessionLocal = sessionmaker(
+    autocommit=False, autoflush=False, bind=engine, class_=AsyncSession
+)
+```
+
+### Helm Migration Job with startup.sh Pipeline
+
+A Kubernetes Job runs as a Helm `post-install,post-upgrade` hook. It uses an init container to wait for PostgreSQL readiness, then executes `startup.sh` which sequentially runs Alembic migrations, loads CSV seed data, and optionally syncs Keycloak users.
+
+```yaml
+# deploy/helm/spending-monitor/templates/migration-job.yaml
+metadata:
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: wait-for-database
+          image: postgres:16-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until pg_isready -h {{ .Values.database.name }} -p 5432; do
+                sleep 3
+              done
+      containers:
+        - name: migration
+          command:
+            - /app/startup.sh
+```
+
+### Local Dev Compose with pgvector Image
+
+Local development uses the `pgvector/pgvector:pg16` community image (which includes the pgvector extension pre-installed) via a dedicated compose file in the db package. The init script is volume-mounted from `init-scripts/`.
+
+```yaml
+# packages/db/compose.yml
+services:
+  postgres:
+    image: docker.io/pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: spending-monitor
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+```
+
+### Configuration (Approach G)
+
+- **Environment variables:**
+  - `DATABASE_URL` -- Async SQLAlchemy connection string (`postgresql+asyncpg://user:password@host:5432/spending-monitor`). Sourced from Helm Secret via `secretKeyRef`.
+  - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` -- Set on the Deployment container from the Helm Secret.
+  - `POSTGRES_HOST` -- Set on the migration Job to the database Service name (default: `spending-monitor-db`).
+  - `PGDATA` -- Set to `/var/lib/postgresql/data/pgdata` to place data inside the PVC mount subdirectory.
+  - `DB_PORT` -- Local dev compose port override (default: 5432).
+  - `BYPASS_AUTH` -- Controls whether the startup.sh pipeline attempts Keycloak realm/user sync (default: `true` to skip).
+  - `PYTHONPATH` -- Set on the migration Job to `/app/packages/db/src:/app/packages/api/src` for module imports.
+- **Config files:**
+  - `packages/db/src/db/config.py` -- `DatabaseSettings` (pydantic-settings) with `DATABASE_URL` defaulting to localhost asyncpg connection. Supports `.env` file loading.
+  - `packages/db/alembic/env.py` -- Handles async-to-sync URL rewrite (`+asyncpg` to `+psycopg2`) and imports all models for autogenerate.
+- **Helm values:**
+  - `database.enabled` -- Toggle in-cluster database deployment.
+  - `database.name` -- Service and deployment name (default: `spending-monitor-db`).
+  - `database.image.repository`, `database.image.tag` -- Container image (default: `quay.io/rh-ai-quickstart/pgvector:pg16`).
+  - `database.persistence.enabled`, `database.persistence.size`, `database.persistence.accessMode` -- PVC configuration (default: `true`, `10Gi`, `ReadWriteOnce`).
+  - `database.resources` -- Resource requests/limits (default: 256Mi/512Mi memory, 100m/500m CPU).
+  - `secrets.DATABASE_URL` -- Full connection string for the API service.
+  - `secrets.POSTGRES_DB`, `secrets.POSTGRES_USER`, `secrets.POSTGRES_PASSWORD` -- Individual credential overrides.
+- **Python dependencies:**
+  - `pgvector>=0.2.0` in `packages/db/pyproject.toml` for `pgvector.sqlalchemy.Vector` type.
+  - `sentence-transformers>=2.2.0` (optional, for local embedding generation).
+  - `openai>=1.109.1` (optional, for OpenAI embedding generation).
+  - `asyncpg>=0.29.0` for async PostgreSQL driver.
+  - `psycopg2-binary>=2.9.0` for Alembic sync migrations.
+
+### Known Gotchas (Approach G)
+
+- **populate_embeddings.py dimension mismatch with model column:** The `populate_embeddings.py` (OpenAI) script uses `text-embedding-3-small` which produces 1536-dimensional embeddings and validates against 1536 dimensions (see `validate_embeddings` line 106), but the `MerchantCategoryEmbedding` model defines `Vector(384)`. Inserting 1536-dim vectors into a `Vector(384)` column will fail. Use `populate_embeddings_local.py` (384-dim) or `populate_embeddings_ollama.py` (384-dim) instead, which dynamically ALTER the column dimension before populating.
+- **Dual pgvector extension enablement is redundant but harmless:** The vector extension is enabled both by `init-scripts/01-enable-pgvector.sql` (on first container start via `/docker-entrypoint-initdb.d`) and by the Alembic initial migration (`CREATE EXTENSION IF NOT EXISTS vector` in `ac92703bd365`). The `IF NOT EXISTS` clause prevents errors, but the redundancy means the init script test runs on first boot while the migration re-enables on every `alembic upgrade head` (see `alembic/versions/ac92703bd365_initial_schema.py` line 23).
+- **Deployment with PVC requires Recreate strategy:** The Deployment uses `strategy.type: Recreate` (see `database-deployment.yaml` line 11) because `ReadWriteOnce` PVCs cannot be mounted by two pods simultaneously. A rolling update would fail when the new pod tries to attach the PVC while the old pod still holds it.
+- **startup.sh non-critical Keycloak sync:** The startup.sh script uses `set +e` around the Keycloak sync section (lines 101-109) to prevent sync failures from failing the entire migration Job. The exit code from the sync is captured but not used to set the Job's exit status -- this means a sync failure is logged as a warning but the Job still succeeds.
+- **Alembic env.py uses separate declarative_base:** The Alembic `env.py` creates its own `Base = declarative_base()` (line 12) rather than importing the one from `db.database`. The `from db.models import *` on line 29 imports all models but they register on the `db.database.Base`, not the local one. The `target_metadata` is set to the local `Base.metadata` which may not include all model tables for autogenerate (see `alembic/env.py` lines 12, 29, 32).
+- **ConfigMap init script creates keycloak database, not pgvector init:** The Helm ConfigMap (`database-init-configmap.yaml`) creates a `keycloak` database for Keycloak authentication storage -- it does not enable the pgvector extension. The extension enablement is handled by the local-dev init script and the Alembic migration, not the Helm ConfigMap (see `templates/database-init-configmap.yaml` lines 12-31).
+
+### Testing Notes (Approach G)
+
+- Verify the pgvector extension is enabled: connect to the database and run `SELECT extname FROM pg_extension WHERE extname = 'vector'`.
+- Verify the haversine distance function exists: `SELECT haversine_distance_km(40.7128, -74.0060, 34.0522, -118.2437)` should return approximately 3944 km.
+- Verify the `transaction_location_analysis` view exists: `SELECT * FROM transaction_location_analysis LIMIT 1`.
+- Verify the migration Job completed: `oc get job <release>-migration` and check logs for "Database migrations completed successfully".
+- Verify CSV data was loaded: check migration Job logs for "Sample data loaded successfully" and query `SELECT count(*) FROM transactions`.
+- Test category embeddings (after running populate_embeddings_local.py): `SELECT category FROM merchant_category_embeddings ORDER BY embedding <-> (SELECT embedding FROM merchant_category_embeddings WHERE category = 'dining') LIMIT 3`.
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (multi-agent-loan-origination) | Approach F (product-recommender-system) |
-|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|------------------------------------------|----------------------------------------|
-| **pgvector chart version** | v0.5.5 (subchart) | v0.1.0 (bundled .tgz) | v0.1.0 (standalone chart) | v0.1.0 (subchart) | N/A (inline Helm templates) | v0.1.0 (subchart) |
-| **PostgreSQL version** | 15 | 17 | 15 | Subchart default | 16 | Subchart default |
-| **Container image** | ai-architecture-charts subchart default | `pgvector/pgvector:pg17` | `quay.io/rh-aiservices-bu/postgresql-15-pgvector-c9s:latest` | ai-architecture-charts subchart default | `pgvector/pgvector:pg16` | ai-architecture-charts subchart default |
-| **Chart relationship** | Dependency subchart | Dependency subchart (bundled) | Standalone Helm chart | Dependency subchart | Inline templates in parent chart | Dependency subchart |
-| **URL construction** | Assembled from individual secret keys in deployment template | Pre-built `uri` key consumed directly from secret | Pod DNS hardcoded in data loader Job | Helm template helpers (`_env-helpers.tpl`) generate env vars from secret | Full connection strings in Helm Secret; dual URLs for lending vs compliance | Both individual secret keys (DB_HOST, etc.) and pre-built `uri` key for DATABASE_URL |
-| **DB initialization** | `extraDatabases` values mechanism | ConfigMap init script with `CREATE EXTENSION VECTOR` | ConfigMap init script with `CREATE EXTENSION IF NOT EXISTS vector CASCADE` | `extraDatabases` values + `max_connections=200` args | ConfigMap init script with pgvector extension + dual role creation + extra database (mlflow) | Subchart default + Helm post-install Job running `init_backend.py` (drop_all + create_all) |
-| **Schema management** | Alembic migrations (async-to-sync URL rewrite) | `SQLModel.metadata.create_all` at startup | Raw SQL in Python data loader script | Alembic migrations via Kubernetes Job (services wait for version) | Alembic migrations with `pgvector.sqlalchemy.Vector` type and per-table GRANT statements | `Base.metadata.drop_all` + `create_all` in db-init Job (no migration framework) |
-| **ORM** | SQLAlchemy ORM with PostgreSQL dialect types | SQLModel with JSON column type | None (raw psycopg2) | SQLAlchemy ORM + psycopg_pool for LangGraph | SQLAlchemy 2.0 with `pgvector.sqlalchemy.Vector` + raw SQL for vector search | SQLAlchemy ORM async (asyncpg) + sync (psycopg2) for Feast direct queries |
-| **Data seeding** | None | None | Kubernetes Job with OpenShift BuildConfig for large CSV datasets | None | None | Helm post-install Job seeds categories, products, users, reviews from parquet files; optional LLM-generated reviews |
-| **Vector search usage** | Active via LlamaStack `vector_io` provider | Extension enabled but unused; embeddings in MinIO | Extension enabled; used for data governance, not RAG | Active via LlamaStack `vector_io` + metadata/kv/sql backends | Active via direct SQL with `<=>` cosine operator; HNSW index; tier-based result boosting | Active via Feast `retrieve_online_documents` with `vector_enabled: true` online store; 6 embedding feature views with cosine search |
-| **Security** | Standard credentials via secret | Standard credentials via secret | Read-only `mcp_readonly` user for MCP server defense-in-depth | Standard credentials via secret; advisory locks for session isolation | Dual PostgreSQL roles (`lending_app`, `compliance_app`) for HMDA data isolation; per-table GRANT permissions | Standard credentials via secret; job-viewer RBAC for db-init polling |
-| **Number of consumers** | Single backend service | Multiple services (backend, annotation-interface, phoenix) | Data loader Job + MCP server | 6+ services (agent, request-manager, dispatcher, migration, langfuse, langfuse-worker) | Single API service with two connection pools (lending + compliance) + MLflow | Backend + Feast online/offline/registry services + db-init Job + pipeline Job |
-| **Connection pooling** | Single async SQLAlchemy pool | Single async SQLAlchemy pool | No pooling (raw psycopg2) | Dual pools: async SQLAlchemy + sync/async psycopg_pool for LangGraph | Dual async SQLAlchemy pools (one per role/connection string) | Async SQLAlchemy pool (asyncpg) for API routes + ad-hoc sync engines (psycopg2) for Feast queries |
-| **Distributed coordination** | None | None | None | PostgreSQL advisory locks for per-session request serialization | None | None |
-| **Credential passthrough** | Install script `--set` flags | Values file defaults | `--set` flags (placeholder defaults in values.yaml) | Helm template helpers; values defaults | Helm Secret with `secretKeyRef` in StatefulSet; `--set secrets.*` overrides | Values env list with secretKeyRef for pgvector secret keys |
-| **Best for** | Apps needing vector search + relational data in one DB | Multi-service apps using PostgreSQL as shared relational store | Data governance demos with seed data, MCP server access, and curated views | Multi-service agentic apps needing distributed session serialization, LangGraph checkpointing, and LlamaStack multi-store backends | Regulated-domain apps needing role-based data isolation, direct pgvector queries with domain-specific result ranking, and compliance KB with tiered boosting | Recommendation systems using Feast as the feature/vector store layer with pgvector backend; hybrid deterministic + semantic search; multiple embedding types (item, user, text, CLIP) |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (data-governance-co-pilot) | Approach D (it-self-service-agent) | Approach E (multi-agent-loan-origination) | Approach F (product-recommender-system) | Approach G (spending-transaction-monitor) |
+|----------|-------------------------------|-----------------------------------|---------------------------------------|-------------------------------------|------------------------------------------|----------------------------------------|------------------------------------------|
+| **pgvector chart version** | v0.5.5 (subchart) | v0.1.0 (bundled .tgz) | v0.1.0 (standalone chart) | v0.1.0 (subchart) | N/A (inline Helm templates) | v0.1.0 (subchart) | N/A (inline Helm templates) |
+| **PostgreSQL version** | 15 | 17 | 15 | Subchart default | 16 | Subchart default | 16 |
+| **Container image** | ai-architecture-charts subchart default | `pgvector/pgvector:pg17` | `quay.io/rh-aiservices-bu/postgresql-15-pgvector-c9s:latest` | ai-architecture-charts subchart default | `pgvector/pgvector:pg16` | ai-architecture-charts subchart default | `quay.io/rh-ai-quickstart/pgvector:pg16` (Helm); `pgvector/pgvector:pg16` (local) |
+| **Chart relationship** | Dependency subchart | Dependency subchart (bundled) | Standalone Helm chart | Dependency subchart | Inline templates in parent chart | Dependency subchart | Inline templates in parent chart |
+| **URL construction** | Assembled from individual secret keys in deployment template | Pre-built `uri` key consumed directly from secret | Pod DNS hardcoded in data loader Job | Helm template helpers (`_env-helpers.tpl`) generate env vars from secret | Full connection strings in Helm Secret; dual URLs for lending vs compliance | Both individual secret keys (DB_HOST, etc.) and pre-built `uri` key for DATABASE_URL | Full `DATABASE_URL` from Helm Secret via `secretKeyRef`; individual `POSTGRES_*` keys for container env |
+| **DB initialization** | `extraDatabases` values mechanism | ConfigMap init script with `CREATE EXTENSION VECTOR` | ConfigMap init script with `CREATE EXTENSION IF NOT EXISTS vector CASCADE` | `extraDatabases` values + `max_connections=200` args | ConfigMap init script with pgvector extension + dual role creation + extra database (mlflow) | Subchart default + Helm post-install Job running `init_backend.py` (drop_all + create_all) | SQL init script (pgvector extension + verification test) + Alembic initial migration (redundant `CREATE EXTENSION`) + startup.sh pipeline (migrate + CSV seed + optional Keycloak sync) |
+| **Schema management** | Alembic migrations (async-to-sync URL rewrite) | `SQLModel.metadata.create_all` at startup | Raw SQL in Python data loader script | Alembic migrations via Kubernetes Job (services wait for version) | Alembic migrations with `pgvector.sqlalchemy.Vector` type and per-table GRANT statements | `Base.metadata.drop_all` + `create_all` in db-init Job (no migration framework) | Alembic migrations with `pgvector.sqlalchemy.Vector` type + custom PL/pgSQL functions; async-to-psycopg2 URL rewrite |
+| **ORM** | SQLAlchemy ORM with PostgreSQL dialect types | SQLModel with JSON column type | None (raw psycopg2) | SQLAlchemy ORM + psycopg_pool for LangGraph | SQLAlchemy 2.0 with `pgvector.sqlalchemy.Vector` + raw SQL for vector search | SQLAlchemy ORM async (asyncpg) + sync (psycopg2) for Feast direct queries | SQLAlchemy 2.0 async (asyncpg) with `pgvector.sqlalchemy.Vector` + `Mapped` type annotations |
+| **Data seeding** | None | None | Kubernetes Job with OpenShift BuildConfig for large CSV datasets | None | None | Helm post-install Job seeds categories, products, users, reviews from parquet files; optional LLM-generated reviews | startup.sh loads CSV users/transactions via `db.scripts.load_csv_data` + Alembic migration pre-populates category data |
+| **Vector search usage** | Active via LlamaStack `vector_io` provider | Extension enabled but unused; embeddings in MinIO | Extension enabled; used for data governance, not RAG | Active via LlamaStack `vector_io` + metadata/kv/sql backends | Active via direct SQL with `<=>` cosine operator; HNSW index; tier-based result boosting | Active via Feast `retrieve_online_documents` with `vector_enabled: true` online store; 6 embedding feature views with cosine search | Active via direct SQL with `<->` L2 distance for semantic merchant category matching; Vector(384) with interchangeable embedding providers |
+| **Security** | Standard credentials via secret | Standard credentials via secret | Read-only `mcp_readonly` user for MCP server defense-in-depth | Standard credentials via secret; advisory locks for session isolation | Dual PostgreSQL roles (`lending_app`, `compliance_app`) for HMDA data isolation; per-table GRANT permissions | Standard credentials via secret; job-viewer RBAC for db-init polling | Standard credentials via Helm Secret; Keycloak integration for user authentication (optional) |
+| **Number of consumers** | Single backend service | Multiple services (backend, annotation-interface, phoenix) | Data loader Job + MCP server | 6+ services (agent, request-manager, dispatcher, migration, langfuse, langfuse-worker) | Single API service with two connection pools (lending + compliance) + MLflow | Backend + Feast online/offline/registry services + db-init Job + pipeline Job | Single API backend + migration Job |
+| **Connection pooling** | Single async SQLAlchemy pool | Single async SQLAlchemy pool | No pooling (raw psycopg2) | Dual pools: async SQLAlchemy + sync/async psycopg_pool for LangGraph | Dual async SQLAlchemy pools (one per role/connection string) | Async SQLAlchemy pool (asyncpg) for API routes + ad-hoc sync engines (psycopg2) for Feast queries | Single async SQLAlchemy pool (asyncpg) |
+| **Distributed coordination** | None | None | None | PostgreSQL advisory locks for per-session request serialization | None | None | None |
+| **Credential passthrough** | Install script `--set` flags | Values file defaults | `--set` flags (placeholder defaults in values.yaml) | Helm template helpers; values defaults | Helm Secret with `secretKeyRef` in StatefulSet; `--set secrets.*` overrides | Values env list with secretKeyRef for pgvector secret keys | Helm Secret with `secretKeyRef` in Deployment; `secrets.*` values overrides |
+| **Best for** | Apps needing vector search + relational data in one DB | Multi-service apps using PostgreSQL as shared relational store | Data governance demos with seed data, MCP server access, and curated views | Multi-service agentic apps needing distributed session serialization, LangGraph checkpointing, and LlamaStack multi-store backends | Regulated-domain apps needing role-based data isolation, direct pgvector queries with domain-specific result ranking, and compliance KB with tiered boosting | Recommendation systems using Feast as the feature/vector store layer with pgvector backend; hybrid deterministic + semantic search; multiple embedding types (item, user, text, CLIP) | Transaction monitoring apps needing semantic category normalization with switchable embedding providers (OpenAI/local/Ollama); custom spatial functions; comprehensive init pipeline with CSV seeding |

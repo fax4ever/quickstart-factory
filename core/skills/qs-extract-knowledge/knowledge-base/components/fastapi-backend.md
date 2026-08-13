@@ -1,12 +1,12 @@
 ---
 name: fastapi-backend
-description: "FastAPI backend patterns for AI quickstarts: multi-runner dispatch, agentic pipelines, persona-based systems, and recommendation serving"
-summary: "Solves API backend implementation for AI quickstarts using FastAPI with four approaches: (A) multi-runner dispatch across LlamaStack/LangGraph/CrewAI with SSE streaming, declarative YAML graph engine auto-wiring parallel fan-out via template references, K8s MCPServer CRD discovery, InMemorySaver checkpoints, and __env_default__ sentinel-based model resolution; (B) single-purpose LangGraph Command-based pipeline for event-driven log analysis with sklearn clustering (DBSCAN/HDBSCAN/MeanShift/Agglomerative), dual LLM endpoints as tool-calling workaround for RHOAI models, SQLModel+create_all, Phoenix/OTEL tracing, stream_with_fallback partial result preservation, and dynamic router discovery via pkgutil; (C) 5 persona-scoped LangGraph agents for regulated industries with NeMo Guardrails fail-closed input/output shield nodes, 3-layer RBAC (route/tool_auth/DataScope), Keycloak OIDC, WebSocket disconnect cancellation, PII masking middleware, Prometheus custom metrics + MLflow RHOAI Kubernetes auth, langgraph-checkpoint-postgres persistence, langchain-mcp-adapters Streamable HTTP, and Kagenti A2A with SPIRE mTLS; (D) e-commerce recommendation serving via Feast feature store with remote gRPC registry + TLS, hybrid deterministic SQL + semantic vector search, in-process PyTorch user encoder + CLIP inference loaded from MinIO, JWT auth with bcrypt/passlib, K8s Job db-init using drop_all+create_all, SPA static files with dev proxy, and Helm pgvector subchart from ai-architecture-charts. Use Approach A for interactive multi-framework agent platforms needing pluggable runner_type dispatch and YAML agent template suites organized by domain; Approach B for single fixed event-driven pipelines with structured Pydantic output schemas, log clustering, and no migration framework; Approach C for regulated-industry applications requiring per-persona safety shields, RBAC-scoped data isolation, PII masking, compliance knowledge bases, and Helm chart deployment with init containers; Approach D for recommendation-serving applications with Feast feature stores, in-process model inference, product catalogs, and LLM-powered review summarization without agent frameworks. Critical patterns: all approaches use async SQLAlchemy/asyncpg except B (SQLModel+create_all) and D (SQLAlchemy+create_all via K8s Job); Approach A requires pysqlite3 module swap before any imports on UBI9 for CrewAI/ChromaDB (SQLite >=3.35); Approach C uses YAML models.yaml with ${VAR:-default} env substitution and mtime-based hot-reload for llm/vision/embedding tiers, and /v1/guardrail/checks for output shields instead of full LLM re-send to avoid 30s httpx timeouts; Approach D pre-downloads CLIP model in Containerfile with chmod -R 777 /hf_cache for OpenShift and uses Feast PostgreSQL online store with vector_enabled for semantic search fallback. Common gotchas: pysqlite3 swap must be first lines in production main.py (separate from test app factory main.py), CrewAI auto-prefixes models with openai/ for LiteLLM and silently drops tools for small models (1-3B params), Alembic env.py must convert postgresql+asyncpg:// to sync driver for migrations, OpenShift restricted SCC requires chmod g+w on .cache for HuggingFace model downloads, MCP sessions cached at module level need automatic refresh on 400/404, small models may emit <think> tags requiring regex stripping in chat handlers, Approach D's DATABASE_URL replace logic produces double-driver prefix if postgresql+asyncpg:// is provided directly, and MODEL_ENDPOINT assert at module import time crashes the entire app if the env var is unset."
+description: "FastAPI backend patterns for AI quickstarts: multi-runner dispatch, agentic pipelines, persona-based systems, recommendation serving, and transaction monitoring"
+summary: "Covers 5 FastAPI backend architectures for AI quickstarts: multi-runner dispatch (A: LlamaStack/LangGraph/CrewAI with declarative YAML graph engine and MCP JSON-RPC), event-driven log analysis (B: LangGraph Command routing with sklearn clustering and Phoenix/OTEL tracing), multi-agent persona-scoped system (C: 5 LangGraph agents with NeMo Guardrails safety shields, 3-layer RBAC, PII masking, MLflow+Prometheus), recommendation serving (D: Feast feature store with hybrid SQL+semantic search, in-process PyTorch CLIP inference, pgvector Helm subchart), and transaction monitoring (E: LangGraph NL-to-SQL alert pipelines, async job queue with ThreadPoolExecutor, background scheduler). Choose A for pluggable multi-framework agent platforms with K8s MCPServer CRD discovery; B for single-purpose pipelines with dual LLM endpoints (tool-calling workaround) and SQLModel create_all; C for regulated-industry apps needing Keycloak OIDC, langchain-mcp-adapters MultiServerMCPClient, and Kagenti A2A protocol; D for e-commerce with Feast+pgvector from ai-architecture-charts and K8s Job DB init; E for financial monitoring with multi-provider LLM/embedding factories (OpenAI-compatible/LlamaStack/sentence-transformers), Keycloak dual-URL pattern, and WebSocket push notifications. All share async PostgreSQL via asyncpg, lifespan context managers, and SPA static files with dev proxy; base images vary (UBI9/UBI8/python:3.11-slim/custom); build tools span pip, uv+hatchling, and Turborepo monorepos; conversation persistence ranges from InMemorySaver (A) to langgraph-checkpoint-postgres (C); YAML agent configs support mtime-based hot-reload (C) and ${VAR:-default} env-var substitution. Critical gotchas: pysqlite3 module swap must be first import for CrewAI+UBI9 (ChromaDB needs SQLite>=3.35), Alembic env.py must convert postgresql+asyncpg:// URLs, DATABASE_URL string-replace can double-prefix asyncpg driver, MODEL_ENDPOINT assert at module import crashes the entire app if unset, MinIO secure=False and httpx verify=False are hardcoded for in-cluster use, Containerfile must chmod HuggingFace cache for OpenShift restricted SCC, and router registration order prevents path catch-all conflicts."
 metadata:
   type: component
 tags:
-  tech_stack: [fastapi, python, postgresql, sqlalchemy, alembic, asyncpg, langchain, langgraph, crewai, litellm, httpx, pydantic, sqlmodel, uvicorn, scikit-learn, sentence-transformers, faiss, minio, phoenix, opentelemetry, keycloak, mlflow, prometheus, boto3, a2a-sdk, feast, torch, transformers, numpy, bcrypt, pillow]
-  ai_pattern: [agents, model-serving, rag, guardrails, mcp, tool-use, embeddings, clustering, log-analysis, structured-output, multi-agent, safety-shields, recommendations, hybrid-search, vector-search]
+  tech_stack: [fastapi, python, postgresql, sqlalchemy, alembic, asyncpg, langchain, langgraph, crewai, litellm, httpx, pydantic, pydantic-settings, sqlmodel, uvicorn, scikit-learn, sentence-transformers, faiss, minio, phoenix, opentelemetry, keycloak, mlflow, prometheus, boto3, a2a-sdk, feast, torch, transformers, numpy, bcrypt, pillow, python-jose, llama-stack-client, twilio, pandas, hatchling, uv]
+  ai_pattern: [agents, model-serving, rag, guardrails, mcp, tool-use, embeddings, clustering, log-analysis, structured-output, multi-agent, safety-shields, recommendations, hybrid-search, vector-search, background-jobs, scheduled-tasks]
   platform: [llamastack, openshift, kubernetes, grafana, loki, rhoai, kserve, vllm]
   data_layer: [pgvector, postgresql, minio, faiss]
 source_examples:
@@ -26,6 +26,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/product-recommender-system"
     notes: "E-commerce recommendation backend with Feast feature store, CLIP/user encoder model serving, hybrid search (SQL + semantic), JWT auth, Helm with pgvector subchart from ai-architecture-charts, and LLM-powered review summarization"
     approach: "D"
+  - quickstart: "spending-transaction-monitor"
+    repo: "https://github.com/rh-ai-quickstart/spending-transaction-monitor"
+    notes: "Transaction monitoring backend with LangGraph alert processing pipelines, async job queue for ML recommendations, background scheduler, multi-provider LLM/embedding abstraction, Keycloak OIDC with dual URL pattern, and WebSocket push notifications"
+    approach: "E"
 ---
 
 # FastAPI Backend
@@ -1127,23 +1131,347 @@ class DatabaseService:
 
 ---
 
+## Approach E: Transaction Monitoring with Async Job Queue (from spending-transaction-monitor)
+
+### When to Use
+
+When building a transaction monitoring or financial alerting backend that uses LangGraph for alert rule processing (parse natural language to SQL, execute, evaluate), schedules ML-powered recommendations via background job queues, provides real-time WebSocket push notifications, and abstracts LLM/embedding providers behind factory patterns. Suited for applications requiring Keycloak OIDC authentication with dual internal/external URL handling, in-process ML model training at startup, and multi-provider LLM/embedding support (LlamaStack, OpenAI-compatible, local sentence-transformers).
+
+### Differences from Approach A
+
+- **AI pattern:** LangGraph for alert rule processing (natural language to SQL query pipelines), not for general agent chat dispatch across frameworks
+- **Background processing:** Async job queue with thread pool executor for CPU-intensive recommendation generation, not synchronous request/response
+- **Scheduling:** Background recommendation scheduler pre-generates recommendations for active users on configurable intervals (6 hours default)
+- **ML:** In-process scikit-learn KNN recommender with startup training (heuristic fallback when no alert data), not external model serving
+- **LLM abstraction:** Factory pattern with multiple providers (OpenAI-compatible via langchain-openai ChatOpenAI, LlamaStack via llama-stack-client) selectable via env var
+- **Embedding abstraction:** Multi-provider embedding service (local sentence-transformers default, OpenAI, LlamaStack, Ollama deprecated) with abstract base class and factory function
+- **Auth:** Keycloak OIDC with python-jose JWT validation, dual URL pattern (internal for API-to-Keycloak, external for token issuer validation), OIDC discovery with hardcoded fallback, and `BYPASS_AUTH` dev mode with test user header support
+- **Communication:** WebSocket for push notifications (recommendation-ready events), not for chat streaming
+- **Monorepo:** pnpm + Turborepo with `packages/api` and `packages/db` as separate workspaces, dotenv-cli for env loading in dev scripts
+- **Build:** UBI9 with `TORCH_VARIANT` build arg (cpu or cuda) for PyTorch variant selection
+- **Notifications:** Twilio SMS and SMTP email notification services
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Python 3.12 on `registry.access.redhat.com/ubi9/python-312:latest`
+- **Container image:** Single-stage Containerfile with `TORCH_VARIANT` build arg, copies `packages/api`, `packages/db`, and `data/`
+- **Key dependencies:**
+  - `fastapi>=0.104.0`, `uvicorn[standard]>=0.24.0` -- ASGI web framework and server
+  - `sqlalchemy>=2.0.0`, `asyncpg>=0.29.0`, `alembic>=1.13.0` -- async ORM, PostgreSQL driver, migrations (shared `packages/db`)
+  - `langchain>=0.1.0`, `langchain-openai>=0.1.0`, `langgraph>=0.2.0` -- LangGraph alert processing pipeline
+  - `llama-stack-client>=0.5.0,<0.6.0` -- LlamaStack LLM client
+  - `sentence-transformers>=3.0.0`, `torch>=2.0.0` -- local embedding model
+  - `scikit-learn>=1.3.0`, `pandas>=2.0.0`, `numpy>=1.24.0` -- ML recommendation model
+  - `python-jose[cryptography]>=3.3.0` -- JWT validation for Keycloak OIDC
+  - `pydantic-settings>=2.1.0` -- settings management with env file priority
+  - `twilio>=9.0.0` -- SMS notification delivery
+  - `kafka-python>=2.0.0` -- listed dependency (for message queue integration)
+  - `spending-monitor-db` -- shared database package (editable path source from `../db`)
+- **Helm subchart:** N/A (deployed via Containerfile; uses `Makefile` at repo root)
+- **Build system:** hatchling with `[tool.uv.sources]` for editable local dependency
+
+### Key Patterns
+
+#### Lifespan-Managed Background Services
+
+The FastAPI lifespan context manager initializes and tears down four background services in order: ML system training, LLM thread pool, recommendation job queue, alert job queue, and recommendation scheduler. Each service has explicit `start()`/`stop()` lifecycle methods.
+
+```python
+# packages/api/src/main.py
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await initialize_ml_system()
+    await llm_thread_pool.start()
+    await recommendation_job_queue.start()
+    await alert_job_queue.start()
+    await recommendation_scheduler.start()
+    yield
+    await alert_job_queue.stop()
+    await recommendation_job_queue.stop()
+    await recommendation_scheduler.stop()
+    await llm_thread_pool.stop()
+```
+
+#### Async Job Queue with Thread Pool for CPU-Intensive Work
+
+The `RecommendationJobQueue` uses `asyncio.Queue` with a dedicated worker thread. CPU-intensive LLM/ML operations run in a `ThreadPoolExecutor` (4 workers). After job completion, WebSocket notifications are scheduled on the main event loop using `asyncio.run_coroutine_threadsafe`.
+
+```python
+# packages/api/src/services/recommendations/recommendation_job_queue.py
+class RecommendationJobQueue:
+    def __init__(self):
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self._thread_pool = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix='rec-worker'
+        )
+        self._worker_thread: threading.Thread | None = None
+
+    async def start(self):
+        self._worker_thread = threading.Thread(
+            target=self._run_worker_in_thread,
+            name='recommendation-job-worker',
+            daemon=True,
+        )
+        self._worker_thread.start()
+```
+
+#### LangGraph Alert Processing Pipeline with Conditional SQL Routing
+
+Alert rules are processed via two compiled LangGraph `StateGraph` instances: `app` for validation (creates rule then parses alert to SQL) and `trigger_app` for evaluation (routes based on saved SQL). The `should_use_saved_sql` conditional edge skips SQL generation when a cached query exists.
+
+```python
+# packages/api/src/services/alerts/generate_alert_graph.py
+graph = StateGraph(AppState)
+graph.add_node('route_sql_generation', RunnableLambda(lambda state: state))
+graph.add_node('parse_alert', RunnableLambda(...))
+graph.add_node('substitute_timestamp', RunnableLambda(substitute_timestamp))
+graph.add_node('execute_sql', RunnableLambda(...))
+graph.add_node('create_alert', RunnableLambda(generate_alert))
+graph.add_node('generate_alert_message', RunnableLambda(generate_alert_message_node))
+
+graph.add_conditional_edges(
+    'route_sql_generation',
+    should_use_saved_sql,
+    {'substitute_timestamp': 'substitute_timestamp', 'parse_alert': 'parse_alert'},
+)
+```
+
+#### Multi-Provider LLM Abstraction
+
+Two LLM client implementations behind a common interface: `LLMClient` wraps `langchain-openai`'s `ChatOpenAI` for any OpenAI-compatible endpoint (including RHOAI model serving), while `LlamastackClient` uses the native `llama-stack-client` SDK. Provider is selected via the `LLM_PROVIDER` setting.
+
+```python
+# packages/api/src/services/llms/llm.py
+class LLMClient:
+    def __init__(self, max_tokens=8192, temperature=0.1, top_p=1):
+        self.llm = ChatOpenAI(
+            api_key=settings.API_KEY,
+            model=settings.MODEL,
+            base_url=settings.BASE_URL,
+            async_client=async_client,
+            http_client=http_client,
+            max_tokens=max_tokens,
+        )
+
+# packages/api/src/services/llms/llamastack.py
+class LlamastackClient:
+    def __init__(self, max_tokens=8192, temperature=0.1, top_p=1):
+        self.client = LlamaStackClient(base_url=settings.LLAMASTACK_BASE_URL)
+```
+
+#### Multi-Provider Embedding Service with Abstract Base
+
+An abstract `EmbeddingProvider` base class with four implementations: `SentenceTransformerEmbeddingProvider` (default, local, no external dependencies), `OpenAIEmbeddingProvider`, `LlamaStackEmbeddingProvider`, and `OllamaEmbeddingProvider` (deprecated). A `get_embedding_client()` factory function selects the provider based on `EMBEDDING_PROVIDER` env var.
+
+```python
+# packages/api/src/services/embeddings/embedding_service.py
+class EmbeddingProvider(ABC):
+    @abstractmethod
+    async def get_embedding(self, text: str) -> list[float]: ...
+    @abstractmethod
+    def get_dimensions(self) -> int: ...
+
+def get_embedding_client() -> EmbeddingProvider:
+    provider = os.getenv('EMBEDDING_PROVIDER', settings.EMBEDDING_PROVIDER)
+    if provider == 'local' or provider == 'sentence-transformers':
+        return SentenceTransformerEmbeddingProvider()
+    elif provider == 'llamastack':
+        return LlamaStackEmbeddingProvider()
+    elif provider == 'openai':
+        return OpenAIEmbeddingProvider()
+```
+
+#### Keycloak OIDC with Dual URL Pattern
+
+The auth middleware uses two Keycloak URLs: `KEYCLOAK_URL` (internal, for API-to-Keycloak HTTP calls like JWKS and OIDC discovery) and `KEYCLOAK_FRONTEND_URL` (external, for token issuer validation since browsers obtain tokens via the external URL). The OIDC discovery response's issuer is overridden to match the frontend URL.
+
+```python
+# packages/api/src/auth/middleware.py
+class KeycloakJWTBearer:
+    async def get_oidc_config(self) -> dict:
+        discovery_url = f'{KEYCLOAK_URL}/realms/{REALM}/.well-known/openid-configuration'
+        response = requests.get(discovery_url, timeout=10.0)
+        _oidc_config_cache = response.json()
+        # Override issuer to use browser-accessible URL
+        _oidc_config_cache['issuer'] = f'{KEYCLOAK_FRONTEND_URL}/realms/{REALM}'
+
+    async def get_jwks(self) -> dict:
+        # Fix JWKS URI to use internal URL instead of external
+        parsed = urlparse(jwks_uri)
+        jwks_uri = f'{KEYCLOAK_URL}{parsed.path}'
+```
+
+#### WebSocket Push Notifications for Recommendations
+
+A `ConnectionManager` tracks active WebSocket connections per user (max 3 per user). When background recommendation jobs complete, notifications are pushed to connected clients via `notify_recommendations_ready`. Connection cleanup handles state checking via `WebSocketState.CONNECTED`.
+
+```python
+# packages/api/src/routes/websocket.py
+class ConnectionManager:
+    def __init__(self) -> None:
+        self.active_connections: dict[str, set[WebSocket]] = {}
+        self.max_connections_per_user = 3
+
+    async def send_personal_message(self, message: dict, user_id: str) -> None:
+        connections = self.active_connections[user_id].copy()
+        for connection in connections:
+            if connection.client_state == WebSocketState.CONNECTED:
+                await connection.send_text(json.dumps(message))
+```
+
+#### Scheduled Recommendation Pre-Generation
+
+The `RecommendationScheduler` runs as an asyncio background task, waiting for the database to have transaction data before first run. It identifies active users who lack recent cached recommendations (stale cutoff: 12 hours) and generates fresh recommendations in a thread pool.
+
+```python
+# packages/api/src/services/recommendations/recommendation_scheduler.py
+class RecommendationScheduler:
+    async def _wait_for_database_ready(self, max_wait_seconds: int = 60):
+        while asyncio.get_event_loop().time() - start_time < max_wait_seconds:
+            result = await session.execute(
+                text('SELECT COUNT(*) FROM transactions')
+            )
+            count = result.scalar()
+            if count and count > 0:
+                return
+
+    async def _get_users_needing_recommendations(self, session):
+        active_cutoff = datetime.now(UTC) - timedelta(days=self.active_user_days)
+        stale_cutoff = datetime.now(UTC) - timedelta(hours=12)
+        # Query active users without recent cached recommendations
+```
+
+#### ML System Initialization at Startup
+
+The ML recommendation system initializes during lifespan startup. It supports two modes: external inference service (verifies connectivity to OpenShift AI) or local model (trains scikit-learn KNN recommender from database alert data with heuristic-based fallback when no real alerts exist).
+
+```python
+# packages/api/src/services/ml_startup.py
+async def initialize_ml_system():
+    use_inference_service = (
+        os.getenv('USE_ML_INFERENCE_SERVICE', 'false').lower() == 'true'
+    )
+    if use_inference_service:
+        await verify_inference_service()
+    else:
+        await load_sample_alerts_if_needed()
+        await train_ml_model_if_needed()
+```
+
+#### Pydantic Settings with Env File Priority Chain
+
+The `Settings` class uses `pydantic-settings` with a 3-level env file priority: root `.env.development`, root `.env`, then `packages/api/.env`. The `model_post_init` hook auto-enables `BYPASS_AUTH` in development mode unless explicitly set via environment.
+
+```python
+# packages/api/src/core/config.py
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=[
+            Path(__file__).resolve().parents[4] / '.env.development',
+            Path(__file__).resolve().parents[4] / '.env',
+            Path(__file__).resolve().parents[2] / '.env',
+        ],
+        extra='ignore',
+    )
+
+    def model_post_init(self, __context):
+        if self.ENVIRONMENT == 'development' and 'BYPASS_AUTH' not in os.environ:
+            self.BYPASS_AUTH = True
+```
+
+#### Containerfile with PyTorch CPU/CUDA Variant Selection
+
+The Containerfile uses a `TORCH_VARIANT` build arg to select between CPU (lightweight, ~176MB) and CUDA (GPU-enabled, ~800MB) PyTorch installations. It also handles UBI9 vs Debian base image detection for system dependency installation.
+
+```dockerfile
+# packages/api/Containerfile
+ARG BASE_IMAGE=registry.access.redhat.com/ubi9/python-312:latest
+ARG TORCH_VARIANT=cpu
+RUN if [ "$TORCH_VARIANT" = "cpu" ]; then \
+        uv pip install --python $(which python3) --system --no-cache \
+            --index-url https://download.pytorch.org/whl/cpu torch; \
+    else \
+        uv pip install --python $(which python3) --system --no-cache torch; \
+    fi
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `DATABASE_URL` -- async PostgreSQL connection string (`postgresql+asyncpg://...`)
+  - `LLM_PROVIDER` -- LLM provider selection: `openai` (default) or `llamastack`
+  - `BASE_URL` / `API_KEY` / `MODEL` -- OpenAI-compatible LLM config
+  - `LLAMASTACK_BASE_URL` / `LLAMASTACK_MODEL` -- LlamaStack LLM config
+  - `EMBEDDING_PROVIDER` -- embedding provider: `local` (default), `openai`, `llamastack`, `ollama` (deprecated)
+  - `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` -- embedding model config (default: `all-minilm`, 384 dims)
+  - `KEYCLOAK_URL` -- internal URL for API-to-Keycloak communication (container/cluster network)
+  - `KEYCLOAK_FRONTEND_URL` -- external URL for browser access and token issuer validation
+  - `KEYCLOAK_REALM` / `KEYCLOAK_CLIENT_ID` -- Keycloak realm and client config
+  - `BYPASS_AUTH` -- skip JWT validation (auto-enabled in development mode)
+  - `JWT_CLOCK_SKEW_LEEWAY_SECONDS` -- clock skew tolerance for JWT validation (default: 120)
+  - `ENVIRONMENT` -- environment mode: `development`, `production`, `staging`, `test`, `ci`
+  - `ALLOWED_HOSTS` -- CORS origins list (default: `http://localhost:5173`)
+  - `USE_ML_INFERENCE_SERVICE` -- use external OpenShift AI inference vs local model (default: `false`)
+  - `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM_EMAIL` -- email notification config
+  - `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_PHONE_NUMBER` -- SMS notification config
+  - `RECOMMENDATION_*` -- prefixed env vars for recommendation config (thread pool workers, batch size, cache duration, scheduler interval)
+- **Config files:**
+  - `packages/api/src/core/config.py` -- centralized `Settings` class via pydantic-settings with env file priority chain
+  - `packages/api/src/core/recommendation_config.py` -- `RecommendationConfig` class with `RECOMMENDATION_` env prefix
+  - `packages/api/pyproject.toml` -- hatchling build system, uv sources, ruff config, mypy overrides, pytest config
+  - `packages/api/package.json` -- pnpm scripts for dev/start/test/lint/format/type-check via uv
+- **Helm values:** N/A (uses Makefile at repo root)
+
+### Known Gotchas
+
+- **Keycloak dual URL pattern is required:** The auth middleware must use `KEYCLOAK_URL` (internal) for JWKS and OIDC discovery HTTP calls, but override the issuer to `KEYCLOAK_FRONTEND_URL` (external) for JWT validation. Without this override, token validation fails because browsers obtain tokens via the external URL whose issuer claim differs from the internal discovery endpoint's issuer. The JWKS URI is also re-written to use the internal URL. Both the override and the rewrite are documented in inline comments in `middleware.py`.
+- **OIDC discovery fallback to hardcoded endpoints:** If the Keycloak OIDC discovery endpoint is unreachable (common during startup before Keycloak is ready), the middleware falls back to hardcoded endpoint paths. The fallback is logged with a warning and cached for 1 hour.
+- **JWT clock skew leeway defaults to 120 seconds:** The `JWT_CLOCK_SKEW_LEEWAY_SECONDS` setting defaults to 120 to handle Keycloak-to-API pod clock drift. This is notably high and documented in a config comment as being specifically for Keycloak integration.
+- **Development bypass auto-enables without explicit env var:** `model_post_init` in `Settings` sets `BYPASS_AUTH = True` in development mode unless `BYPASS_AUTH` is explicitly set in `os.environ`. This means the auth bypass only occurs when the environment variable is absent, not when it is set to any value.
+- **Monorepo editable install for DB package:** `pyproject.toml` uses `[tool.uv.sources]` with `path = "../db", editable = true` for the shared `spending-monitor-db` package. The Containerfile copies both `packages/api/` and `packages/db/` and installs the DB package first with `uv pip install -e`.
+- **httpx clients created with `verify=False`:** Both `LLMClient` and `LlamastackClient` create `httpx.AsyncClient(verify=False)` and `httpx.Client(verify=False)` at module level. This disables TLS certificate verification for all LLM API calls, which is appropriate for self-signed certs on internal RHOAI endpoints but should not be used in production with external providers.
+- **Recommendation job queue WebSocket notification uses `asyncio.get_event_loop()`:** The worker thread schedules WebSocket notifications via `asyncio.run_coroutine_threadsafe(notify_recommendations_ready(...), asyncio.get_event_loop())`, which relies on the deprecated `get_event_loop()` to cross thread boundaries. This works but may break in future Python versions.
+- **Health check database check is disabled:** The health check route in `routes/health.py` has the database connectivity check commented out with a note: "Temporarily disable database health check to fix hanging issue". Only the API status is reported.
+- **ML model trains synchronously during startup:** `initialize_ml_system()` runs during lifespan startup (before the server accepts connections). If training takes long, the application startup is delayed. Unlike Approach A which uses deferred background tasks, this blocks until complete.
+- **Containerfile UBI9/Debian detection for system deps:** The Containerfile uses `echo "${BASE_IMAGE}" | grep -q "ubi"` to detect whether to use `dnf` (UBI) or `apt-get` (Debian) for system dependencies. The subscription-manager removal (`rm -f /etc/rhsm-host`) prevents host RHEL subscriptions from leaking into the container build.
+
+### Testing Notes
+
+- Health check at `GET /health/` returning a list of `HealthResponse` objects (currently only API status, DB check disabled)
+- Root endpoint at `GET /` returning `{"message": "Welcome to spending-monitor API"}`
+- Dev mode: `pnpm dev` runs uvicorn with `--reload` via dotenv-cli loading root `.env`
+- Tests run with `ENVIRONMENT=test uv run pytest` with coverage threshold of 40%
+- Test user header support: set `X-Test-User-Email` header to authenticate as a specific user in dev mode
+- pytest markers: `integration` and `slow` for selective test execution
+
+### Related Patterns
+
+- Database: shared `packages/db` package with SQLAlchemy models, Alembic migrations, async session factory
+- Frontend: separate `packages/ui` React app communicating via REST and WebSocket
+- Monorepo: pnpm workspaces with Turborepo, shared root `.env` loaded via dotenv-cli
+- LangGraph: used for alert rule processing (not general agent chat) with separate validation and trigger graph compilations
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (multi-agent-loan-origination) | Approach D (product-recommender-system) |
-|----------|-------------------------------|-----------------------------------|-------------------------------------------|------------------------------------------|
-| **Use case** | Interactive multi-framework agent chat platform | Event-driven log analysis pipeline | Multi-agent regulated-industry application | E-commerce product recommendation serving |
-| **Agent frameworks** | LlamaStack, LangGraph, CrewAI (pluggable) | LangGraph only (fixed pipeline) | LangGraph only (5 persona-specific agents) | None (Feast + PyTorch in-process inference) |
-| **Agent count** | 1 (dynamically configured) | 1 (fixed pipeline) | 5 (public, borrower, LO, underwriter, CEO) | N/A (no agents) |
-| **LLM routing** | Per-runner env vars with sentinel-based resolution | Single endpoint + optional tool-calling endpoint | YAML model tiers (llm, vision, embedding) with hot-reload | Single endpoint for review summarization only |
-| **Safety** | None built-in | None built-in | NeMo Guardrails input/output shield nodes (fail-closed) | None built-in |
-| **Auth / RBAC** | OAuth header forwarding | None | Keycloak OIDC + 3-layer RBAC (route, tool_auth node, DataScope) | JWT with bcrypt/passlib (simple token auth) |
-| **Communication** | SSE streaming | REST endpoints | WebSocket streaming with disconnect cancellation | REST endpoints |
-| **ORM / Migrations** | SQLAlchemy + Alembic | SQLModel + create_all (no migrations) | SQLAlchemy + Alembic (shared db package in monorepo) | SQLAlchemy + create_all via K8s Job (no migrations) |
-| **Base image** | UBI9 | UBI8 | python:3.11-slim | recommendation-core (custom base with ML deps) |
-| **Package manager** | pip | uv (with PyTorch CPU-only index) | uv + hatchling (Turborepo monorepo) | uv pip install (in Containerfile) |
-| **Observability** | None built-in | Phoenix/OTEL with LangChain instrumentation | MLflow autolog + Prometheus custom metrics | None built-in |
-| **PII handling** | None | None | Middleware-based recursive PII masking per role | None |
-| **Feature store** | None | None | None | Feast with PostgreSQL online store + vector search |
-| **Model serving** | External (LlamaStack, vLLM endpoints) | External (OpenAI-compatible endpoint) | External (OpenAI-compatible endpoint) | In-process PyTorch (user encoder + CLIP) |
-| **Conversation persistence** | InMemorySaver | None | langgraph-checkpoint-postgres (per-user threads) | N/A |
-| **Deployment** | compose.yaml | compose.yaml | Helm chart + compose.yml (init containers, Kagenti sidecar) | Helm chart with pgvector subchart (ai-architecture-charts) + K8s Job for DB init |
+| Criteria | Approach A (ai-virtual-agent) | Approach B (ansible-log-analysis) | Approach C (multi-agent-loan-origination) | Approach D (product-recommender-system) | Approach E (spending-transaction-monitor) |
+|----------|-------------------------------|-----------------------------------|-------------------------------------------|------------------------------------------|-------------------------------------------|
+| **Use case** | Interactive multi-framework agent chat platform | Event-driven log analysis pipeline | Multi-agent regulated-industry application | E-commerce product recommendation serving | Financial transaction monitoring with ML alerts |
+| **Agent frameworks** | LlamaStack, LangGraph, CrewAI (pluggable) | LangGraph only (fixed pipeline) | LangGraph only (5 persona-specific agents) | None (Feast + PyTorch in-process inference) | LangGraph for alert pipelines + scikit-learn ML |
+| **Agent count** | 1 (dynamically configured) | 1 (fixed pipeline) | 5 (public, borrower, LO, underwriter, CEO) | N/A (no agents) | 2 LangGraph graphs (validation + trigger) |
+| **LLM routing** | Per-runner env vars with sentinel-based resolution | Single endpoint + optional tool-calling endpoint | YAML model tiers (llm, vision, embedding) with hot-reload | Single endpoint for review summarization only | Multi-provider factory (OpenAI-compatible + LlamaStack) |
+| **Safety** | None built-in | None built-in | NeMo Guardrails input/output shield nodes (fail-closed) | None built-in | None built-in |
+| **Auth / RBAC** | OAuth header forwarding | None | Keycloak OIDC + 3-layer RBAC (route, tool_auth node, DataScope) | JWT with bcrypt/passlib (simple token auth) | Keycloak OIDC + python-jose (dual URL pattern) |
+| **Communication** | SSE streaming | REST endpoints | WebSocket streaming with disconnect cancellation | REST endpoints | REST + WebSocket push notifications |
+| **Background processing** | Deferred startup tasks | None | None | K8s Job for DB init | Async job queue + thread pool + scheduled pre-generation |
+| **ORM / Migrations** | SQLAlchemy + Alembic | SQLModel + create_all (no migrations) | SQLAlchemy + Alembic (shared db package in monorepo) | SQLAlchemy + create_all via K8s Job (no migrations) | SQLAlchemy + Alembic (shared db package in monorepo) |
+| **Base image** | UBI9 | UBI8 | python:3.11-slim | recommendation-core (custom base with ML deps) | UBI9 (with CPU/CUDA PyTorch variant selection) |
+| **Package manager** | pip | uv (with PyTorch CPU-only index) | uv + hatchling (Turborepo monorepo) | uv pip install (in Containerfile) | uv + hatchling (pnpm/Turborepo monorepo) |
+| **Observability** | None built-in | Phoenix/OTEL with LangChain instrumentation | MLflow autolog + Prometheus custom metrics | None built-in | None built-in |
+| **PII handling** | None | None | Middleware-based recursive PII masking per role | None | None |
+| **Feature store** | None | None | None | Feast with PostgreSQL online store + vector search | None |
+| **Model serving** | External (LlamaStack, vLLM endpoints) | External (OpenAI-compatible endpoint) | External (OpenAI-compatible endpoint) | In-process PyTorch (user encoder + CLIP) | In-process scikit-learn + optional external inference |
+| **Embeddings** | None | SentenceTransformer (local or remote) | sentence-transformers (local) | None | Multi-provider (local sentence-transformers default) |
+| **Conversation persistence** | InMemorySaver | None | langgraph-checkpoint-postgres (per-user threads) | N/A | N/A (alert rules persisted, not conversations) |
+| **Deployment** | compose.yaml | compose.yaml | Helm chart + compose.yml (init containers, Kagenti sidecar) | Helm chart with pgvector subchart (ai-architecture-charts) + K8s Job for DB init | Containerfile + Makefile |

@@ -5,7 +5,7 @@ summary: "Provides four React frontend patterns for AI Quickstarts -- Approach A
 metadata:
   type: component
 tags:
-  tech_stack: [react, patternfly, typescript, vite, tanstack-router, tanstack-query, tanstack-form, tailwindcss, shadcn-ui, radix-ui, zod, keycloak, storybook, vitest, pnpm, javascript, create-react-app, axios, react-markdown, serve, nginx, msw, remark-gfm, pino]
+  tech_stack: [react, patternfly, typescript, vite, tanstack-router, tanstack-query, tanstack-form, tailwindcss, shadcn-ui, radix-ui, zod, keycloak, storybook, vitest, pnpm, javascript, create-react-app, axios, react-markdown, serve, nginx, msw, remark-gfm, pino, recharts, oidc-client-ts, playwright]
   ai_pattern: [agents, rag, mcp, multimodal, model-serving, recommendations, embeddings]
   platform: [openshift, kserve, rhoai]
 source_examples:
@@ -29,6 +29,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/product-recommender-system"
     notes: "React 18 + PatternFly 6 + TanStack Router/Query e-commerce frontend with custom JWT auth, AI review summarization, image-based product search, multi-round onboarding, and IntersectionObserver infinite scroll, baked into backend via multi-stage Containerfile"
     approach: "A"
+  - quickstart: "spending-transaction-monitor"
+    repo: "https://github.com/rh-ai-quickstart/spending-transaction-monitor"
+    notes: "React 19 + shadcn/ui + Tailwind CSS 4 frontend with react-oidc-context Keycloak OIDC, WebSocket recommendation push, Recharts dashboard, geolocation fraud detection headers, serve static server, generate-env-config.sh window.ENV injection"
+    approach: "B"
 ---
 
 # React Frontend

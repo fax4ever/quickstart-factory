@@ -1,11 +1,11 @@
 ---
 name: ingestion-service
 description: Standalone Python document ingestion service using Docling and LlamaStack for multi-source RAG vector DB population
-summary: "Standalone Python 3.12 one-shot container that fetches PDFs from GitHub (shallow --depth 1 clone with optional token auth), S3/MinIO (SSL verify disabled), and URLs, processes them with Docling DocumentConverter (requires tesseract-ocr, poppler-utils) and HybridChunker filtering only TEXT/PARAGRAPH DocItemLabel chunks, then inserts embeddings into pgvector via LlamaStack vector_io API using all-MiniLM-L6-v2 (384d, 512-token chunks). Use when you need YAML-driven multi-pipeline batch ingestion at stack startup with per-pipeline enable/disable for each source type (GITHUB, S3, URL) and target vector store -- deployed as restart:\"no\" compose service or Kubernetes Job configured via parent Helm chart ingestion-pipeline values (no subchart). Critical pattern: service waits for LlamaStack via client.models.list() retry loop (30 retries, 5s delay), registers vector DBs with dynamically discovered provider_id from the first vector_io provider, reads pipeline definitions from INGESTION_CONFIG env var pointing to a mounted YAML config, and prints exit summary with success/failed/skipped pipeline counts. Common gotchas: re-runs insert duplicate chunks because vector_dbs.register() silently tolerates \"already exists\" errors without clearing existing data, GitHub tokens are embedded in plain-text HTTPS clone URLs exposing them in process args, PyTorch is CPU-only via --extra-index-url, and only PDF files are supported across all three source types."
+summary: "Covers two ingestion patterns: Approach A is a one-shot Python 3.12 container (restart:\"no\" compose or K8s Job) fetching PDFs from GitHub (shallow --depth 1 clone with token auth), S3/MinIO (SSL verify disabled), and URLs, processing via Docling DocumentConverter (tesseract-ocr, poppler-utils) with HybridChunker filtering TEXT/PARAGRAPH DocItemLabel chunks, inserting embeddings into pgvector via LlamaStack vector_io using all-MiniLM-L6-v2 (384d, 512-token chunks); Approach B is a persistent FastAPI service (port 8001, hatchling build in Turborepo monorepo) receiving structured transactions via POST /transactions/, transforming string amounts/fraud flags, forwarding to downstream API via httpx AsyncClient with graceful degradation and dual health endpoints (/healthz liveness, /health readiness reporting \"degraded\"). Use Approach A for YAML-driven batch document ingestion at stack startup configured via INGESTION_CONFIG env var pointing to mounted per-pipeline enable/disable config (no Helm subchart -- parent chart ingestion-pipeline values), and Approach B for real-time structured event ingestion/forwarding without AI/ML dependencies. Critical patterns: A waits for LlamaStack via client.models.list() retry loop (30 retries, 5s delay), registers vector DBs with dynamically discovered provider_id from first vector_io provider, prints exit summary with success/failed/skipped counts; B returns processed transaction even when downstream unreachable, reports \"degraded\" status via /health readiness check. Common gotchas: A re-runs insert duplicate chunks because vector_dbs.register() silently tolerates \"already exists\" without clearing data, GitHub tokens embedded in plain-text clone URLs, CPU-only PyTorch, PDF-only; B has missing common.models module, no Containerfile, datetime module-vs-class import bug in /health, new httpx client created per request, and spending-monitor-db cross-package path dependency."
 metadata:
   type: component
 tags:
-  tech_stack: [python, docling, llama-stack-client, boto3, pyyaml]
+  tech_stack: [python, docling, llama-stack-client, boto3, pyyaml, fastapi, httpx, pydantic, uvicorn]
   ai_pattern: [rag, embeddings, data-pipeline, vector-search]
   platform: [openshift, kubernetes, rhoai]
   data_layer: [pgvector]
@@ -14,6 +14,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/RAG"
     notes: "Standalone one-shot ingestion container using Docling for PDF parsing, LlamaStack client for vector DB registration, with GitHub/S3/URL multi-source pipeline support"
     approach: "A"
+  - quickstart: "spending-transaction-monitor"
+    repo: "https://github.com/rh-ai-quickstart/spending-transaction-monitor"
+    notes: "Persistent FastAPI service for financial transaction data transformation and forwarding to downstream API via httpx"
+    approach: "B"
 ---
 
 # Ingestion Service
@@ -191,3 +195,160 @@ rag-ingestion:
 - `components/pgvector.md` -- Vector database backend where embeddings are stored
 - `components/minio.md` -- S3-compatible object storage used as a document source
 - `components/ingestion-pipeline.md` -- Alternative Kubernetes/Kubeflow-based ingestion approach (from ai-virtual-agent)
+
+---
+
+## Approach B: Transaction Data Ingestion Service (from spending-transaction-monitor)
+
+### When to Use
+
+Use this approach when the ingestion service is a persistent FastAPI web service that receives structured transaction data via HTTP POST, transforms it into an internal format, and forwards it to a downstream API service. This pattern suits real-time event-driven ingestion of structured records (financial transactions, IoT events, log entries) rather than batch document processing.
+
+### Differences from Approach A
+
+- **Persistent service vs one-shot container:** Runs continuously as a FastAPI web server (port 8001) rather than executing once at startup and exiting
+- **No AI/ML dependencies:** No Docling, LlamaStack, torch, or vector DB interaction -- purely data transformation and HTTP forwarding
+- **Receives data via API:** Accepts incoming transaction data on `POST /transactions/` instead of fetching documents from external sources
+- **Forwards to downstream API:** Uses httpx async client to POST transformed data to a separate API service instead of inserting into a vector database
+- **No Containerfile:** Unlike Approach A, this component has no Containerfile in the repo; other packages (api, db, ui) do have them
+- **Monorepo package:** Lives in a Turborepo monorepo under `packages/ingestion-service/` with its own `pyproject.toml` and `uv.lock`, using hatchling build system
+
+### Tech Stack & Dependencies
+
+- **Runtime:** Python 3.12 (hatchling build system)
+- **Container image:** None -- no Containerfile present in the component directory
+- **Key dependencies:** fastapi >=0.104.0, uvicorn[standard] >=0.24.0, pydantic >=2.5.0, pydantic-settings >=2.1.0, httpx >=0.25.0, certifi >=2023.0.0
+- **Cross-package dependency:** References `spending-monitor-db` as a local editable path dependency via `[tool.uv.sources]`
+- **Helm subchart:** None -- no Helm chart or values found for this component
+
+### Key Patterns
+
+#### Transaction Data Transformation Pipeline
+
+The service implements a two-stage transformation: raw incoming data (with string amounts like `"$150.00"` and `"Yes"/"No"` fraud flags) is first converted to an internal `Transaction` model, then reshaped into an API-compatible format with UUID generation.
+
+```python
+# packages/ingestion-service/src/main.py (lines 58-83)
+def transform_transaction(incoming_transaction: IncomingTransaction) -> Transaction:
+    """Transform incoming transaction to internal format"""
+    amount = float(incoming_transaction.Amount.replace('$', ''))
+    is_fraud = incoming_transaction.is_fraud == 'Yes'
+
+    # split time string into hours and minutes
+    time_parts = incoming_transaction.Time.split(':')
+    hour, minute = int(time_parts[0]), int(time_parts[1])
+
+    return Transaction(
+        user=incoming_transaction.User,
+        card=incoming_transaction.Card,
+        # ... field mappings
+        is_fraud=is_fraud,
+    )
+```
+
+#### Async HTTP Forwarding with httpx
+
+The `APIClient` class forwards transformed transactions to a downstream API service using httpx. The API host and port are configured via environment variables.
+
+```python
+# packages/ingestion-service/src/main.py (lines 16-37)
+class APIClient:
+    def __init__(self):
+        self.api_host = os.environ.get('API_HOST', 'localhost')
+        self.api_port = os.environ.get('API_PORT', '8000')
+        self.api_base_url = f'http://{self.api_host}:{self.api_port}'
+        self.timeout = 30.0
+
+    async def post_transaction(self, transaction_data: dict) -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f'{self.api_base_url}/transactions', json=transaction_data
+                )
+                response.raise_for_status()
+                return True
+        except Exception as e:
+            print(f'Failed to post transaction to API: {e}')
+            return False
+```
+
+#### Graceful Degradation on Downstream Failure
+
+The transaction endpoint returns the processed transaction even when the downstream API is unreachable, treating the forwarding as best-effort rather than a hard dependency.
+
+```python
+# packages/ingestion-service/src/main.py (lines 125-139)
+@app.post('/transactions/')
+async def create_transaction(incoming_transaction: IncomingTransaction):
+    transaction = transform_transaction(incoming_transaction)
+    api_transaction_data = transform_to_api_format(transaction)
+    api_success = await api_client.post_transaction(api_transaction_data)
+
+    if not api_success:
+        print('Warning: Transaction processed but not sent to API service')
+        # Still return the transaction even if API posting fails
+
+    return transaction
+```
+
+#### Dual Health Check Endpoints
+
+The service exposes two health endpoints: `/healthz` for simple liveness checks, and `/health` for readiness checks that include downstream API connectivity status, reporting `"degraded"` when the API is unreachable.
+
+```python
+# packages/ingestion-service/src/main.py (lines 142-164)
+@app.get('/healthz')
+async def healthz():
+    return {'status': 'ok'}
+
+@app.get('/health')
+async def health():
+    api_health = await api_client.health_check()
+    overall_status = 'healthy' if api_health['api_status'] == 'healthy' else 'degraded'
+    return {
+        'status': overall_status,
+        'service': 'ingestion-service',
+        # ...
+    }
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `API_HOST`: Hostname of downstream API service (default: `localhost`)
+  - `API_PORT`: Port of downstream API service (default: `8000`)
+- **Config files:**
+  - `packages/ingestion-service/pyproject.toml`: Package metadata, dependencies, and tooling config (ruff, mypy, pytest)
+- **Helm values:** None -- no ingestion-service section in `deploy/helm/spending-monitor/values.yaml`
+
+### Known Gotchas
+
+- **Missing `common.models` module:** The main entry point imports `from .common.models import IncomingTransaction, Transaction` (line 13 of `src/main.py`) but no `common/` directory exists under `packages/ingestion-service/src/`. The source tree contains only `src/main.py`. This suggests the models are expected to be created or linked before the service can run.
+- **No Containerfile for this service:** Unlike the `api`, `db`, and `ui` packages which each have a `Containerfile`, the `ingestion-service` package has none, indicating it may not yet be containerized or is run directly in development.
+- **Bug in `/health` endpoint:** Line 157 calls `datetime.now(UTC)` but the file imports `import datetime` (the module, not the class). The correct call would be `datetime.datetime.now(datetime.timezone.utc)`. Additionally, `UTC` is never imported or defined. Other uses in the same file correctly use `datetime.time(...)` and `datetime.datetime.combine(...)` with the module prefix.
+- **New httpx client created per request:** The `post_transaction` method (line 28) creates a new `httpx.AsyncClient` context manager for every transaction POST rather than reusing a persistent client instance, as seen in the `async with httpx.AsyncClient(...)` pattern inside the method body.
+- **Cross-package path dependency:** `pyproject.toml` references `spending-monitor-db` as a local editable dependency via `[tool.uv.sources]` with `path = "../db"`, coupling this package to the monorepo layout.
+
+### Testing Notes
+
+- The service runs on port 8001 according to `docs/DEVELOPER_GUIDE.md`
+- Test configuration in `pyproject.toml` excludes integration and e2e tests by default: `addopts = "-v --tb=short --ignore=tests/integration --ignore=tests/e2e"`
+- Dev dependencies include pytest, pytest-asyncio, httpx (for test client), ruff, and mypy
+
+### Related Patterns
+
+- `components/fastapi-backend.md` -- The downstream API service that receives forwarded transactions
+
+---
+
+## Choosing Between Approaches
+
+| Criteria | Approach A (RAG Document Ingestion) | Approach B (Transaction Data Ingestion) |
+|----------|--------------------------------------|------------------------------------------|
+| **Lifecycle** | One-shot container (runs once, exits) | Persistent web service (runs continuously) |
+| **Data type** | Unstructured documents (PDFs) | Structured records (financial transactions) |
+| **Data flow** | Pulls from sources (GitHub, S3, URLs) | Receives via HTTP POST, forwards downstream |
+| **AI/ML** | Docling parsing, vector embeddings, LlamaStack | None -- pure data transformation |
+| **Output target** | pgvector via LlamaStack vector_io API | Downstream FastAPI service via httpx |
+| **Deployment** | Compose service with `restart: "no"` or K8s Job | Standard web service deployment |
+| **Use case** | Batch document ingestion for RAG pipelines | Real-time event ingestion and forwarding |
