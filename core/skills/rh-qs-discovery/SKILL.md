@@ -42,6 +42,7 @@ Produce a validated Product Requirements Document (PRD) at `.rhoai-qs/<slug>/prd
 | [subagents/validation-skill-prompt.md](./subagents/validation-skill-prompt.md) | Quickstart slug resolution |
 | [subagents/prd-structurer-prompt.md](./subagents/prd-structurer-prompt.md) | PRD structurer |
 | [subagents/backlog-matcher-prompt.md](./subagents/backlog-matcher-prompt.md) | Backlog matcher |
+| [subagents/prd-griller-prompt.md](./subagents/prd-griller-prompt.md) | PRD griller |
 | [subagents/prd-validator-prompt.md](./subagents/prd-validator-prompt.md) | PRD validator |
 
 ## Workflow
@@ -192,6 +193,47 @@ Map vague ideas to concrete requirements using known patterns:
 
 Record these mappings in the PRD but do not pre-decide the architecture — the mapping provides context for `rh-qs-architect`, not binding decisions.
 
+### Phase 6.5: PRD Grilling (Stress-Test)
+
+An enhancement, not a gate — this phase deepens the draft before the validator checks it's structurally sound. If the user wants to skip grilling, honor that and go straight to Phase 7.
+
+**Conditional gate — only run on medium/high coverage.** If the prd-structurer subagent ran in Phase 5, reuse its `overall_coverage` field. Otherwise (conversational interview), assess coverage yourself using the same bucketing convention as [output-templates.md](./output-templates.md)'s "PRD Section Requirements" table: `high` if 5+ of the 6 required sections have substantive content, `medium` for 3-4, `low` for 0-2. Skip this phase entirely on `low` coverage — there isn't enough draft to grill yet — and proceed directly to Phase 7.
+
+Spawn the **prd-griller subagent** once — a single invocation returns the full question set and its dependency graph, so there is no need to re-spawn it between rounds:
+
+```python
+Agent(
+    description="Stress-test PRD draft with dependency-ordered questions",
+    prompt=f"""
+Read and follow instructions from:
+core/skills/rh-qs-discovery/subagents/prd-griller-prompt.md
+
+Draft PRD: {prd_draft}
+Backlog check result: {backlog_check_result}
+Requirement mapping: {requirement_mapping}
+Guardrails path: core/skills/rh-qs-discovery/reasoning-guardrails.md
+"""
+)
+```
+
+Work the returned question graph in **rounds**:
+
+1. If `answered_by_cross_reference` is non-empty, show those to the user as FYI — they're already resolved by another section of the draft, no question needed.
+2. Compute the initial **frontier**: every question with `depends_on: null`, sorted by `impact` (`high` first). Present the whole frontier as one round, one entry per question:
+
+   ```
+   ❓ **Q1** - **<title>**: <question>
+
+   ➡️ <recommended_answer>
+   ```
+
+3. Collect the user's answers for the round — they may accept the recommended answer, give a different one, or skip a question.
+4. Fold the answers into the draft PRD.
+5. Recompute the frontier: any question whose `depends_on` was just answered is now unblocked. Before presenting each of these newly-unblocked questions, briefly check whether it still applies given the updated draft — the answers just folded in may have already resolved it or made it moot (the questions were generated once, against the pre-round draft, so they can go stale). Drop any question that no longer applies and say briefly why; present the rest using the same format.
+6. Repeat until no questions remain.
+
+No re-invocation of the subagent between rounds — the full dependency graph came back in step 1's spawn.
+
 ### Phase 7: PRD Validation and Refinement
 
 The main agent does not self-validate the draft it just wrote — it has been drafting alongside the user and is anchored to its own choices. Instead, spawn the **prd-validator subagent** for an independent, clean-context review:
@@ -258,6 +300,7 @@ If the user wants to pursue one of the proposed ideas, transition into the stand
 - Flag ambiguities as open questions rather than resolving them yourself
 - Use the validation-skill subagent when continuing an existing idea — never guess the slug
 - Use the backlog-matcher subagent before starting the interview
+- Spawn the prd-griller subagent once in Phase 6.5 when coverage allows, then work its question graph in dependency-ordered rounds yourself — no re-spawning between rounds
 - Use the prd-validator subagent for every Phase 7 review pass — never self-grade the draft you just wrote
 - Update the discovery spec as the interview progresses
 - Let the user refine the PRD as many times as they want
@@ -269,7 +312,8 @@ If the user wants to pursue one of the proposed ideas, transition into the stand
 - Assume GPU is needed without evidence
 - Skip the backlog check
 - Resolve open questions without asking the user
-- Treat the prd-validator's findings as final or its recommendations as drop-in text — it lacks conversational context, so you still decide what actually changes
+- Treat the prd-griller's or prd-validator's recommendations as decided — both are suggestions; the user (griller) or you with full context (validator) still decide
+- Force the prd-griller step when PRD coverage is too low to grill, or when the user wants to skip it
 
 ## Next Skill
 

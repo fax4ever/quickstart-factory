@@ -120,7 +120,8 @@ PHASE 7 — EVALUATION & FINALIZATION
 | 04-04 | Create spec-template.md | Define the discovery spec format (`.rhoai-qs/<slug>/pipeline/discovery-spec.yaml`) — interview plan structure based on initial input. |
 | 04-05 | Create reasoning-guardrails.md | Define concern areas: scope creep (don't invent requirements), technology bias (don't pre-decide stack), GPU assumptions, completeness without over-specification. |
 | 04-06 | Restructure SKILL.md as orchestrator | Rewrite SKILL.md to orchestrate the two subagents, generate the spec, validate PRD completeness (problem statement, target persona, success metrics, scope boundaries, technology constraints), and present drafts to the user for refinement with no cap on rounds. |
-| 04-07 | Validate with skill-validator | Run `skill-validator --strict --allow-extra-frontmatter` against the updated SKILL.md. Fix any compliance issues. |
+| 04-07 | Add prd-griller subagent | Write the subagent prompt that stress-tests a draft PRD with dependency-ordered tough questions (rounds/frontier pattern), wired into Phase 6.5 between requirement mapping and validation. |
+| 04-08 | Validate with skill-validator | Run `skill-validator --strict --allow-extra-frontmatter` against the updated SKILL.md. Fix any compliance issues. |
 
 ---
 
