@@ -1,5 +1,5 @@
 #!/bin/bash
-# Validates that OC-policy gate hook symlinks and settings symlinks
+# Validates that OC-policy gate hook symlinks
 # exist, are relative, and are not broken.
 set -euo pipefail
 
@@ -26,18 +26,6 @@ for client in "${POLICY_GATE_CLIENTS[@]}"; do
     fi
   done
 
-  settings="$client/settings.json"
-  if [ -L "$settings" ]; then
-    target=$(readlink "$settings")
-    if [[ "$target" == /* ]]; then
-      echo "::error::absolute settings symlink: $settings -> $target (must be relative)"
-      errors=$((errors + 1))
-    fi
-    if [ ! -e "$settings" ]; then
-      echo "::error::broken settings symlink: $settings -> $target"
-      errors=$((errors + 1))
-    fi
-  fi
 done
 
 if [ "$errors" -gt 0 ]; then

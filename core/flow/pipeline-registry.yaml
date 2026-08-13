@@ -1,0 +1,158 @@
+# Pipeline Registry — How to fill
+#
+# skills[].expected_inputs:
+#   - Set required: true/false for each input (defaults to true if not set)
+#   - qs-name is always required; other inputs are typically optional
+#
+# skills[].expected_outputs:
+#   - path supports glob patterns (e.g. data/*.json, core/out-*)
+#
+# skills[].review_guidance:
+#   - Keep to 4 lines max — only the most important checks the user must note
+#   - Always end with a peer review recommendation
+#
+pipeline:
+  name: greenfield
+  description: End-to-end new AI Quickstart pipeline
+
+skills:
+  - id: rh-qs-discovery
+    order: 1
+    description: "Ideation and interview phase — asks structured questions, accepts uploaded context, maps ideas to concrete requirements, and produces a PRD"
+    expected_inputs:
+      - name: qs-name
+        description: "Quickstart slug (lowercase, hyphenated, e.g. mortgage-application-processor)"
+        required: true
+      - name: idea-summary
+        description: "Concise summary of the user's quickstart idea (1-3 sentences)"
+        required: false
+      - name: idea-keywords
+        description: "Key technologies, use cases, and industry terms extracted from the idea"
+        required: false
+      - name: backlog-data
+        description: "Full backlog output from gh-backlog-reader (issue numbers, titles, bodies, labels, assignees)"
+        required: false
+    expected_outputs:
+      - path: ".rhoai-qs/{qs-name}/prds/prd.md"
+        description: "Structured PRD ready for rh-qs-architect"
+    review_guidance: |
+      - PRD exists at [.rhoai-qs/{qs-name}/prds/prd.md](../../../.rhoai-qs/{qs-name}/prds/prd.md) with all sections filled in
+      - Review PRD content for completeness: problem statement, target persona, success metrics, scope boundaries, and technology constraints
+      - Recommend getting a peer engineer review on the PRD before continuing
+    next_skill: rh-qs-architect
+
+  - id: rh-qs-architect
+    order: 2
+    description: "Architecture phase — reads PRD, maps requirements to OpenShift AI and ai-architecture-charts, produces design document with Mermaid diagram"
+    expected_inputs:
+      - name: qs-name
+        description: "Quickstart slug"
+    expected_outputs:
+      - path: ".rhoai-qs/{qs-name}/designs/design.md"
+        description: "Design document with component matrix, chart selections, and architecture diagram"
+      - path: ".rhoai-qs/{qs-name}/pipeline/architecture-spec.yaml"
+        description: "Structured YAML handoff spec consumed by rh-qs-scaffold"
+    review_guidance: |
+      - Design doc exists at [.rhoai-qs/{qs-name}/designs/design.md](../../../.rhoai-qs/{qs-name}/designs/design.md) with all sections filled in
+      - Review content: component matrix matches PRD, chart versions pinned, Mermaid diagram valid
+      - architecture-spec.yaml exists in [.rhoai-qs/{qs-name}/pipeline/architecture-spec.yaml](../../../.rhoai-qs/{qs-name}/pipeline/architecture-spec.yaml)
+      - Recommend getting a peer engineer review on the design before continuing
+    next_skill: rh-qs-scaffold
+
+  - id: rh-qs-scaffold
+    order: 3
+    description: "Scaffold a new AI Quickstart GitHub repo with CI/CD, linting, testing frameworks, monorepo structure, and Makefile targets"
+    expected_inputs:
+      - name: qs-name
+        description: "Quickstart slug"
+    expected_outputs:
+      - path: ".rhoai-qs/{qs-name}/pipeline/scaffold-manifest.yaml"
+        description: "Handoff manifest listing created files, packages, CI jobs, and linting config"
+    review_guidance: |
+      - scaffold-manifest.yaml exists in [.rhoai-qs/{qs-name}/pipeline/scaffold-manifest.yaml](../../../.rhoai-qs/{qs-name}/pipeline/scaffold-manifest.yaml)
+      - make lint passes, no placeholder strings remain in scaffolded files
+      - Review content: repo accessible, Makefile has all standard targets, CI workflows valid
+      - Recommend getting a peer engineer review on the scaffold before continuing
+    next_skill: rh-qs-implement
+
+  - id: rh-qs-implement
+    order: 4
+    description: "Implement a working vertical slice — FastAPI backend, React UI, database, RAG ingestion, and tests from approved design and scaffold"
+    expected_inputs:
+      - name: qs-name
+        description: "Quickstart slug"
+    expected_outputs:
+      - path: ".rhoai-qs/{qs-name}/pipeline/implementation-manifest.yaml"
+        description: "Handoff manifest documenting endpoints, DB models, services, env vars, and test coverage"
+    review_guidance: |
+      - implementation-manifest.yaml exists in [.rhoai-qs/{qs-name}/pipeline/implementation-manifest.yaml](../../../.rhoai-qs/{qs-name}/pipeline/implementation-manifest.yaml)
+      - make lint && make test pass with zero failures
+      - Review content: all endpoints implemented, no placeholders, no hardcoded secrets
+      - Recommend getting a peer engineer review on the implementation before continuing
+    next_skill: rh-qs-deploy
+
+  - id: rh-qs-deploy
+    order: 5
+    description: "Deploy configuration — wires ai-architecture-charts Helm subcharts, compose.yml for local dev, Containerfiles, and Makefile deploy targets"
+    expected_inputs:
+      - name: qs-name
+        description: "Quickstart slug"
+    expected_outputs:
+      - path: ".rhoai-qs/{qs-name}/pipeline/deploy-manifest.yaml"
+        description: "Handoff manifest recording Helm deps, compose services, Containerfiles, routes, and env vars"
+    review_guidance: |
+      - deploy-manifest.yaml exists in [.rhoai-qs/{qs-name}/pipeline/deploy-manifest.yaml](../../../.rhoai-qs/{qs-name}/pipeline/deploy-manifest.yaml)
+      - make helm-lint passes and make dev brings up the local stack
+      - Review content: no raw oc/kubectl usage, no committed secrets, Containerfiles use UBI9
+      - Recommend getting a peer engineer review on the deploy config before continuing
+    next_skill: rh-qs-document
+
+  # # TODO: fill in when rh-qs-security is implemented
+  # - id: rh-qs-security
+  #   order: TBD
+  #   description: "Security verification — not yet implemented"
+  #   expected_inputs: []
+  #   expected_outputs: []
+  #   review_guidance: ""
+  #   next_skill: rh-qs-debug-and-deploy
+
+  # # TODO: fill in when rh-qs-debug-and-deploy is implemented
+  # - id: rh-qs-debug-and-deploy
+  #   order: TBD
+  #   description: "Deploy and debug — not yet implemented"
+  #   expected_inputs: []
+  #   expected_outputs: []
+  #   review_guidance: ""
+  #   next_skill: rh-qs-document
+
+  - id: rh-qs-document
+    order: 6
+    description: "Generate README and catalog documentation from verified deployment — deploy steps, requirements, architecture diagram, and catalog metadata"
+    expected_inputs:
+      - name: qs-name
+        description: "Quickstart slug"
+    expected_outputs:
+      - path: ".rhoai-qs/{qs-name}/pipeline/doc-manifest.yaml"
+        description: "Documentation handoff manifest with README section status and validation results"
+    review_guidance: |
+      - doc-manifest.yaml exists in [.rhoai-qs/{qs-name}/pipeline/doc-manifest.yaml](../../../.rhoai-qs/{qs-name}/pipeline/doc-manifest.yaml) and all validation booleans are true
+      - README deploy commands match Makefile targets, no placeholder content remains
+      - Review content: catalog metadata compliant, architecture diagram matches spec
+      - Recommend getting a peer engineer review on the docs before continuing
+    next_skill: rh-qs-ship
+
+  - id: rh-qs-ship
+    order: 7
+    description: "Ship the quickstart — create PR with structured summary, generate blog post draft, and update backlog status"
+    expected_inputs:
+      - name: qs-name
+        description: "Quickstart slug"
+    expected_outputs:
+      - path: ".rhoai-qs/{qs-name}/blog-drafts/{qs-name}-*.md"
+        description: "Blog post draft following the template (Hook, What It Does, How It Works, Get Started, What's Next)"
+    review_guidance: |
+      - PR created with accurate summary, CI checks pass, no secrets in diff
+      - Blog draft follows template from assets/blog-template.md with required links
+      - Backlog issue commented on or status updated
+      - Recommend getting a peer engineer review on the PR before merging
+    next_skill: null
