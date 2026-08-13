@@ -229,7 +229,7 @@ Work the returned question graph in **rounds**:
 
 3. Collect the user's answers for the round — they may accept the recommended answer, give a different one, or skip a question.
 4. Fold the answers into the draft PRD.
-5. Recompute the frontier: any question whose `depends_on` was just answered is now unblocked. Present the next round using the same format.
+5. Recompute the frontier: any question whose `depends_on` was just answered is now unblocked. Before presenting each of these newly-unblocked questions, briefly check whether it still applies given the updated draft — the answers just folded in may have already resolved it or made it moot (the questions were generated once, against the pre-round draft, so they can go stale). Drop any question that no longer applies and say briefly why; present the rest using the same format.
 6. Repeat until no questions remain.
 
 No re-invocation of the subagent between rounds — the full dependency graph came back in step 1's spawn.
