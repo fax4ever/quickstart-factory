@@ -211,6 +211,7 @@ core/skills/rh-qs-discovery/subagents/prd-griller-prompt.md
 Draft PRD: {prd_draft}
 Backlog check result: {backlog_check_result}
 Requirement mapping: {requirement_mapping}
+Guardrails path: core/skills/rh-qs-discovery/reasoning-guardrails.md
 """
 )
 ```
