@@ -1,12 +1,12 @@
 ---
 name: kafka
-description: "Strimzi Kafka cluster with KRaft mode for event-driven agent architectures on RHOAI"
-summary: "Provides durable event-driven messaging for AI agent architectures on RHOAI via two approaches: Approach A (active) deploys Kafka via Strimzi/AMQ Streams in KRaft mode with KafkaNodePool dual-role nodes (controller+broker) backing a Knative Kafka Broker that routes CloudEvents between integration dispatcher, request manager, and agent service; Approach B (deprecated) used Strimzi as a Helm subchart (`createGlobalResources=false`) with separate broker/controller pools and Kafka Connect JDBC sink to stream interactions to PostgreSQL via kafka-python KafkaProducer with schema-enabled JSON, later removed for direct DB writes. Use Approach A when production workloads need guaranteed delivery and per-session ordering -- toggle `requestManagement.knative.eventing.enabled` to switch between real Kafka (production) and mock eventing service (dev/CI, constrained to 1 replica for partition-key ordering); Approach B is a cautionary reference demonstrating when Kafka adds unnecessary complexity over direct database writes for simple ETL pipelines. Bootstrap servers wire via ConfigMap to Knative Broker with `broker.class: Kafka`, default 6 partitions, P7D retention, retry:10 with exponential backoff (PT0.2S); `auto.create.topics.enable: false` delegates topic lifecycle to Knative; `BROKER_URL` env var points all services to the broker ingress; network policies restrict access to `kafka-broker-dispatcher` pods only. Must set both `partitionkey` (lowercase) and `partitionKey` (camelCase) plus the `ce-partitionkey` HTTP header on every CloudEvent or session ordering breaks; email Message-IDs require hashing via `_broker_safe_event_id()` to avoid broker failures from special characters; default storage type is `ephemeral` (data lost on restart) -- switch to `persistent-claim` for production; Approach B requires `STRIMZI_USE_FINALIZERS=false` to prevent uninstall hangs."
+description: "Kafka messaging for event-driven agent architectures and telemetry pipelines on RHOAI"
+summary: "Provides durable event-driven messaging for AI agent orchestration, ETL pipelines, and telemetry buffering on RHOAI across three approaches: Approach A (Strimzi KRaft + Knative Kafka Broker) for multi-service CloudEvents routing with per-session partition-key FIFO ordering and mock eventing for dev/CI, Approach B (Strimzi subchart + Kafka Connect JDBC sink, deprecated) replaced by direct DatabaseService writes, and Approach C (vanilla Confluent cp-kafka:8.2.1 Deployment) for operator-free OTel-to-Camel telemetry buffering. Choose A for production multi-service agent orchestration needing guaranteed delivery and Knative Trigger subscriptions with ordered delivery annotation; choose C for sandbox telemetry pipelines without Strimzi/AMQ Streams operator access; avoid B and use direct DB writes instead -- Kafka Connect added unnecessary complexity for simple interaction logging. Approach A gates deployment via `requestManagement.knative.eventing.enabled` (false=mock mode) with `auto.create.topics.enable: false` (Knative manages topics) and defaults to ephemeral storage (switch to `persistent-claim` for production); Approach C sets `auto.create.topics.enable: true` for OTel Collector auto-topic creation and uses emptyDir-only volumes; Strimzi subchart installs require `createGlobalResources=false` to avoid CRD conflicts. Dual `partitionkey`/`partitionKey` CloudEvent attributes plus `ce-partitionkey` header are all required for Knative broker compatibility or session ordering breaks; email Message-IDs must be hashed via `_broker_safe_event_id()`; Strimzi finalizers must be disabled (`STRIMZI_USE_FINALIZERS=false`) to prevent Helm uninstall hangs; Confluent image requires an init container for writable `/etc/kafka` plus `KAFKA_PORT=\"\"` to avoid listener port conflicts; and JDBC sink connector requires schema+payload JSON format or writes fail silently."
 metadata:
   type: component
 tags:
-  tech_stack: [kafka, strimzi, knative, cloudevents, python, kafka-connect, kafka-python]
-  ai_pattern: [agents, event-driven, data-pipeline]
+  tech_stack: [kafka, strimzi, knative, cloudevents, python, kafka-connect, kafka-python, confluent-kafka, opentelemetry, camel]
+  ai_pattern: [agents, event-driven, data-pipeline, observability]
   platform: [openshift, rhoai, kubernetes]
 source_examples:
   - quickstart: "it-self-service-agent"
@@ -17,6 +17,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/product-recommender-system"
     notes: "Strimzi Kafka with KRaft, Kafka Connect JDBC sink for streaming user interactions to PostgreSQL -- later removed in favor of direct database writes"
     approach: "B"
+  - quickstart: "smart-telemetry-pipeline"
+    repo: "https://github.com/rh-ai-quickstart/smart-telemetry-pipeline"
+    notes: "Vanilla Confluent Kafka as plain Kubernetes Deployment for OpenTelemetry-to-Camel telemetry buffering -- no operators, no Strimzi"
+    approach: "C"
 ---
 
 # Kafka
@@ -386,16 +390,170 @@ class DatabaseService:
 
 ---
 
+## Approach C: Vanilla Confluent Kafka Deployment for Telemetry Buffering (from smart-telemetry-pipeline)
+
+### When to Use
+
+Use this pattern for sandbox or lightweight environments where Kafka serves as a simple telemetry buffer between an OpenTelemetry Collector and downstream consumers (e.g., Apache Camel routes). No operator (Strimzi/AMQ Streams) is available or warranted -- Kafka is deployed as a plain Kubernetes Deployment using the Confluent community image with KRaft mode.
+
+### Differences from Approach A
+
+- **Operator:** No Strimzi operator -- plain Kubernetes Deployment + Service resources applied via `oc apply`
+- **Image:** `confluentinc/cp-kafka:8.2.1` (Confluent community) vs. Strimzi-managed images
+- **Topic management:** `auto.create.topics.enable: true` (OTel Collector creates topics on first export) vs. Approach A's `false` (Knative manages topics)
+- **Consumer:** Apache Camel Kafka component consuming OTLP JSON vs. Knative Triggers with CloudEvents
+- **Producer:** OpenTelemetry Collector Kafka exporter vs. HTTP CloudEvent POST to broker ingress
+- **Storage:** emptyDir volumes only (no PVC support) -- data lost on pod restart by design (telemetry is transient)
+- **Security:** PLAINTEXT only, no TLS -- suitable for sandbox environments only
+- **Deployment method:** Raw YAML via `oc apply -f` in a shell script vs. Helm-templated Kafka CR
+
+### Key Patterns
+
+#### KRaft Single-Node Combined Mode
+
+Kafka runs as a single-node cluster in KRaft mode with combined broker+controller roles. An init container copies the base Kafka config before the main container starts.
+
+```yaml
+# deploy/resources/otel-infra/kafka/kafka-sandbox.yaml
+spec:
+  initContainers:
+    - name: init-config
+      image: confluentinc/cp-kafka:8.2.1
+      command: ['sh', '-c', 'cp -r /etc/kafka/* /kafka-config/']
+      volumeMounts:
+        - name: kafka-config
+          mountPath: /kafka-config
+  containers:
+    - name: kafka
+      image: confluentinc/cp-kafka:8.2.1
+      env:
+        - name: KAFKA_PROCESS_ROLES
+          value: "broker,controller"
+        - name: KAFKA_NODE_ID
+          value: "1"
+        - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+          value: "1@localhost:9093"
+```
+
+#### Listener Configuration for In-Cluster Access
+
+Two listeners separate client traffic (port 9092) from controller traffic (port 9093). The advertised listener uses the Kubernetes Service DNS name.
+
+```yaml
+# deploy/resources/otel-infra/kafka/kafka-sandbox.yaml
+env:
+  - name: KAFKA_LISTENERS
+    value: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+  - name: KAFKA_ADVERTISED_LISTENERS
+    value: "PLAINTEXT://kafka:9092"
+  - name: KAFKA_CONTROLLER_LISTENER_NAMES
+    value: "CONTROLLER"
+  - name: KAFKA_INTER_BROKER_LISTENER_NAME
+    value: "PLAINTEXT"
+```
+
+#### OTel Collector Kafka Exporter
+
+The OpenTelemetry Collector exports both logs and traces to Kafka using the `kafka` exporter with `otlp_json` encoding. Topics are auto-created (`otlp_logs`, `otlp_spans`).
+
+```yaml
+# deploy/resources/otel-infra/otel-collector/values-sandbox.yaml
+exporters:
+  kafka:
+    brokers:
+      - kafka:9092
+    logs:
+      encoding: otlp_json
+    traces:
+      encoding: otlp_json
+
+service:
+  pipelines:
+    logs:
+      exporters: [debug, kafka]
+    traces:
+      exporters: [debug, kafka]
+```
+
+#### Camel Kafka Consumer Routes
+
+Apache Camel routes consume from Kafka topics using the Camel Kafka component. Broker address is resolved via the `KAFKA_BROKERS` environment variable from a ConfigMap.
+
+```yaml
+# src/correlator/traces-mapper.camel.yaml
+- route:
+    id: trace-consumer
+    from:
+      uri: kafka:{{camel.kafka.topic.spans}}
+      parameters:
+        autoOffsetReset: earliest
+        groupId: correlator
+```
+
+```properties
+# chart/properties/correlator/application-prod-quarkus.properties
+camel.component.kafka.brokers=${KAFKA_BROKERS:kafka:9092}
+camel.component.kafka.security-protocol=PLAINTEXT
+camel.kafka.topic.logs=otlp_logs
+camel.kafka.topic.spans=otlp_spans
+```
+
+#### Bootstrap Server Wiring via ConfigMap
+
+The Kafka broker address is shared across components via a dedicated ConfigMap, referenced by Camel consumers.
+
+```yaml
+# deploy/resources/configmaps/otel-infra-endpoints.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-infra-endpoints
+data:
+  KAFKA_BROKERS: kafka:9092
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `KAFKA_BROKERS` -- Kafka bootstrap server address, injected from `otel-infra-endpoints` ConfigMap (default: `kafka:9092`)
+  - `CLUSTER_ID` -- Hardcoded KRaft cluster ID (`MkU3OEVBNTcwNTJENDM2Qk`)
+  - `KAFKA_PORT` -- Set to empty string to avoid Confluent image port conflict
+- **Resource requests/limits:**
+  - Requests: 250m CPU, 512Mi memory
+  - Limits: 1Gi memory
+- **Kafka broker config (via env vars):**
+  - `KAFKA_AUTO_CREATE_TOPICS_ENABLE: true` -- OTel Collector and Camel routes rely on auto-created topics
+  - `KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1` -- Single-node cluster
+  - `KAFKA_LOG_DIRS: /tmp/kraft-combined-logs` -- Uses emptyDir volume
+
+### Known Gotchas
+
+- **Init container required for Confluent image:** The `confluentinc/cp-kafka` image requires its `/etc/kafka` config directory to be writable at startup. An init container copies the base config to an emptyDir volume before the main container starts; without it, Kafka fails to boot with a read-only filesystem error. (Source: `deploy/resources/otel-infra/kafka/kafka-sandbox.yaml`, initContainers section)
+- **KAFKA_PORT must be set to empty string:** The Confluent image sets a default `KAFKA_PORT` that conflicts with the listener configuration. Setting it to `""` prevents the image's entrypoint script from overriding the explicit listener ports. (Source: `deploy/resources/otel-infra/kafka/kafka-sandbox.yaml`, env `KAFKA_PORT: ""`)
+- **Ephemeral storage only -- data lost on restart:** Both the Kafka config and log data use emptyDir volumes. Pod restarts lose all messages. This is acceptable for transient telemetry data but not for durable messaging. (Source: `deploy/resources/otel-infra/kafka/kafka-sandbox.yaml`, volumes section)
+- **Hardcoded CLUSTER_ID:** The KRaft cluster ID is hardcoded in the YAML. Each new deployment reusing the same ID is fine for single-node ephemeral setups, but would conflict if multiple Kafka clusters are deployed in the same namespace. (Source: `deploy/resources/otel-infra/kafka/kafka-sandbox.yaml`, env `CLUSTER_ID`)
+
+### Testing Notes
+
+- Verify Kafka is ready: `oc wait deployment/kafka --for=condition=Available --timeout=180s` (used in `create.sh`)
+- Check pod health: `oc get pods -l app=kafka`
+- Verify OTel Collector can export: check debug exporter logs for successful sends alongside Kafka exporter
+- Verify Camel consumption: check correlator pod logs for `Received trace from Kafka` / `Received log from Kafka` messages
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Knative Kafka Broker) | Approach B (Kafka Connect JDBC Sink) |
-|----------|----------------------------------|--------------------------------------|
-| Use case | Agent orchestration with CloudEvents routing | Event ingestion / ETL from app to database |
-| Consumer | Knative Triggers with per-service subscriptions | JDBC sink connector auto-writing to PostgreSQL |
-| Producer | HTTP CloudEvent POST to broker ingress | `kafka-python` KafkaProducer with schema+payload messages |
-| Ordering | Partition key (session ID) for per-session FIFO | No explicit ordering guarantees |
-| Dev/CI mode | Mock eventing service substitutes Kafka | No dev-mode substitute (full Kafka required) |
-| Deployment | Raw Kafka CR in parent chart | Strimzi operator as Helm subchart dependency |
-| Node pools | Dual-role (controller+broker) single pool | Separate broker and controller pools |
-| Status | Active | Deprecated -- removed in favor of direct DB writes |
-| When to prefer | Multi-service event routing with guaranteed delivery | Consider direct DB writes instead (lesson from this quickstart) |
+| Criteria | Approach A (Knative Kafka Broker) | Approach B (Kafka Connect JDBC Sink) | Approach C (Vanilla Confluent Deployment) |
+|----------|----------------------------------|--------------------------------------|-------------------------------------------|
+| Use case | Agent orchestration with CloudEvents routing | Event ingestion / ETL from app to database | Telemetry buffering between OTel Collector and Camel |
+| Operator | Strimzi / AMQ Streams | Strimzi as Helm subchart | None -- plain Kubernetes Deployment |
+| Consumer | Knative Triggers with per-service subscriptions | JDBC sink connector auto-writing to PostgreSQL | Apache Camel Kafka component |
+| Producer | HTTP CloudEvent POST to broker ingress | `kafka-python` KafkaProducer with schema+payload messages | OTel Collector Kafka exporter (otlp_json) |
+| Ordering | Partition key (session ID) for per-session FIFO | No explicit ordering guarantees | Default partition assignment (no explicit keys) |
+| Dev/CI mode | Mock eventing service substitutes Kafka | No dev-mode substitute (full Kafka required) | Sandbox-only -- no separate dev mode needed |
+| Deployment | Raw Kafka CR in parent chart | Strimzi operator as Helm subchart dependency | Raw YAML via `oc apply -f` in shell script |
+| Storage | Ephemeral or persistent-claim | Ephemeral JBOD | emptyDir only (ephemeral by design) |
+| Security | Internal PLAINTEXT or TLS | Internal PLAINTEXT | PLAINTEXT only |
+| Status | Active | Deprecated -- removed in favor of direct DB writes | Active (sandbox/demo scope) |
+| When to prefer | Multi-service event routing with guaranteed delivery | Consider direct DB writes instead (lesson from this quickstart) | Lightweight telemetry pipeline in sandbox without operator access |

@@ -1,12 +1,12 @@
 ---
 name: otel-collector
-description: OpenTelemetry Collector deployed via OTel Operator CRD with central deployment and sidecar injection for LLM observability
-summary: "Provides centralized LLM and application telemetry on RHOAI via the OTel Operator's OpenTelemetryCollector CRD (mode: deployment, upgradeStrategy: automatic) in a hub-and-spoke architecture -- a central collector in observability-hub receives OTLP from workload-level collectors, routing traces to Tempo dev tenant (X-Scope-OrgID header) and exposing metrics. Approach A (sidecar injection) suits model-serving observability -- vLLM sidecars scrape Prometheus on localhost:8000 alongside OTLP traces, LlamaStack sidecars forward traces only, each toggled via sidecars.*.enabled Helm values with per-pod sidecar.opentelemetry.io/inject annotation and k8sattributes processor; Approach B (Instrumentation CR) suits Python application tracing (FastAPI, RAG) with namespace-level instrumentation.opentelemetry.io/inject-python annotation, no sidecar containers, simpler pipeline (batch + memory_limiter only), and OpenShift Route passthrough TLS for external ingestion. Helm _helpers.tpl constructs centralCollectorEndpoint and tempoGatewayEndpoint dynamically; bearertokenauth authenticates to Tempo gateway using SA token with ca_file: service-ca.crt and insecure: false; namespace-prefixed ClusterRoles grant tempo.grafana.com/dev trace writes and pod/namespace/replicaset access for k8sattributes (requires KUBE_NODE_NAME via fieldRef spec.nodeName); Approach B's Instrumentation CR deploys as Helm pre-install hook (hook-weight: \"-10\") with OTEL_PYTHON_PLATFORM set to glibc or musl matching the base image. OTel Operator appends \"-collector\" to CR name creating doubled \"otel-collector-collector\" service name that sidecars must target, sidecar CR metadata.name must exactly match the injection annotation value, Instrumentation CR must exist before application pods start (enforced by Helm hook), namespace annotation requires pod restart for existing pods, k8sattributes processor exists only in Helm-templated config not base manifests, and two paths exist to apply the Instrumentation CR (Helm template vs envsubst Makefile script)."
+description: OpenTelemetry Collector deployed via OTel Operator CRD or upstream Helm chart for LLM observability and event-driven telemetry
+summary: "Provides centralized LLM and application telemetry on RHOAI via the OTel Operator's OpenTelemetryCollector CRD or upstream Helm chart in a hub-and-spoke architecture -- a central collector in observability-hub receives OTLP from workload-level collectors, routing traces to Tempo dev tenant (X-Scope-OrgID header) or Kafka topics for event-driven processing. Approach A (sidecar injection) suits model-serving observability -- vLLM sidecars scrape Prometheus on localhost:8000 alongside OTLP traces, LlamaStack sidecars forward traces only, each toggled via sidecars.*.enabled Helm values with per-pod sidecar.opentelemetry.io/inject annotation and k8sattributes processor; Approach B (Instrumentation CR) suits Python application tracing (FastAPI, RAG) with namespace-level instrumentation.opentelemetry.io/inject-python annotation, no sidecar containers, simpler pipeline (batch + memory_limiter only), and OpenShift Route passthrough TLS for external ingestion; Approach C (upstream opentelemetry-collector Helm chart) suits event-driven telemetry pipelines exporting to Kafka in otlp_json encoding via collector-contrib image with filter/healthcheck processor dropping actuator spans, no OTel Operator required, apps instrument via OpenTelemetry Java agent sending OTLP to collector service. Helm _helpers.tpl constructs centralCollectorEndpoint and tempoGatewayEndpoint dynamically; bearertokenauth authenticates to Tempo gateway using SA token with ca_file: service-ca.crt and insecure: false; namespace-prefixed ClusterRoles grant tempo.grafana.com/dev trace writes and pod/namespace/replicaset access for k8sattributes (requires KUBE_NODE_NAME via fieldRef spec.nodeName); Approach B's Instrumentation CR deploys as Helm pre-install hook (hook-weight: \"-10\") with OTEL_PYTHON_PLATFORM set to glibc or musl matching the base image; Approach C configures Kafka brokers and otlp_json encoding in Helm values config: block with downstream consumers parsing otlp_spans/otlp_logs topics. OTel Operator appends \"-collector\" to CR name creating doubled \"otel-collector-collector\" service name that sidecars must target, sidecar CR metadata.name must exactly match the injection annotation value, Instrumentation CR must exist before application pods start (enforced by Helm hook), namespace annotation requires pod restart for existing pods, k8sattributes processor exists only in Helm-templated config not base manifests, two paths exist to apply the Instrumentation CR (Helm template vs envsubst Makefile script), and Approach C requires collector-contrib image for Kafka exporter with downstream consumers expecting otlp_json encoding."
 metadata:
   type: component
 tags:
-  tech_stack: [opentelemetry, helm, opentelemetry-operator]
-  ai_pattern: [model-serving, observability]
+  tech_stack: [opentelemetry, helm, opentelemetry-operator, kafka]
+  ai_pattern: [model-serving, observability, data-pipeline]
   platform: [openshift, rhoai, kserve, vllm]
   data_layer: []
 source_examples:
@@ -18,6 +18,10 @@ source_examples:
     repo: "https://github.com/rh-ai-quickstart/openshift-ai-observability-summarizer"
     notes: "Central OTel Collector with Python auto-instrumentation via Instrumentation CR, namespace-level injection, Tempo distributor export"
     approach: "B"
+  - quickstart: "smart-telemetry-pipeline"
+    repo: "https://github.com/rh-ai-quickstart/smart-telemetry-pipeline"
+    notes: "OTel Collector deployed via upstream Helm chart as Kafka-exporting telemetry gateway for event-driven AI root cause analysis pipeline"
+    approach: "C"
 ---
 
 # OpenTelemetry Collector
@@ -324,14 +328,157 @@ ingress:
 
 ---
 
+---
+
+## Approach C: Upstream Helm Chart with Kafka Export (from smart-telemetry-pipeline)
+
+### When to Use
+
+Use this approach when the collector acts as a telemetry ingestion gateway feeding an event-driven processing pipeline rather than a traditional observability backend. Applications send OTLP logs and traces to the collector, which exports them to Kafka topics for downstream consumption by stream-processing components (e.g., Apache Camel correlators, AI analyzers). No OTel Operator is required -- the collector is deployed using the upstream `open-telemetry/opentelemetry-collector` Helm chart directly.
+
+### Differences from Approach A
+
+- **No OTel Operator dependency** -- deployed via the upstream `opentelemetry-collector` Helm chart from `https://open-telemetry.github.io/opentelemetry-helm-charts`, not via the `OpenTelemetryCollector` CRD
+- **Kafka exporter instead of Tempo** -- traces and logs are exported to Kafka topics in `otlp_json` encoding for event-driven processing, not to a trace backend
+- **No sidecar injection** -- applications instrument themselves with the OpenTelemetry Java agent (`opentelemetry-javaagent.jar`) and send OTLP directly to the collector service
+- **No RBAC complexity** -- no ClusterRoles, no bearer token auth, no k8sattributes processor; plain TCP to Kafka
+- **Contrib image** -- uses `ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib` for the Kafka exporter and filter processor
+
+### Helm Chart Deployment
+
+The collector is installed with a single `helm install` using a values override file. The Helm chart creates a Deployment, Service, and ServiceAccount.
+
+```bash
+# From create.sh -- deploy OTel Collector via upstream Helm chart
+helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+helm install camel-otel-collector open-telemetry/opentelemetry-collector \
+  -f deploy/resources/otel-infra/otel-collector/values-sandbox.yaml \
+  -n "${NS}" --wait --timeout 300s
+```
+
+### Collector Configuration with Kafka Export
+
+The values file configures OTLP receivers on both gRPC (4317) and HTTP (4318) ports, a filter processor to strip health check spans, and a Kafka exporter that writes logs and traces to Kafka topics using `otlp_json` encoding.
+
+```yaml
+# values-sandbox.yaml -- key configuration
+mode: deployment
+replicaCount: 1
+
+image:
+  repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib
+
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+  processors:
+    filter/healthcheck:
+      error_mode: ignore
+      traces:
+        span:
+          - 'name == "GET /actuator/health"'
+  exporters:
+    kafka:
+      brokers:
+        - kafka:9092
+      logs:
+        encoding: otlp_json
+      traces:
+        encoding: otlp_json
+```
+
+### Health Check Span Filtering
+
+The `filter/healthcheck` processor silently drops trace spans for health check endpoints, preventing noisy actuator health probes from polluting the AI analysis pipeline.
+
+```yaml
+# filter/healthcheck processor -- applied only to traces pipeline
+processors:
+  filter/healthcheck:
+    error_mode: ignore
+    traces:
+      span:
+        - 'name == "GET /actuator/health"'
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [filter/healthcheck]
+      exporters: [debug, kafka]
+    logs:
+      receivers: [otlp]
+      exporters: [debug, kafka]
+```
+
+### Java Agent Instrumentation for Upstream Apps
+
+Applications send telemetry to the collector using the OpenTelemetry Java agent. The log-generator Tekton pipeline downloads the agent JAR, configures it via a properties file, and sets the collector endpoint as an environment variable on the Deployment.
+
+```properties
+# agent.properties -- OTel Java agent config for log-generator
+otel.javaagent.debug=false
+otel.service.name=log-generator
+otel.traces.exporter=otlp
+otel.metrics.exporter=none
+otel.logs.exporter=otlp
+otel.instrumentation.apache-httpclient.enabled=false
+```
+
+```bash
+# Deployment env vars set by the Tekton deploy task
+OTEL_EXPORTER_OTLP_ENDPOINT="http://camel-otel-collector-opentelemetry-collector.${NS}.svc:4317"
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+```
+
+### Configuration
+
+- **Environment variables:**
+  - `OTEL_EXPORTER_OTLP_ENDPOINT` -- set on instrumented apps to point to the collector service (e.g., `http://camel-otel-collector-opentelemetry-collector.<ns>.svc:4317`)
+  - `OTEL_EXPORTER_OTLP_PROTOCOL` -- set to `grpc` on instrumented apps
+- **Helm values:**
+  - `mode` -- deployment mode (default: `deployment`)
+  - `replicaCount` -- collector replicas (default: `1`)
+  - `image.repository` / `image.tag` -- collector-contrib image reference
+  - `serviceAccount.name` -- service account name (default: `camel-otel-collector`)
+  - `ports.otlp.containerPort` / `ports.otlp-http.containerPort` -- OTLP receiver ports
+  - `config.exporters.kafka.brokers` -- Kafka broker addresses
+- **Config files:** Collector config is embedded in the Helm values file under `config:`, not a separate ConfigMap or CRD
+
+### Known Gotchas
+
+- **Helm chart service name convention:** The upstream Helm chart names the service `<release>-opentelemetry-collector`, so release name `camel-otel-collector` produces service `camel-otel-collector-opentelemetry-collector`. This differs from the OTel Operator convention (Approach A) which appends `-collector` to the CR name.
+- **Collector-contrib image required for Kafka exporter:** The default `opentelemetry-collector` image does not include the Kafka exporter. The values file overrides the image to `opentelemetry-collector-contrib` which bundles the `kafkaexporter` and `filterprocessor` components.
+- **Kafka must be deployed before the collector:** The `create.sh` script deploys Kafka (Step 2) before the collector (Step 3) and uses `--wait` on the Helm install. If Kafka is not reachable, the collector will start but fail to export.
+- **Downstream consumers expect `otlp_json` encoding:** The Kafka exporter uses `otlp_json` encoding. The Camel correlator parses this format from Kafka topics (`otlp_logs`, `otlp_spans`) using JsonPath expressions to split `resourceLogs[*].scopeLogs[*].logRecords[*]`. Changing the encoding would break the downstream pipeline.
+
+### Testing Notes
+
+- Verify collector pod is running: `oc get pods -l app.kubernetes.io/name=opentelemetry-collector`
+- Check collector logs: `oc logs -l app.kubernetes.io/name=opentelemetry-collector`
+- OTLP endpoints: gRPC at `:4317`, HTTP at `:4318`
+- Verify Kafka export: check that messages appear in `otlp_logs` and `otlp_spans` Kafka topics
+- Teardown: `helm uninstall camel-otel-collector`
+
+---
+
 ## Choosing Between Approaches
 
-| Criteria | Approach A (Sidecar Injection) | Approach B (Auto-Instrumentation CR) |
-|----------|-------------------------------|--------------------------------------|
-| **Use case** | Model-serving observability (vLLM, LlamaStack) | Python application tracing (FastAPI, RAG) |
-| **Instrumentation method** | Sidecar container per pod via `OpenTelemetryCollector` CR (mode: sidecar) | Library injection via `Instrumentation` CR mutating webhook |
-| **Injection scope** | Per-pod annotation (`sidecar.opentelemetry.io/inject`) | Per-namespace annotation (`instrumentation.opentelemetry.io/inject-python`) |
-| **Prometheus scraping** | Yes (sidecar scrapes model-server metrics on localhost) | No (OTLP only) |
-| **Resource overhead** | Extra container per pod | No extra containers; injected libraries run in-process |
-| **Collector complexity** | k8sattributes processor, Prometheus receiver, multiple sidecar CRs | Batch + memory_limiter only, single collector CR |
-| **Source quickstart** | lls-observability | openshift-ai-observability-summarizer |
+| Criteria | Approach A (Sidecar Injection) | Approach B (Auto-Instrumentation CR) | Approach C (Helm Chart + Kafka) |
+|----------|-------------------------------|--------------------------------------|--------------------------------|
+| **Use case** | Model-serving observability (vLLM, LlamaStack) | Python application tracing (FastAPI, RAG) | Event-driven telemetry processing (AI analysis pipelines) |
+| **Deployment method** | OTel Operator `OpenTelemetryCollector` CRD | OTel Operator CRD + `Instrumentation` CR | Upstream `opentelemetry-collector` Helm chart |
+| **OTel Operator required** | Yes | Yes | No |
+| **Instrumentation method** | Sidecar container per pod | Library injection via mutating webhook | Application-level Java agent or SDK |
+| **Injection scope** | Per-pod annotation (`sidecar.opentelemetry.io/inject`) | Per-namespace annotation (`instrumentation.opentelemetry.io/inject-python`) | Per-app env vars (`OTEL_EXPORTER_OTLP_ENDPOINT`) |
+| **Export target** | Tempo (trace backend) | Tempo (trace backend) | Kafka (event-driven processing) |
+| **Prometheus scraping** | Yes (sidecar scrapes model-server metrics on localhost) | No (OTLP only) | No (OTLP only) |
+| **Resource overhead** | Extra container per pod | No extra containers; injected libraries run in-process | Single collector Deployment; no extra containers per pod |
+| **Collector complexity** | k8sattributes processor, Prometheus receiver, multiple sidecar CRs | Batch + memory_limiter only, single collector CR | Filter processor, Kafka exporter, single Helm release |
+| **RBAC requirements** | ClusterRole for Tempo writes + pod/namespace/replicaset access | Same as Approach A | Minimal (ServiceAccount only, no ClusterRoles) |
+| **Source quickstart** | lls-observability | openshift-ai-observability-summarizer | smart-telemetry-pipeline |
