@@ -50,7 +50,9 @@ flowchart TD
    - Does the skill's `review_guidance` in `pipeline-registry.yaml` hold up (file exists, `make lint`/`make test` pass, no placeholders, etc.)?
    - Only write a manual note in the commit if something looks off — don't invent a second, parallel definition of "done." This mirrors the same reuse-first pattern the factory already uses for [acceptance-criteria.md](foundation/acceptance-criteria.md).
 4. **Export the conversation** — see §4 for the client-specific method.
-5. **Record token usage**, including subagents, and confirm no single agent exceeded ~100K tokens — see §4. If it did, still record the real number (don't hide it) and add a note to [core/skills/SUGGESTIONS.md](../core/skills/SUGGESTIONS.md) so it feeds back into improving the skill.
+5. **Record token usage**, including subagents, and confirm no single agent exceeded ~100K tokens — see §4. If it did, don't just log it and move on — fix it:
+   - **Exceeded by a lot** → treat this as a real defect in the skill, not a footnote. Dig into why (e.g. it's reading files a subagent should be handling, pulling in reference docs it doesn't need, loading a subagent prompt into the main agent's own context instead of passing it by file path — see the context-saving rule in [skill-directory-structure.md](foundation/skill-directory-structure.md)). Fix the skill, then re-run the test before committing.
+   - **Exceeded by a little** → carefully review the run for obvious waste (redundant reads, verbose subagent output flowing back into the main context, etc.) and see if the number can be brought down. Still commit either way, with a note on what was found and whether it was fixed or is being tracked for a follow-up pass.
 6. **Commit** using the template in §5, on a branch named `test/<skill>-<yyyymmdd>`.
 7. **Push and open a PR** against the test repo's own `main`. No need to wait for review, but write a clear description (see §5).
 8. **Append one line to `factory-testing/LOG.md`** in the test repo: skill, date, factory short hash, pass/fail, token total (or `N/A` — see §4).
@@ -96,8 +98,13 @@ The commit template matches the `type(scope):` convention already used in this r
 test(<skill>):
 QS: <quickstart_name> (test)
 Factory: <short_hash>
+<client>: <model>
 <optional comment>
 ```
+
+`<client>: <model>` records which AI client and model ran the session (e.g. `Claude: Opus 4.6 (1M context)` or `Cursor: <model>`). This matters because model choice affects the two client-specific guardrails in §4 — a model swap is often the real explanation when a skill's behavior changes between two test runs, not the skill itself.
+
+**Recommended default:** Claude Opus 4.6 with the 1M context window, for Claude Code test runs. The larger context window matters here specifically because pipeline sessions (e.g. `rh-qs-implement`, `rh-qs-deploy`) can run long with multiple subagents — 1M context reduces the risk of auto-compaction losing context mid-run and confounding the test. Use whatever the Cursor-side equivalent is when testing from Cursor, and still record it.
 
 **Example:**
 
@@ -105,6 +112,7 @@ Factory: <short_hash>
 test(rh-qs-architect):
 QS: customer-support (test)
 Factory: 7da561b
+Claude: Opus 4.6 (1M context)
 Spec validation passed, diagram generated correctly
 ```
 
@@ -127,9 +135,10 @@ Filling in a few things the original guardrail list didn't cover yet:
 - **No defined pass/fail bar** → reuse `pipeline-registry.yaml`'s `review_guidance` and the `dashboard.md` the factory already produces (§3), instead of inventing new criteria.
 - **No home for exported conversations/token logs** → `factory-testing/<skill>/` inside the test repo, since `quickstart-factory`'s own `.rhoai-qs/` is gitignored (§2).
 - **No rolling view across many test cycles** → `factory-testing/LOG.md`, one line per test run (§2, §3).
-- **No defined action when the ~100K token ceiling is breached** → still commit/log the real number, and file a note in [core/skills/SUGGESTIONS.md](../core/skills/SUGGESTIONS.md) (§3).
+- **No defined action when the ~100K token ceiling is breached** → don't just log it: fix the skill if the overage is large, or review and try to lower it if the overage is small (§3 step 5, updated per PR review feedback from Yossi).
 - **No Cursor/Claude parity note** → §4.
 - **`rh-qs-ship` scope boundary was implicit** → made explicit, with a note on how to extend it later (§6).
+- **No record of which client/model ran a given test** → added a `<client>: <model>` line to the commit template, with Claude Opus 4.6 (1M context) as the recommended default (§5, added per PR review feedback from Yossi).
 
 ## Follow-Up (Not Yet Done)
 
