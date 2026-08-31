@@ -24,7 +24,8 @@ for client in "${CLIENTS[@]}"; do
   for skill_dir in "$SKILLS_DIR"/*/; do
     [ -f "$skill_dir/SKILL.md" ] || continue
     name="$(basename "$skill_dir")"
-    ln -sr "$skill_dir" "$target/$name"
+    # Relative link. Do not use GNU `ln -sr` — macOS ln has no -r.
+    ln -s "../../core/skills/${name}" "$target/$name"
     echo "  ✓ $client/skills/$name"
   done
 done
@@ -42,7 +43,8 @@ for client in "${POLICY_GATE_SUPPORTED_CLIENTS[@]}"; do
   # Link each hook file
   for file in "${POLICY_GATE_HOOK_FILES[@]}"; do
     [ -f "$POLICY_GATE_DIR/$file" ] || continue
-    ln -sr "$POLICY_GATE_DIR/$file" "$hooks_target/$file"
+    # Relative link. Do not use GNU `ln -sr` — macOS ln has no -r.
+    ln -s "../../core/oc-policy-gate/${file}" "$hooks_target/$file"
     echo "  ✓ $client/hooks/$file"
   done
 
